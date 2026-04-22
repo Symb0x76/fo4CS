@@ -1,9 +1,9 @@
 cmake_minimum_required(VERSION 3.21)
 
 project(
-	AAAFrameGeneration
-	VERSION 1.3.3
-	LANGUAGES CXX
+    AAAFrameGeneration
+    VERSION 1.3.4
+    LANGUAGES CXX
 )
 
 list(APPEND CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake")
@@ -16,21 +16,21 @@ find_package(magic_enum CONFIG REQUIRED)
 
 
 target_include_directories(
-	"${PROJECT_NAME}"
-	PRIVATE
-	${SIMPLEINI_INCLUDE_DIRS}
+    "${PROJECT_NAME}"
+    PRIVATE
+    ${SIMPLEINI_INCLUDE_DIRS}
 )
 
 
 target_link_libraries(
-	${PROJECT_NAME}
-	PRIVATE
-	debug ${CMAKE_CURRENT_SOURCE_DIR}/include/detours/Debug/detours.lib
-	optimized ${CMAKE_CURRENT_SOURCE_DIR}/include/detours/Release/detours.lib
-	Microsoft::DirectXTK
-	Microsoft::DirectXTex
-	Microsoft::DirectX-Headers
-	d3d12.lib
-	magic_enum::magic_enum
-	d3dcompiler.lib
+    ${PROJECT_NAME}
+    PRIVATE
+    debug ${CMAKE_CURRENT_SOURCE_DIR}/include/detours/Debug/detours.lib
+    optimized ${CMAKE_CURRENT_SOURCE_DIR}/include/detours/Release/detours.lib
+    Microsoft::DirectXTK
+    Microsoft::DirectXTex
+    Microsoft::DirectX-Headers
+    d3d12.lib
+    magic_enum::magic_enum
+    d3dcompiler.lib
 )

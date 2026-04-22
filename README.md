@@ -38,6 +38,8 @@ F4SE\Plugins\FrameGeneration\Streamline\
 | `sl.interposer.dll` | [NVIDIA Streamline SDK](https://github.com/NVIDIAGameWorks/Streamline) |
 | `sl.common.dll`     | NVIDIA Streamline SDK                                                  |
 | `sl.dlss_g.dll`     | NVIDIA Streamline SDK                                                  |
+| `sl.reflex.dll`     | NVIDIA Streamline SDK                                                  |
+| `sl.pcl.dll`        | NVIDIA Streamline SDK                                                  |
 | `nvngx_dlssg.dll`   | NVIDIA driver installation (`System32`)                                |
 
 `nvngx_dlssg.dll` is installed automatically with NVIDIA drivers on supported systems. It can be found at `C:\Windows\System32\nvngx_dlssg.dll` and copied to the Streamline folder.
