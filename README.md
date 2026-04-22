@@ -25,6 +25,25 @@ SKSE core plugin for community-driven advanced graphics modifications.
 - [VR Address Library for SKSEVR](https://www.nexusmods.com/skyrimspecialedition/mods/58101)
   - Needed for VR
 
+### NVIDIA DLSS Frame Generation
+
+DLSS Frame Generation requires an **RTX 40-series or newer** GPU and the following DLLs placed in:
+
+```
+F4SE\Plugins\FrameGeneration\Streamline\
+```
+
+| File                | Source                                                                 |
+| ------------------- | ---------------------------------------------------------------------- |
+| `sl.interposer.dll` | [NVIDIA Streamline SDK](https://github.com/NVIDIAGameWorks/Streamline) |
+| `sl.common.dll`     | NVIDIA Streamline SDK                                                  |
+| `sl.dlss_g.dll`     | NVIDIA Streamline SDK                                                  |
+| `nvngx_dlssg.dll`   | NVIDIA driver installation (`System32`)                                |
+
+`nvngx_dlssg.dll` is installed automatically with NVIDIA drivers on supported systems. It can be found at `C:\Windows\System32\nvngx_dlssg.dll` and copied to the Streamline folder.
+
+The Streamline SDK DLLs (`sl.interposer.dll`, `sl.common.dll`, `sl.dlss_g.dll`) must be obtained from the [NVIDIA Streamline SDK releases](https://github.com/NVIDIAGameWorks/Streamline/releases) (requires NVIDIA developer registration).
+
 ## Register Visual Studio as a Generator
 
 - Open `x64 Native Tools Command Prompt`

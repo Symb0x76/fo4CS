@@ -4,6 +4,7 @@
 #include <dxgi1_6.h>
 
 #include "FidelityFX.h"
+#include "Streamline.h"
 #include "Upscaling.h"
 
 extern bool enbLoaded;
@@ -172,6 +173,13 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
 		if (auto ui = RE::UI::GetSingleton())
 			useFrameGenerationThisFrame = upscaling->settings.frameGenerationMode && main->gameActive && !main->inMenuMode && !ui->movementToDirectionalCount;
 
+	auto streamline = Streamline::GetSingleton();
+	streamline->TagResourcesAndConfigure(
+		upscaling->HUDLessBufferShared12[frameIndex].get(),
+		upscaling->depthBufferShared12[frameIndex].get(),
+		upscaling->motionVectorBufferShared12[frameIndex].get(),
+		useFrameGenerationThisFrame);
+
 	FidelityFX::GetSingleton()->Present(useFrameGenerationThisFrame);
 
 	DX::ThrowIfFailed(commandLists[frameIndex]->Close());
@@ -185,6 +193,8 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
 
 	// Present the frame
 	DX::ThrowIfFailed(swapChain->Present(SyncInterval, Flags));
+
+	streamline->AdvanceFrame();
 
 	// Wait for previous frame to have finished
 	auto frameLatencyWaitableObject = swapChain->GetFrameLatencyWaitableObject();

@@ -6,6 +6,7 @@
 #include "Upscaling.h"
 #include "DX12SwapChain.h"
 #include "FidelityFX.h"
+#include "Streamline.h"
 
 #include "ENB/ENBSeriesAPI.h"
 
@@ -33,6 +34,8 @@ HRESULT WINAPI hk_IDXGIFactory_CreateSwapChain(IDXGIFactory2* This, _In_ ID3D11D
 	proxy->CreateD3D12Device(adapter);
 	proxy->CreateSwapChain((IDXGIFactory5*)This, *pDesc);
 	proxy->CreateInterop();
+
+	Streamline::GetSingleton()->PostDevice(proxy->d3d12Device.get(), adapter);
 
 	*ppSwapChain = proxy->GetSwapChainProxy();
 
@@ -105,6 +108,8 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 				proxy->CreateSwapChain((IDXGIFactory5*)dxgiFactory, *pSwapChainDesc);
 				proxy->CreateInterop();
 
+				Streamline::GetSingleton()->PostDevice(proxy->d3d12Device.get(), adapter);
+
 				*ppSwapChain = proxy->GetSwapChainProxy();
 				
 				return S_OK;
@@ -143,6 +148,8 @@ void DX11Hooks::Install()
 
 	auto fidelityFX = FidelityFX::GetSingleton();
 	fidelityFX->LoadFFX();
+
+	Streamline::GetSingleton()->LoadAndInit();
 
 	uintptr_t moduleBase = (uintptr_t)GetModuleHandle(nullptr);
 

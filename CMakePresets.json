@@ -14,14 +14,14 @@
 			},
 			"binaryDir": "${sourceDir}/build"
 		},
-        {
-            "name": "vcpkg",
-            "hidden": true,
-            "cacheVariables": {
-                "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
-                "VCPKG_TARGET_TRIPLET": "x64-windows-static-md"
-            }
-        },
+		{
+			"name": "vcpkg",
+			"hidden": true,
+			"cacheVariables": {
+				"CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+				"VCPKG_TARGET_TRIPLET": "x64-windows-static-md"
+			}
+		},
 		{
 			"name": "win64",
 			"hidden": true,
@@ -73,7 +73,7 @@
 				"msvc"
 			]
 		},
-				{
+		{
 			"name": "POST-AE",
 			"cacheVariables": {
 				"BUILD_PRE_NG": false,
