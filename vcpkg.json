@@ -11,7 +11,9 @@
     "rsm-mmio",
     {
       "name": "spdlog",
-      "features": [ "wchar" ]
+      "features": [
+        "wchar"
+      ]
     },
     "xbyak",
     "directxtk",
@@ -19,5 +21,6 @@
     "directx-headers",
     "magic-enum",
     "simpleini"
-  ]
+  ],
+  "builtin-baseline": "b781af668027bbf77f2f827f47b5c6cd8d825c08"
 }
