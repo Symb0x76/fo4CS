@@ -9,7 +9,7 @@
 #include "F4SE/F4SE.h"
 #include "RE/Fallout.h"
 #if defined(FALLOUT_POST_NG)
-#include "REX/REX/Singleton.h"
+#include "REX/REX.h"
 #endif
 #pragma warning(pop)
 
@@ -31,6 +31,7 @@ using uint = uint32_t;
 #include <directx/d3dx12.h>
 
 #include <magic_enum/magic_enum.hpp>
+#include <spdlog/spdlog.h>
 
 #ifdef NDEBUG
 #	include <spdlog/sinks/basic_file_sink.h>
@@ -38,15 +39,18 @@ using uint = uint32_t;
 #	include <spdlog/sinks/msvc_sink.h>
 #endif
 
-
-
 #define DLLEXPORT __declspec(dllexport)
 
-namespace logger = F4SE::log;
+namespace logger = spdlog;
 
 namespace stl
 {
-	using namespace F4SE::stl;
+	[[noreturn]] inline void report_and_fail(std::string_view a_msg)
+	{
+		logger::critical("{}", a_msg);
+		MessageBoxA(nullptr, a_msg.data(), "AAAFrameGeneration", MB_OK | MB_ICONERROR);
+		std::terminate();
+	}
 
 	template <class T>
 	void write_thunk_call(std::uintptr_t a_src)

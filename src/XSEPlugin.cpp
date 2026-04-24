@@ -1,13 +1,35 @@
 
+#include <ShlObj_core.h>
+
 #include "DX11Hooks.h"
 #include "Upscaling.h"
+
+std::optional<std::filesystem::path> GetLogDirectory()
+{
+	PWSTR documentsPath = nullptr;
+	if (FAILED(SHGetKnownFolderPath(FOLDERID_Documents, KF_FLAG_DEFAULT, nullptr, &documentsPath))) {
+		return std::nullopt;
+	}
+
+	std::filesystem::path path{ documentsPath };
+	CoTaskMemFree(documentsPath);
+
+	path /= "My Games/Fallout4/F4SE";
+	std::error_code ec;
+	std::filesystem::create_directories(path, ec);
+	if (ec) {
+		return std::nullopt;
+	}
+
+	return path;
+}
 
 void InitializeLog()
 {
 #ifndef NDEBUG
 	auto sink = std::make_shared<spdlog::sinks::msvc_sink_mt>();
 #else
-	auto path = logger::log_directory();
+	auto path = GetLogDirectory();
 	if (!path) {
 		stl::report_and_fail("Failed to find standard logging directory"sv);
 	}
