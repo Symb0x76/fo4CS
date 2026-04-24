@@ -9,9 +9,11 @@
 #include "F4SE/F4SE.h"
 #include "RE/Fallout.h"
 #if defined(FALLOUT_POST_NG)
-#include "REX/REX.h"
+	#include "REX/REX.h"
 #endif
 #pragma warning(pop)
+
+#include "PostAECompat.h"
 
 #include "Windows.h"
 
@@ -31,8 +33,6 @@ using uint = uint32_t;
 #include <directx/d3dx12.h>
 
 #include <magic_enum/magic_enum.hpp>
-#include <spdlog/spdlog.h>
-
 #ifdef NDEBUG
 #	include <spdlog/sinks/basic_file_sink.h>
 #else
@@ -41,6 +41,8 @@ using uint = uint32_t;
 
 #define DLLEXPORT __declspec(dllexport)
 
+#include <spdlog/spdlog.h>
+
 namespace logger = spdlog;
 
 namespace stl
@@ -48,7 +50,7 @@ namespace stl
 	[[noreturn]] inline void report_and_fail(std::string_view a_msg)
 	{
 		logger::critical("{}", a_msg);
-		MessageBoxA(nullptr, a_msg.data(), "AAAFrameGeneration", MB_OK | MB_ICONERROR);
+		MessageBoxA(nullptr, a_msg.data(), "fo4CS", MB_OK | MB_ICONERROR);
 		std::terminate();
 	}
 
@@ -130,4 +132,3 @@ namespace DX
 	}
 }
 
-#include "Plugin.h"

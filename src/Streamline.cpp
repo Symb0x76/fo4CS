@@ -119,11 +119,13 @@ namespace
 
 		if (const auto pluginDir = GetCurrentPluginDirectory(); !pluginDir.empty()) {
 			addUnique(pluginDir / L"Streamline");
+			addUnique(pluginDir / L"Upscaling" / L"Streamline");
 			addUnique(pluginDir / L"FrameGeneration" / L"Streamline");
 		}
 
 		if (const auto exeDir = GetModuleDirectory(nullptr); !exeDir.empty()) {
 			addUnique(exeDir / L"Data" / L"F4SE" / L"Plugins" / L"Streamline");
+			addUnique(exeDir / L"Data" / L"F4SE" / L"Plugins" / L"Upscaling" / L"Streamline");
 			addUnique(exeDir / L"Data" / L"F4SE" / L"Plugins" / L"FrameGeneration" / L"Streamline");
 		}
 

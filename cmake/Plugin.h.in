@@ -15,5 +15,6 @@ namespace Plugin
 		// clang-format on
 	};
 
-	inline constexpr auto NAME = "@PROJECT_NAME@"sv;
+	inline constexpr auto NAME = "@FO4CS_PLUGIN_NAME@"sv;
+	inline constexpr auto DISPLAY_NAME = "@FO4CS_PLUGIN_DISPLAY_NAME@"sv;
 }

@@ -1,52 +1,11 @@
-add_library("${PROJECT_NAME}" SHARED)
+set(FO4CS_BUILD_FRAMEGEN ON CACHE BOOL "Build the FrameGen plugin target")
+set(FO4CS_BUILD_UPSCALER ON CACHE BOOL "Build the Upscaler plugin target")
 
-target_compile_features(
-    "${PROJECT_NAME}"
-    PRIVATE
-    cxx_std_23
-)
-
-set_property(GLOBAL PROPERTY USE_FOLDERS ON)
-
-include(AddCXXFiles)
-add_cxx_files("${PROJECT_NAME}")
-
-configure_file(
-    ${CMAKE_CURRENT_SOURCE_DIR}/cmake/Plugin.h.in
-    ${CMAKE_CURRENT_BINARY_DIR}/cmake/Plugin.h
-    @ONLY
-)
-
-configure_file(
-    ${CMAKE_CURRENT_SOURCE_DIR}/cmake/version.rc.in
-    ${CMAKE_CURRENT_BINARY_DIR}/cmake/version.rc
-    @ONLY
-)
-
-target_sources(
-    "${PROJECT_NAME}"
-    PRIVATE
-    ${CMAKE_CURRENT_BINARY_DIR}/cmake/Plugin.h
-    ${CMAKE_CURRENT_BINARY_DIR}/cmake/version.rc
-)
-
-target_precompile_headers(
-    "${PROJECT_NAME}"
-    PRIVATE
-    include/PCH.h
-)
-
-set(CMAKE_INTERPROCEDURAL_OPTIMIZATION ON)
-set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_DEBUG OFF)
-
-set(Boost_USE_STATIC_LIBS ON)
-set(Boost_USE_STATIC_RUNTIME ON)
-
-if(WIN32)
-    add_compile_definitions(_WINDOWS)
-endif()
-
-add_compile_definitions(_AMD64_)
+function(fo4cs_validate_plugin_selection)
+    if(NOT FO4CS_BUILD_FRAMEGEN AND NOT FO4CS_BUILD_UPSCALER)
+        message(FATAL_ERROR "At least one plugin target must be enabled. Set FO4CS_BUILD_FRAMEGEN and/or FO4CS_BUILD_UPSCALER to ON.")
+    endif()
+endfunction()
 
 function(xseplugin_resolve_commonlib_root out_root out_name)
     if(BUILD_PRE_NG)
@@ -106,79 +65,115 @@ function(xseplugin_resolve_commonlib_target out_target)
     endif()
 endfunction()
 
-if(CMAKE_GENERATOR MATCHES "Visual Studio")
-    add_compile_definitions(_UNICODE)
-
-    target_compile_definitions(${PROJECT_NAME} PRIVATE "$<$<CONFIG:DEBUG>:DEBUG>")
-
-    set(SC_RELEASE_OPTS "/Zi;/fp:fast;/GL;/Gy-;/Gm-;/Gw;/sdl-;/GS-;/guard:cf-;/O2;/Ob2;/Oi;/Ot;/Oy;/fp:except-")
-
-    target_compile_options(
-        "${PROJECT_NAME}"
+function(fo4cs_apply_plugin_defaults target)
+    target_compile_features(
+        "${target}"
         PRIVATE
-        /MP
-        /W4
-        /WX
-        /permissive-
-        /Zc:alignedNew
-        /Zc:auto
-        /Zc:__cplusplus
-        /Zc:externC
-        /Zc:externConstexpr
-        /Zc:forScope
-        /Zc:hiddenFriend
-        /Zc:implicitNoexcept
-        /Zc:lambda
-        /Zc:noexceptTypes
-        /Zc:preprocessor
-        /Zc:referenceBinding
-        /Zc:rvalueCast
-        /Zc:sizedDealloc
-        /Zc:strictStrings
-        /Zc:ternary
-        /Zc:threadSafeInit
-        /Zc:trigraphs
-        /Zc:wchar_t
-        /wd4200 # nonstandard extension used : zero-sized array in struct/union
-        /arch:AVX
+        cxx_std_23
     )
 
-    target_compile_options(${PROJECT_NAME} PUBLIC "$<$<CONFIG:DEBUG>:/fp:strict>")
-    target_compile_options(${PROJECT_NAME} PUBLIC "$<$<CONFIG:DEBUG>:/ZI>")
-    target_compile_options(${PROJECT_NAME} PUBLIC "$<$<CONFIG:DEBUG>:/Od>")
-    target_compile_options(${PROJECT_NAME} PUBLIC "$<$<CONFIG:DEBUG>:/Gy>")
-    target_compile_options(${PROJECT_NAME} PUBLIC "$<$<CONFIG:RELEASE>:${SC_RELEASE_OPTS}>")
-
-    target_link_options(
-        ${PROJECT_NAME}
+    target_precompile_headers(
+        "${target}"
         PRIVATE
-        /WX
-        "$<$<CONFIG:DEBUG>:/INCREMENTAL;/OPT:NOREF;/OPT:NOICF>"
-        "$<$<CONFIG:RELEASE>:/LTCG;/INCREMENTAL:NO;/OPT:REF;/OPT:ICF;/DEBUG:FULL>"
+        include/PCH.h
     )
-endif()
 
-xseplugin_resolve_commonlib_root(CommonLibRoot CommonLibName)
-xseplugin_resolve_commonlib_project(CommonLibPath "${CommonLibRoot}")
+    target_include_directories(
+        "${target}"
+        PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        PRIVATE
+        ${CMAKE_CURRENT_BINARY_DIR}/cmake/${target}
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
 
-if(F4SE_SUPPORT_XBYAK)
-    set(COMMONLIBF4_ENABLE_XBYAK ON CACHE BOOL "Enable xbyak support for CommonLibF4" FORCE)
-endif()
+    if(WIN32)
+        target_compile_definitions("${target}" PRIVATE _WINDOWS)
+    endif()
 
-add_subdirectory(${CommonLibPath} ${CommonLibName} EXCLUDE_FROM_ALL)
-xseplugin_resolve_commonlib_target(CommonLibTarget)
+    target_compile_definitions("${target}" PRIVATE _AMD64_)
 
-target_include_directories(
-    ${PROJECT_NAME}
-    PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-    PRIVATE
-    ${CMAKE_CURRENT_BINARY_DIR}/cmake
-    ${CMAKE_CURRENT_SOURCE_DIR}/src
-)
+    if(CMAKE_GENERATOR MATCHES "Visual Studio")
+        target_compile_definitions("${target}" PRIVATE _UNICODE "$<$<CONFIG:DEBUG>:DEBUG>")
 
-target_link_libraries(
-    ${PROJECT_NAME}
-    PUBLIC
-    ${CommonLibTarget}
-)
+        set(SC_RELEASE_OPTS "/Zi;/fp:fast;/GL;/Gy-;/Gm-;/Gw;/sdl-;/GS-;/guard:cf-;/O2;/Ob2;/Oi;/Ot;/Oy;/fp:except-")
+
+        target_compile_options(
+            "${target}"
+            PRIVATE
+            /MP
+            /W4
+            /WX
+            /permissive-
+            /Zc:alignedNew
+            /Zc:auto
+            /Zc:__cplusplus
+            /Zc:externC
+            /Zc:externConstexpr
+            /Zc:forScope
+            /Zc:hiddenFriend
+            /Zc:implicitNoexcept
+            /Zc:lambda
+            /Zc:noexceptTypes
+            /Zc:preprocessor
+            /Zc:referenceBinding
+            /Zc:rvalueCast
+            /Zc:sizedDealloc
+            /Zc:strictStrings
+            /Zc:ternary
+            /Zc:threadSafeInit
+            /Zc:trigraphs
+            /Zc:wchar_t
+            /wd4200
+            /arch:AVX
+        )
+
+        target_compile_options("${target}" PUBLIC "$<$<CONFIG:DEBUG>:/fp:strict>" "$<$<CONFIG:DEBUG>:/ZI>" "$<$<CONFIG:DEBUG>:/Od>" "$<$<CONFIG:DEBUG>:/Gy>" "$<$<CONFIG:RELEASE>:${SC_RELEASE_OPTS}>")
+
+        target_link_options(
+            "${target}"
+            PRIVATE
+            /WX
+            "$<$<CONFIG:DEBUG>:/INCREMENTAL;/OPT:NOREF;/OPT:NOICF>"
+            "$<$<CONFIG:RELEASE>:/LTCG;/INCREMENTAL:NO;/OPT:REF;/OPT:ICF;/DEBUG:FULL>"
+        )
+    endif()
+endfunction()
+
+function(fo4cs_configure_plugin_metadata target plugin_name plugin_display_name)
+    set(FO4CS_PLUGIN_NAME "${plugin_name}")
+    set(FO4CS_PLUGIN_DISPLAY_NAME "${plugin_display_name}")
+    set(_plugin_generated_dir "${CMAKE_CURRENT_BINARY_DIR}/cmake/${target}")
+    file(MAKE_DIRECTORY "${_plugin_generated_dir}")
+
+    configure_file(
+        ${CMAKE_CURRENT_SOURCE_DIR}/cmake/Plugin.h.in
+        ${_plugin_generated_dir}/Plugin.h
+        @ONLY
+    )
+
+    configure_file(
+        ${CMAKE_CURRENT_SOURCE_DIR}/cmake/Version.rc.in
+        ${_plugin_generated_dir}/version.rc
+        @ONLY
+    )
+
+    target_sources(
+        "${target}"
+        PRIVATE
+        ${_plugin_generated_dir}/Plugin.h
+        ${_plugin_generated_dir}/version.rc
+    )
+endfunction()
+
+function(fo4cs_create_plugin target plugin_name plugin_display_name)
+    add_library("${target}" SHARED)
+    fo4cs_apply_plugin_defaults("${target}")
+    fo4cs_configure_plugin_metadata("${target}" "${plugin_name}" "${plugin_display_name}")
+
+    target_link_libraries(
+        "${target}"
+        PUBLIC
+        ${ARGN}
+    )
+endfunction()

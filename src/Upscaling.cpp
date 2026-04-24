@@ -81,7 +81,7 @@ enum class DepthStencilTarget
 
 ID3D11DeviceChild* CompileShader(const wchar_t* FilePath, const char* ProgramType, const char* Program = "main")
 {
-	auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
+	auto rendererData = fo4cs::GetRendererData();
 	auto device = reinterpret_cast<ID3D11Device*>(rendererData->device);
 
 	// Compiler setup
@@ -144,7 +144,7 @@ void Upscaling::CreateFrameGenerationResources()
 	
 	setupBuffers = true;
 
-	auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
+	auto rendererData = fo4cs::GetRendererData();
 	auto& main = rendererData->renderTargets[(uint)RenderTarget::kMain];
 
 	for (int index = 0; index < 2; index++) {
@@ -268,7 +268,7 @@ void Upscaling::CreateFrameGenerationResources()
 
 void Upscaling::PreAlpha()
 {
-	auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
+	auto rendererData = fo4cs::GetRendererData();
 	auto context = reinterpret_cast<ID3D11DeviceContext*>(rendererData->context);
 	
 	auto& colorMain = rendererData->renderTargets[(uint)RenderTarget::kMain];
@@ -285,7 +285,7 @@ void Upscaling::PostAlpha()
 	if (!setupBuffers)
 		CreateFrameGenerationResources();
 
-	auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
+	auto rendererData = fo4cs::GetRendererData();
 
 	auto context = reinterpret_cast<ID3D11DeviceContext*>(rendererData->context);
 	auto dx12SwapChain = DX12SwapChain::GetSingleton();
@@ -338,8 +338,8 @@ void Upscaling::CopyBuffersToSharedResources()
 
 	if (!setupBuffers)
 		CreateFrameGenerationResources();
+auto rendererData = fo4cs::GetRendererData();
 
-	auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
 
 	auto context = reinterpret_cast<ID3D11DeviceContext*>(rendererData->context);
 	auto dx12SwapChain = DX12SwapChain::GetSingleton();
@@ -499,8 +499,8 @@ void Upscaling::PostDisplay()
 
 	if (!setupBuffers)
 		CreateFrameGenerationResources();
-	
-	auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
+	auto rendererData = fo4cs::GetRendererData();
+
 
 	auto& swapChain = rendererData->renderTargets[(uint)RenderTarget::kFrameBuffer];
 	ID3D11Resource* swapChainResource;
@@ -519,7 +519,7 @@ void Upscaling::Reset()
 	if (!setupBuffers)
 		CreateFrameGenerationResources();
 
-	auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
+	auto rendererData = fo4cs::GetRendererData();
 	auto context = reinterpret_cast<ID3D11DeviceContext*>(rendererData->context);
 
 	auto dx12SwapChain = DX12SwapChain::GetSingleton();

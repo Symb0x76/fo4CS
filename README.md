@@ -1,100 +1,123 @@
-# Skyrim Community Shaders
+# fo4CS
 
-SKSE core plugin for community-driven advanced graphics modifications.
+F4SE plugins for Fallout 4 that provide frame generation and upscaling support.
 
-[Nexus](https://www.nexusmods.com/skyrimspecialedition/mods/86492)
+This repository can build two plugin targets:
+
+- `FrameGen` — frame generation support.
+- `Upscaler` — upscaling support.
 
 ## Requirements
 
-- Any terminal of your choice (e.g., PowerShell)
-- [Visual Studio Community 2022](https://visualstudio.microsoft.com/)
-  - Desktop development with C++
+### Build requirements
+
+- Windows 11 or Windows 10 x64
+- [Visual Studio Community 2022](https://visualstudio.microsoft.com/) with **Desktop development with C++**
 - [CMake](https://cmake.org/)
-  - Edit the `PATH` environment variable and add the cmake.exe install path as a new value
-  - Instructions for finding and editing the `PATH` environment variable can be found [here](https://www.java.com/en/download/help/path.html)
 - [Git](https://git-scm.com/downloads)
-  - Edit the `PATH` environment variable and add the Git.exe install path as a new value
-- [Vcpkg](https://github.com/microsoft/vcpkg)
-  - Install vcpkg using the directions in vcpkg's [Quick Start Guide](https://github.com/microsoft/vcpkg#quick-start-windows)
-  - After install, add a new environment variable named `VCPKG_ROOT` with the value as the path to the folder containing vcpkg
+- [vcpkg](https://github.com/microsoft/vcpkg)
+  - Set the `VCPKG_ROOT` environment variable to your vcpkg installation path.
 
-## User Requirements
+### Runtime requirements
 
-- [Address Library for SKSE](https://www.nexusmods.com/skyrimspecialedition/mods/32444)
-  - Needed for SSE/AE
-- [VR Address Library for SKSEVR](https://www.nexusmods.com/skyrimspecialedition/mods/58101)
-  - Needed for VR
+- Fallout 4 with F4SE.
+- Address Library / matching CommonLibF4 runtime data for your target runtime flavor.
+- For NVIDIA DLSS / DLSS Frame Generation, see [NVIDIA Streamline / DLSS Runtime Files](#nvidia-streamline--dlss-runtime-files).
 
-### NVIDIA DLSS Frame Generation
+## Runtime flavors
 
-DLSS Frame Generation requires an **RTX 40-series or newer** GPU and the following DLLs placed in:
+The project has separate CMake presets and build scripts for supported runtime families:
 
-```
-F4SE\Plugins\FrameGeneration\Streamline\
-```
+| Runtime flavor | CMake preset | Build script |
+| -------------- | ------------ | ------------ |
+| Pre-NG | `PreNG` | `BuildReleasePreNG.bat` |
+| Post-NG | `PostNG` | `BuildReleasePostNG.bat` |
+| Post-AE | `PostAE` | `BuildReleasePostAE.bat` |
 
-| File                | Source                                                                 |
-| ------------------- | ---------------------------------------------------------------------- |
-| `sl.interposer.dll` | [NVIDIA Streamline SDK](https://github.com/NVIDIAGameWorks/Streamline) |
-| `sl.common.dll`     | NVIDIA Streamline SDK                                                  |
-| `sl.dlss_g.dll`     | NVIDIA Streamline SDK                                                  |
-| `sl.reflex.dll`     | NVIDIA Streamline SDK                                                  |
-| `sl.pcl.dll`        | NVIDIA Streamline SDK                                                  |
-| `nvngx_dlssg.dll`   | NVIDIA driver installation (`System32`)                                |
+Each build script builds both plugin targets by default. You can disable a target by setting an environment variable before running the script:
 
-`nvngx_dlssg.dll` is installed automatically with NVIDIA drivers on supported systems. It can be found at `C:\Windows\System32\nvngx_dlssg.dll` and copied to the Streamline folder.
-
-The Streamline SDK DLLs (`sl.interposer.dll`, `sl.common.dll`, `sl.dlss_g.dll`) must be obtained from the [NVIDIA Streamline SDK releases](https://github.com/NVIDIAGameWorks/Streamline/releases) (requires NVIDIA developer registration).
-
-## Register Visual Studio as a Generator
-
-- Open `x64 Native Tools Command Prompt`
-- Run `cmake`
-- Close the cmd window
-
-## Clone and Build
-Open terminal (e.g., PowerShell) and run the following commands:
-
-```
-git clone https://github.com/doodlum/skyrim-community-shaders.git --recursive
-cd skyrim-community-shaders
-.\BuildRelease.bat
+```bat
+set FRAMEGEN=OFF && BuildReleasePostAE.bat
+set UPSCALER=OFF && BuildReleasePostAE.bat
 ```
 
-### CMAKE Options (optional)
-If you want an example CMakeUserPreset to start off with you can copy the `CMakeUserPresets.json.template` -> `CMakeUserPresets.json`
-#### AUTO_PLUGIN_DEPLOYMENT
-* This option is default `"OFF"`
-* Make sure `"AUTO_PLUGIN_DEPLOYMENT"` is set to `"ON"` in `CMakeUserPresets.json`
-* Change the `"CommunityShadersOutputDir"` value to match your desired outputs, if you want multiple folders you can separate them by `;` is shown in the template example
-#### AIO_ZIP_TO_DIST
-* This option is default `"ON"`
-* Make sure `"AIO_ZIP_TO_DIST"` is set to `"ON"` in `CMakeUserPresets.json`
-* This will create a `CommunityShaders_AIO.7z` archive in /dist containing all features and base mod
-#### ZIP_TO_DIST
-* This option is default `"ON"`
-* Make sure `"ZIP_TO_DIST"` is set to `"ON"` in `CMakeUserPresets.json`
-* This will create a zip for each feature and one for the base Community shaders in /dist containing
-#### TRACY_SUPPORT
-* This option is default `"OFF"`
-* This will enable tracy support, might need to delete build folder when this option is changed
+## Clone and build
 
+Clone with submodules:
 
-When using custom preset you can call BuildRelease.bat with an parameter to specify which preset to configure eg:
-`.\BuildRelease.bat ALL-WITH-AUTO-DEPLOYMENT`
+```bat
+git clone <repo-url> --recursive
+cd fo4CS
+```
 
-When switching between different presets you might need to remove the build folder
+Build a release package for your runtime flavor:
+
+```bat
+BuildReleasePostAE.bat
+```
+
+Or run CMake directly:
+
+```bat
+cmake -S . --preset=PostAE -DFRAMEGEN=ON -DUPSCALER=ON
+cmake --build build\PostAE --config Release --target package
+```
+
+The package zip is written to `dist/`.
+
+## Package layout
+
+The generated package installs files under the normal Fallout 4 `Data` layout. Important paths include:
+
+```text
+F4SE\Plugins\FrameGen.dll
+F4SE\Plugins\Upscaler.dll
+F4SE\Plugins\FrameGeneration\
+F4SE\Plugins\Upscaling\
+F4SE\Plugins\Streamline\
+MCM\Config\Upscaling\
+```
+
+`F4SE\Plugins\Streamline\` is a shared runtime dependency folder used by both FrameGen and Upscaler.
+
+## NVIDIA Streamline / DLSS Runtime Files
+
+NVIDIA Streamline and DLSS DLLs are shared by Frame Generation and Upscaling, but are **not distributed** with this package. This is intentional: the project must not redistribute NVIDIA Streamline / DLSS runtime binaries unless redistribution rights are explicitly confirmed under NVIDIA's current terms.
+
+After installing the mod, place the required NVIDIA DLLs in this shared runtime folder:
+
+```text
+Data\F4SE\Plugins\Streamline\
+```
+
+The plugins search this shared folder first. Legacy fallback folders under `Data\F4SE\Plugins\FrameGeneration\Streamline\` and `Data\F4SE\Plugins\Upscaling\Streamline\` are still supported, but new installations should use the shared folder above.
+
+### Required DLLs
+
+| File | Required for | Source |
+| ---- | ------------ | ------ |
+| `sl.interposer.dll` | DLSS / DLSS-G | [NVIDIA Streamline SDK](https://github.com/NVIDIAGameWorks/Streamline) |
+| `sl.common.dll` | DLSS / DLSS-G | NVIDIA Streamline SDK |
+| `sl.dlss.dll` | DLSS Upscaling | NVIDIA Streamline SDK |
+| `sl.dlss_g.dll` | DLSS Frame Generation | NVIDIA Streamline SDK |
+| `sl.reflex.dll` | DLSS Frame Generation | NVIDIA Streamline SDK |
+| `sl.pcl.dll` | DLSS Frame Generation | NVIDIA Streamline SDK |
+| `nvngx_dlss.dll` | DLSS Upscaling | NVIDIA driver / NVIDIA DLSS runtime |
+| `nvngx_dlssg.dll` | DLSS Frame Generation | NVIDIA driver installation, commonly `C:\Windows\System32` on supported systems |
+
+The Streamline SDK DLLs must be obtained from the [NVIDIA Streamline SDK releases](https://github.com/NVIDIAGameWorks/Streamline/releases) according to NVIDIA's current access and redistribution terms.
+
+The generated package includes `F4SE\Plugins\Streamline\README.txt` as an installation reminder, but it does not include the NVIDIA DLLs themselves.
+
+## Notes for packagers
+
+- Do not add NVIDIA Streamline / DLSS DLLs to `package/F4SE/Plugins/Streamline/`.
+- The repository ignores Streamline DLLs under `package/F4SE/Plugins/Streamline/`, `package/F4SE/Plugins/FrameGeneration/Streamline/`, and `package/F4SE/Plugins/Upscaling/Streamline/`.
+- CMake packaging excludes Streamline DLLs from those folders as a second line of defense.
+- The release batch files also delete Streamline DLLs from `dist` after copying `package/`.
 
 ## License
 
-### Default
+[GPL-3.0-or-later](COPYING) WITH [Modding Exception AND GPL-3.0 Linking Exception (with Corresponding Source)](EXCEPTIONS.md).
 
-[GPL-3.0-or-later](COPYING) WITH [Modding Exception AND GPL-3.0 Linking Exception (with Corresponding Source)](EXCEPTIONS.md).  
-Specifically, the Modded Code is Skyrim (and its variants) and Modding Libraries include [SKSE](https://skse.silverlock.org/) and Commonlib (and variants).
-
-### Shaders
-
-See LICENSE within each directory; if none, it's [Default](#default)
-
-- [Features Shaders](features)
-- [Package Shaders](package/Shaders/)
+See individual third-party dependency licenses where applicable.

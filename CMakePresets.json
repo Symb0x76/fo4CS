@@ -10,7 +10,9 @@
 			"name": "common",
 			"hidden": true,
 			"cacheVariables": {
-				"F4SE_SUPPORT_XBYAK": "ON"
+				"F4SE_SUPPORT_XBYAK": "ON",
+				"FRAMEGEN": true,
+				"UPSCALER": true
 			},
 			"binaryDir": "${sourceDir}/build"
 		},
@@ -52,7 +54,33 @@
 			}
 		},
 		{
-			"name": "PRE-NG",
+			"name": "Framegen",
+			"hidden": true,
+			"cacheVariables": {
+				"FRAMEGEN": true,
+				"UPSCALER": false
+			}
+		},
+		{
+			"name": "Upscaler",
+			"hidden": true,
+			"cacheVariables": {
+				"FRAMEGEN": false,
+				"UPSCALER": true
+			}
+		},
+		{
+			"name": "all",
+			"hidden": true,
+			"cacheVariables": {
+				"FRAMEGEN": true,
+				"UPSCALER": true
+			}
+		},
+		{
+			"name": "PreNG",
+			"displayName": "PreNG",
+			"binaryDir": "${sourceDir}/build/PreNG",
 			"cacheVariables": {
 				"BUILD_PRE_NG": true,
 				"BUILD_POST_NG": false,
@@ -60,13 +88,16 @@
 			},
 			"inherits": [
 				"common",
+				"all",
 				"vcpkg",
 				"win64",
 				"msvc"
 			]
 		},
 		{
-			"name": "POST-NG",
+			"name": "PostNG",
+			"displayName": "PostNG",
+			"binaryDir": "${sourceDir}/build/PostNG",
 			"cacheVariables": {
 				"BUILD_PRE_NG": false,
 				"BUILD_POST_NG": true,
@@ -74,13 +105,16 @@
 			},
 			"inherits": [
 				"common",
+				"all",
 				"vcpkg",
 				"win64",
 				"msvc"
 			]
 		},
 		{
-			"name": "POST-AE",
+			"name": "PostAE",
+			"displayName": "PostAE",
+			"binaryDir": "${sourceDir}/build/PostAE",
 			"cacheVariables": {
 				"BUILD_PRE_NG": false,
 				"BUILD_POST_NG": false,
@@ -88,10 +122,85 @@
 			},
 			"inherits": [
 				"common",
+				"all",
 				"vcpkg",
 				"win64",
 				"msvc"
 			]
+		}
+	],
+	"buildPresets": [
+		{
+			"name": "pre-ng-debug",
+			"configurePreset": "PreNG",
+			"configuration": "Debug",
+			"displayName": "Debug"
+		},
+		{
+			"name": "pre-ng-release",
+			"configurePreset": "PreNG",
+			"configuration": "Release",
+			"displayName": "Release"
+		},
+		{
+			"name": "pre-ng-relwithdebinfo",
+			"configurePreset": "PreNG",
+			"configuration": "RelWithDebInfo",
+			"displayName": "RelWithDebInfo"
+		},
+		{
+			"name": "pre-ng-minsizerel",
+			"configurePreset": "PreNG",
+			"configuration": "MinSizeRel",
+			"displayName": "MinSizeRel"
+		},
+		{
+			"name": "post-ng-debug",
+			"configurePreset": "PostNG",
+			"configuration": "Debug",
+			"displayName": "Debug"
+		},
+		{
+			"name": "post-ng-release",
+			"configurePreset": "PostNG",
+			"configuration": "Release",
+			"displayName": "Release"
+		},
+		{
+			"name": "post-ng-relwithdebinfo",
+			"configurePreset": "PostNG",
+			"configuration": "RelWithDebInfo",
+			"displayName": "RelWithDebInfo"
+		},
+		{
+			"name": "post-ng-minsizerel",
+			"configurePreset": "PostNG",
+			"configuration": "MinSizeRel",
+			"displayName": "MinSizeRel"
+		},
+		{
+			"name": "post-ae-debug",
+			"configurePreset": "PostAE",
+			"configuration": "Debug",
+			"displayName": "Debug"
+		},
+		{
+			"name": "post-ae-release",
+			"configurePreset": "PostAE",
+			"configuration": "Release",
+			"displayName": "Release"
+		},
+		{
+			"name": "post-ae-relwithdebinfo",
+			"configurePreset": "PostAE",
+			"configuration": "RelWithDebInfo",
+			"displayName": "RelWithDebInfo"
+		},
+		{
+			"name": "post-ae-minsizerel",
+			"configurePreset": "PostAE",
+			"configuration": "MinSizeRel",
+			"displayName": "MinSizeRel"
 		}
 	]
 }

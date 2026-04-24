@@ -1,0 +1,67 @@
+{
+	"modName": "Upscaling",
+	"displayName": "Upscaling",
+	"minMcmVersion": 2,
+	"pluginRequirements": [],
+	"content": [
+		{
+			"text": "<font size='30'><p align='center'>UPSCALING</p></font>",
+			"html": true,
+			"type": "text"
+		},
+		{
+			"text": "ABOUT",
+			"type": "section"
+		},
+		{
+			"text": "Upscaling reconstructs lower resolutions to the native resolution using advanced algorithms, improving image quality and performance.",
+			"type": "text"
+		},
+		{
+			"text": "",
+			"type": "text"
+		},
+		{
+			"text": "When ENBSeries is active, only DLAA is available.",
+			"type": "text"
+		},
+		{
+			"text": "",
+			"type": "text"
+		},
+		{
+			"text": "SETTINGS",
+			"type": "section"
+		},
+		{
+			"id": "iUpscaleMethodPreference:Settings",
+			"text": "Upscale Method Preference",
+			"type": "stepper",
+			"help": "NVIDIA DLSS 4 is automatically used if available, otherwise AMD FSR 3.1 is used. (Default: DLSS)",
+			"valueOptions": {
+				"sourceType": "ModSettingInt",
+				"options": [
+					"Disabled",
+					"AMD FSR 3.1",
+					"NVIDIA DLSS 4"
+				]
+			}
+		},
+		{
+			"id": "iQualityMode:Settings",
+			"text": "Quality Mode",
+			"type": "stepper",
+			"help": "Controls the internal resolution. (Default: Quality)",
+			"valueOptions": {
+				"sourceType": "ModSettingInt",
+				"options": [
+					"Native AA",
+					"Quality",
+					"Balanced",
+					"Performance",
+					"Ultra Performance"
+				]
+			}
+		}
+	]
+}
