@@ -34,7 +34,13 @@
 			"name": "msvc",
 			"hidden": true,
 			"cacheVariables": {
-				"CMAKE_CXX_FLAGS": "/EHsc /MP /W4 /WX $penv{CXXFLAGS}"
+				"CMAKE_CXX_FLAGS": "/EHsc /MP /W4 /WX $penv{CXXFLAGS}",
+				"CMAKE_C_COMPILER": "cl",
+				"CMAKE_CXX_COMPILER": "cl"
+			},
+			"environment": {
+				"CC": "cl",
+				"CXX": "cl"
 			},
 			"generator": "Visual Studio 17 2022",
 			"vendor": {
