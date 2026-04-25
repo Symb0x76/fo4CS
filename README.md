@@ -28,11 +28,11 @@ This repository can build two plugin targets:
 
 The project has separate CMake presets and build scripts for supported runtime families:
 
-| Runtime flavor | CMake preset | Build script |
-| -------------- | ------------ | ------------ |
-| Pre-NG | `PreNG` | `BuildReleasePreNG.bat` |
-| Post-NG | `PostNG` | `BuildReleasePostNG.bat` |
-| Post-AE | `PostAE` | `BuildReleasePostAE.bat` |
+| Runtime flavor | CMake preset | Build script             |
+| -------------- | ------------ | ------------------------ |
+| Pre-NG         | `PreNG`      | `BuildReleasePreNG.bat`  |
+| Post-NG        | `PostNG`     | `BuildReleasePostNG.bat` |
+| Post-AE        | `PostAE`     | `BuildReleasePostAE.bat` |
 
 Each build script builds both plugin targets by default. You can disable a target by setting an environment variable before running the script:
 
@@ -94,27 +94,20 @@ The plugins search this shared folder first. Legacy fallback folders under `Data
 
 ### Required DLLs
 
-| File | Required for | Source |
-| ---- | ------------ | ------ |
-| `sl.interposer.dll` | DLSS / DLSS-G | [NVIDIA Streamline SDK](https://github.com/NVIDIAGameWorks/Streamline) |
-| `sl.common.dll` | DLSS / DLSS-G | NVIDIA Streamline SDK |
-| `sl.dlss.dll` | DLSS Upscaling | NVIDIA Streamline SDK |
-| `sl.dlss_g.dll` | DLSS Frame Generation | NVIDIA Streamline SDK |
-| `sl.reflex.dll` | DLSS Frame Generation | NVIDIA Streamline SDK |
-| `sl.pcl.dll` | DLSS Frame Generation | NVIDIA Streamline SDK |
-| `nvngx_dlss.dll` | DLSS Upscaling | NVIDIA driver / NVIDIA DLSS runtime |
-| `nvngx_dlssg.dll` | DLSS Frame Generation | NVIDIA driver installation, commonly `C:\Windows\System32` on supported systems |
+| File                | Required for          | Source                                                                          |
+| ------------------- | --------------------- | ------------------------------------------------------------------------------- |
+| `sl.interposer.dll` | DLSS / DLSS-G         | [NVIDIA Streamline SDK](https://github.com/NVIDIAGameWorks/Streamline)          |
+| `sl.common.dll`     | DLSS / DLSS-G         | NVIDIA Streamline SDK                                                           |
+| `sl.dlss.dll`       | DLSS Upscaling        | NVIDIA Streamline SDK                                                           |
+| `sl.dlss_g.dll`     | DLSS Frame Generation | NVIDIA Streamline SDK                                                           |
+| `sl.reflex.dll`     | DLSS Frame Generation | NVIDIA Streamline SDK                                                           |
+| `sl.pcl.dll`        | DLSS Frame Generation | NVIDIA Streamline SDK                                                           |
+| `nvngx_dlss.dll`    | DLSS Upscaling        | NVIDIA driver / NVIDIA DLSS runtime                                             |
+| `nvngx_dlssg.dll`   | DLSS Frame Generation | NVIDIA driver installation, commonly `C:\Windows\System32` on supported systems |
 
 The Streamline SDK DLLs must be obtained from the [NVIDIA Streamline SDK releases](https://github.com/NVIDIAGameWorks/Streamline/releases) according to NVIDIA's current access and redistribution terms.
 
 The generated package includes `F4SE\Plugins\Streamline\README.txt` as an installation reminder, but it does not include the NVIDIA DLLs themselves.
-
-## Notes for packagers
-
-- Do not add NVIDIA Streamline / DLSS DLLs to `package/F4SE/Plugins/Streamline/`.
-- The repository ignores Streamline DLLs under `package/F4SE/Plugins/Streamline/`, `package/F4SE/Plugins/FrameGeneration/Streamline/`, and `package/F4SE/Plugins/Upscaling/Streamline/`.
-- CMake packaging excludes Streamline DLLs from those folders as a second line of defense.
-- The release batch files also delete Streamline DLLs from `dist` after copying `package/`.
 
 ## License
 

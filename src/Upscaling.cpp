@@ -1,5 +1,9 @@
 #include "Upscaling.h"
 
+#include <algorithm>
+#include <filesystem>
+#include <vector>
+
 #include <d3dcompiler.h>
 
 #include "DX12SwapChain.h"
@@ -115,9 +119,24 @@ void Upscaling::LoadSettings()
 {
 	logger::info("[Frame Generation] Loading settings");
 
+	std::vector<std::filesystem::path> iniCandidates{
+		std::filesystem::path("Data\\F4SE\\Plugins\\FrameGeneration.ini"),
+		std::filesystem::path("Data\\F4SE\\Plugins\\FrameGeneration\\FrameGeneration.ini")
+	};
+
+	const auto iniPath = std::find_if(iniCandidates.begin(), iniCandidates.end(), [](const auto& candidate) {
+		std::error_code ec;
+		return std::filesystem::exists(candidate, ec);
+	});
+
 	CSimpleIniA ini;
 	ini.SetUnicode();
-	ini.LoadFile("Data\\F4SE\\Plugins\\FrameGeneration.ini");
+	if (iniPath != iniCandidates.end()) {
+		ini.LoadFile(iniPath->string().c_str());
+		logger::info("[Frame Generation] Settings file: {}", iniPath->string());
+	} else {
+		logger::warn("[Frame Generation] Settings file not found, using defaults");
+	}
 
 	settings.frameGenerationMode = ini.GetBoolValue("Settings", "bFrameGenerationMode", true);
 	settings.frameLimitMode = ini.GetBoolValue("Settings", "bFrameLimitMode", true);

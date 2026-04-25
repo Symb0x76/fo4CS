@@ -121,6 +121,17 @@ function(fo4cs_install_plugin target)
     )
 endfunction()
 
+function(fo4cs_install_package_directory directory)
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${directory}")
+        install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/${directory}/"
+            DESTINATION "."
+            PATTERN "F4SE/Plugins/Streamline/*.dll" EXCLUDE
+            PATTERN "F4SE/Plugins/FrameGeneration/Streamline/*.dll" EXCLUDE
+            PATTERN "F4SE/Plugins/Upscaling/Streamline/*.dll" EXCLUDE
+        )
+    endif()
+endfunction()
+
 if(BUILD_PRE_NG)
     set(FO4CS_RUNTIME_FLAVOR "PreNG")
 elseif(BUILD_POST_NG)
@@ -148,7 +159,7 @@ endif()
 if(UPSCALER)
     fo4cs_create_plugin(Upscaler Upscaler "Upscaler" ${FO4CS_COMMON_DEPENDENCIES})
     target_sources(Upscaler PRIVATE
-        src/UpscalerPlugin.cpp
+        src/UpscalingPlugin.cpp
     )
     target_compile_definitions(Upscaler PRIVATE
         UPSCALER=1
@@ -158,12 +169,15 @@ if(UPSCALER)
     fo4cs_install_plugin(Upscaler)
 endif()
 
-install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/package/"
-    DESTINATION "."
-    PATTERN "F4SE/Plugins/Streamline/*.dll" EXCLUDE
-    PATTERN "F4SE/Plugins/FrameGeneration/Streamline/*.dll" EXCLUDE
-    PATTERN "F4SE/Plugins/Upscaling/Streamline/*.dll" EXCLUDE
-)
+fo4cs_install_package_directory("package/Common")
+
+if(FRAMEGEN)
+    fo4cs_install_package_directory("package/FrameGen")
+endif()
+
+if(UPSCALER)
+    fo4cs_install_package_directory("package/Upscaling")
+endif()
 
 set(CPACK_PACKAGE_NAME "fo4CS-${FO4CS_RUNTIME_FLAVOR}")
 set(CPACK_PACKAGE_FILE_NAME "${CPACK_PACKAGE_NAME}-v${PROJECT_VERSION}")
