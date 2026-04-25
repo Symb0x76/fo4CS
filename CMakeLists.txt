@@ -62,8 +62,8 @@ add_library(Core OBJECT
     src/FidelityFX.h
     src/Streamline.cpp
     src/Streamline.h
-    src/Upscaling.cpp
-    src/Upscaling.h
+    src/Upscaler.cpp
+    src/Upscaler.h
 )
 
 # Core 不是插件目标，不调用 fo4cs_apply_plugin_defaults()，
@@ -159,41 +159,12 @@ endif()
 if(UPSCALER)
     fo4cs_create_plugin(Upscaler Upscaler "Upscaler" ${FO4CS_COMMON_DEPENDENCIES})
     target_sources(Upscaler PRIVATE
-        src/UpscalingPlugin.cpp
+        src/UpscalerPlugin.cpp
     )
     target_compile_definitions(Upscaler PRIVATE
         UPSCALER=1
-        UPSCALING_LDR=1
+        UPSCALER_LDR=1
     )
     target_link_libraries(Upscaler PRIVATE Core)
     fo4cs_install_plugin(Upscaler)
 endif()
-
-fo4cs_install_package_directory("package/Common")
-
-if(FRAMEGEN)
-    fo4cs_install_package_directory("package/FrameGen")
-endif()
-
-if(UPSCALER)
-    fo4cs_install_package_directory("package/Upscaling")
-endif()
-
-set(CPACK_PACKAGE_NAME "fo4CS-${FO4CS_RUNTIME_FLAVOR}")
-set(CPACK_PACKAGE_FILE_NAME "${CPACK_PACKAGE_NAME}-v${PROJECT_VERSION}")
-set(CPACK_PACKAGE_VENDOR "fo4CS")
-set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
-set(CPACK_PACKAGE_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/dist")
-set(CPACK_INCLUDE_TOPLEVEL_DIRECTORY ON)
-set(CPACK_VERBATIM_VARIABLES YES)
-set(CPACK_GENERATOR "ZIP")
-set(CPACK_PACKAGE_FILES "")
-
-include(CPack)
-
-add_custom_target(fo4cs_package_clean
-    COMMAND "${CMAKE_COMMAND}" --build "${CMAKE_BINARY_DIR}" --config $<CONFIG> --target package
-    COMMAND "${CMAKE_COMMAND}" -E rm -rf "${CMAKE_BINARY_DIR}/_CPack_Packages"
-    COMMENT "Build package and remove _CPack_Packages staging directory"
-    VERBATIM
-)

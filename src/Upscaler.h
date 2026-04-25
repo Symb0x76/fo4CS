@@ -17,6 +17,8 @@ public:
 	{
 		bool frameGenerationMode = 1;
 		bool frameLimitMode = 1;
+		int upscaleMethodPreference = 2;
+		int qualityMode = 1;
 	};
 
 	Settings settings;

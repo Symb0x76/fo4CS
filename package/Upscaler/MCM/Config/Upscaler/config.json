@@ -1,11 +1,11 @@
 {
-	"modName": "Upscaling",
-	"displayName": "Upscaling",
+	"modName": "Upscaler",
+	"displayName": "Upscaler",
 	"minMcmVersion": 2,
 	"pluginRequirements": [],
 	"content": [
 		{
-			"text": "<font size='30'><p align='center'>UPSCALING</p></font>",
+			"text": "<font size='30'><p align='center'>UPSCALER</p></font>",
 			"html": true,
 			"type": "text"
 		},
@@ -30,6 +30,14 @@
 			"type": "text"
 		},
 		{
+			"text": "Changes take effect after restarting the game.",
+			"type": "text"
+		},
+		{
+			"text": "",
+			"type": "text"
+		},
+		{
 			"text": "SETTINGS",
 			"type": "section"
 		},
@@ -37,21 +45,17 @@
 			"id": "iUpscaleMethodPreference:Settings",
 			"text": "Upscale Method Preference",
 			"type": "stepper",
-			"help": "NVIDIA DLSS 4 is automatically used if available, otherwise AMD FSR 3.1 is used. (Default: DLSS)",
+			"help": "NVIDIA DLSS is automatically used if available, otherwise AMD FSR is used. Changes take effect after restart. (Default: DLSS)",
 			"valueOptions": {
 				"sourceType": "ModSettingInt",
-				"options": [
-					"Disabled",
-					"AMD FSR 3.1",
-					"NVIDIA DLSS 4"
-				]
+				"options": ["Disabled", "AMD FSR", "NVIDIA DLSS"]
 			}
 		},
 		{
 			"id": "iQualityMode:Settings",
 			"text": "Quality Mode",
 			"type": "stepper",
-			"help": "Controls the internal resolution. (Default: Quality)",
+			"help": "Controls the internal resolution. Changes take effect after restart. (Default: Quality)",
 			"valueOptions": {
 				"sourceType": "ModSettingInt",
 				"options": [

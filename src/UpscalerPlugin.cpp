@@ -1,7 +1,7 @@
 #include "PluginCommon.h"
 
 #include "DX11Hooks.h"
-#include "Upscaling.h"
+#include "Upscaler.h"
 
 namespace
 {
@@ -18,7 +18,7 @@ namespace
 }
 
 #if defined(FALLOUT_POST_NG)
-extern "C" DLLEXPORT auto F4SEPlugin_Version = []() noexcept {
+extern "C" DLLEXPORT constinit F4SE::PluginVersionData F4SEPlugin_Version = []() consteval {
 	F4SE::PluginVersionData data{};
 	fo4cs::PopulateVersionData(data);
 	return data;
@@ -33,7 +33,12 @@ extern "C" DLLEXPORT bool F4SEAPI F4SEPlugin_Query(const F4SE::QueryInterface*, 
 
 extern "C" DLLEXPORT bool F4SEAPI F4SEPlugin_Load(const F4SE::LoadInterface* a_f4se)
 {
+#if defined(FALLOUT_POST_AE)
+	F4SE::Init(a_f4se, { .trampoline = true, .trampolineSize = 2 * stl::kThunkCallTrampolineSize });
+#else
 	F4SE::Init(a_f4se);
+	F4SE::AllocTrampoline(2 * stl::kThunkCallTrampolineSize);
+#endif
 	fo4cs::WaitForDebuggerIfNeeded();
 	fo4cs::InitializeLog();
 

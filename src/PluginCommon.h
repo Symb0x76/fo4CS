@@ -55,7 +55,7 @@ namespace fo4cs
 	}
 
 #if defined(FALLOUT_POST_NG)
-	inline void PopulateVersionData(F4SE::PluginVersionData& data)
+	constexpr void PopulateVersionData(F4SE::PluginVersionData& data)
 	{
 		data.PluginVersion(Plugin::VERSION);
 		data.PluginName(Plugin::NAME.data());
@@ -64,7 +64,17 @@ namespace fo4cs
 		data.UsesSigScanning(false);
 		data.IsLayoutDependent(true);
 		data.HasNoStructUse(false);
+#if defined(FALLOUT_POST_AE)
+		data.CompatibleVersions({
+			F4SE::RUNTIME_1_10_984,
+			F4SE::RUNTIME_1_11_137,
+			F4SE::RUNTIME_1_11_159,
+			F4SE::RUNTIME_1_11_169,
+			F4SE::RUNTIME_1_11_191,
+		});
+#else
 		data.CompatibleVersions({ F4SE::RUNTIME_LATEST });
+#endif
 	}
 #else
 	inline void PopulatePluginInfo(F4SE::PluginInfo* a_info)

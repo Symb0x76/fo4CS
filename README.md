@@ -71,11 +71,14 @@ The generated package installs files under the normal Fallout 4 `Data` layout. I
 
 ```text
 F4SE\Plugins\FrameGen.dll
+F4SE\Plugins\FrameGeneration.ini
 F4SE\Plugins\Upscaler.dll
+F4SE\Plugins\Upscaler.ini
 F4SE\Plugins\FrameGeneration\
-F4SE\Plugins\Upscaling\
+F4SE\Plugins\Upscaler\
 F4SE\Plugins\Streamline\
-MCM\Config\Upscaling\
+MCM\Config\FrameGen\
+MCM\Config\Upscaler\
 ```
 
 `F4SE\Plugins\Streamline\` is a shared runtime dependency folder used by both FrameGen and Upscaler.

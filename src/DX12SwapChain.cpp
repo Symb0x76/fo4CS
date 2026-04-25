@@ -5,7 +5,7 @@
 
 #include "FidelityFX.h"
 #include "Streamline.h"
-#include "Upscaling.h"
+#include "Upscaler.h"
 
 extern bool enbLoaded;
 

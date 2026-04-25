@@ -3,7 +3,7 @@
 #include <d3d11.h>
 #pragma comment(lib, "d3d11.lib")
 
-#include "Upscaling.h"
+#include "Upscaler.h"
 #include "DX12SwapChain.h"
 #include "FidelityFX.h"
 #include "Streamline.h"
@@ -139,6 +139,8 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 
 void DX11Hooks::Install()
 {
+	Streamline::GetSingleton()->LoadAndInit();
+
 	if (ENB_API::RequestENBAPI()) {
 		logger::info("ENB detected, using alternative swap chain hook");
 		enbLoaded = true;
@@ -148,9 +150,6 @@ void DX11Hooks::Install()
 
 	auto fidelityFX = FidelityFX::GetSingleton();
 	fidelityFX->LoadFFX();
-
-	Streamline::GetSingleton()->LoadAndInit();
-
 	uintptr_t moduleBase = (uintptr_t)GetModuleHandle(nullptr);
 
 	(uintptr_t&)ptrD3D11CreateDeviceAndSwapChain = Detours::IATHook(moduleBase, "d3d11.dll", "D3D11CreateDeviceAndSwapChain", (uintptr_t)hk_D3D11CreateDeviceAndSwapChain);

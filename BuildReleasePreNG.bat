@@ -37,11 +37,11 @@ if /I "%UPSCALER%"=="ON" (
 
 if exist "package\Common" xcopy "package\Common" "dist" /I /Y /E
 if /I "%FRAMEGEN%"=="ON" if exist "package\FrameGen" xcopy "package\FrameGen" "dist" /I /Y /E
-if /I "%UPSCALER%"=="ON" if exist "package\Upscaling" xcopy "package\Upscaling" "dist" /I /Y /E
+if /I "%UPSCALER%"=="ON" if exist "package\Upscaler" xcopy "package\Upscaler" "dist" /I /Y /E
 
 if exist "dist\F4SE\Plugins\Streamline\*.dll" del /Q "dist\F4SE\Plugins\Streamline\*.dll"
 if exist "dist\F4SE\Plugins\FrameGeneration\Streamline\*.dll" del /Q "dist\F4SE\Plugins\FrameGeneration\Streamline\*.dll"
-if exist "dist\F4SE\Plugins\Upscaling\Streamline\*.dll" del /Q "dist\F4SE\Plugins\Upscaling\Streamline\*.dll"
+if exist "dist\F4SE\Plugins\Upscaler\Streamline\*.dll" del /Q "dist\F4SE\Plugins\Upscaler\Streamline\*.dll"
 
 pause
 endlocal

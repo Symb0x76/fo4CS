@@ -54,10 +54,10 @@ namespace stl
 		std::terminate();
 	}
 
+	inline constexpr std::size_t kThunkCallTrampolineSize = 14;
 	template <class T>
 	void write_thunk_call(std::uintptr_t a_src)
 	{
-		F4SE::AllocTrampoline(14);
 
 		auto& trampoline = F4SE::GetTrampoline();
 		T::func = trampoline.write_call<5>(a_src, T::thunk);

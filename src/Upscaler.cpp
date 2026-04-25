@@ -1,4 +1,4 @@
-#include "Upscaling.h"
+#include "Upscaler.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -83,6 +83,40 @@ enum class DepthStencilTarget
 	kCount = 13
 };
 
+namespace
+{
+	struct IniSource
+	{
+		std::filesystem::path path;
+		const char* label;
+	};
+
+	bool LoadIniIfExists(CSimpleIniA& ini, const IniSource& source, const char* component)
+	{
+		std::error_code ec;
+		if (!std::filesystem::exists(source.path, ec)) {
+			return false;
+		}
+
+		if (ini.LoadFile(source.path.string().c_str()) < 0) {
+			logger::warn("[{}] Failed to load {} settings from {}", component, source.label, source.path.string());
+			return false;
+		}
+
+		logger::info("[{}] Loaded {} settings from {}", component, source.label, source.path.string());
+		return true;
+	}
+
+	int ClampIntSetting(int value, int minValue, int maxValue, const char* settingName)
+	{
+		const int clamped = std::clamp(value, minValue, maxValue);
+		if (clamped != value) {
+			logger::warn("[Upscaler] {}={} is out of range, clamping to {}", settingName, value, clamped);
+		}
+		return clamped;
+	}
+}
+
 ID3D11DeviceChild* CompileShader(const wchar_t* FilePath, const char* ProgramType, const char* Program = "main")
 {
 	auto rendererData = fo4cs::GetRendererData();
@@ -119,22 +153,22 @@ void Upscaling::LoadSettings()
 {
 	logger::info("[Frame Generation] Loading settings");
 
-	std::vector<std::filesystem::path> iniCandidates{
-		std::filesystem::path("Data\\F4SE\\Plugins\\FrameGeneration.ini"),
-		std::filesystem::path("Data\\F4SE\\Plugins\\FrameGeneration\\FrameGeneration.ini")
+	const std::vector<IniSource> iniSources{
+		{ std::filesystem::path("Data\\MCM\\Config\\FrameGen\\settings.ini"), "MCM default" },
+		{ std::filesystem::path("Data\\F4SE\\Plugins\\FrameGeneration.ini"), "legacy plugin" },
+		{ std::filesystem::path("Data\\F4SE\\Plugins\\FrameGeneration\\FrameGeneration.ini"), "legacy plugin" },
+		{ std::filesystem::path("Data\\MCM\\Settings\\FrameGen.ini"), "MCM user override" }
 	};
-
-	const auto iniPath = std::find_if(iniCandidates.begin(), iniCandidates.end(), [](const auto& candidate) {
-		std::error_code ec;
-		return std::filesystem::exists(candidate, ec);
-	});
 
 	CSimpleIniA ini;
 	ini.SetUnicode();
-	if (iniPath != iniCandidates.end()) {
-		ini.LoadFile(iniPath->string().c_str());
-		logger::info("[Frame Generation] Settings file: {}", iniPath->string());
-	} else {
+
+	bool loadedAny = false;
+	for (const auto& source : iniSources) {
+		loadedAny = LoadIniIfExists(ini, source, "Frame Generation") || loadedAny;
+	}
+
+	if (!loadedAny) {
 		logger::warn("[Frame Generation] Settings file not found, using defaults");
 	}
 
@@ -143,6 +177,43 @@ void Upscaling::LoadSettings()
 
 	logger::info("[Frame Generation] bFrameGenerationMode: {}", settings.frameGenerationMode);
 	logger::info("[Frame Generation] bFrameLimitMode: {}", settings.frameLimitMode);
+
+	logger::info("[Upscaler] Loading settings");
+
+	const std::vector<IniSource> upscalerIniSources{
+		{ std::filesystem::path("Data\\MCM\\Config\\Upscaling\\settings.ini"), "MCM default (legacy)" },
+		{ std::filesystem::path("Data\\MCM\\Config\\Upscaler\\settings.ini"), "MCM default" },
+		{ std::filesystem::path("Data\\F4SE\\Plugins\\Upscaler.ini"), "legacy plugin" },
+		{ std::filesystem::path("Data\\F4SE\\Plugins\\Upscaler\\Upscaler.ini"), "legacy plugin" },
+		{ std::filesystem::path("Data\\MCM\\Settings\\Upscaling.ini"), "MCM user override (legacy)" },
+		{ std::filesystem::path("Data\\MCM\\Settings\\Upscaler.ini"), "MCM user override" }
+	};
+
+	CSimpleIniA upscalerIni;
+	upscalerIni.SetUnicode();
+
+	bool loadedUpscalerSettings = false;
+	for (const auto& source : upscalerIniSources) {
+		loadedUpscalerSettings = LoadIniIfExists(upscalerIni, source, "Upscaler") || loadedUpscalerSettings;
+	}
+
+	if (!loadedUpscalerSettings) {
+		logger::warn("[Upscaler] Settings file not found, using defaults");
+	}
+
+	settings.upscaleMethodPreference = ClampIntSetting(
+		static_cast<int>(upscalerIni.GetLongValue("Settings", "iUpscaleMethodPreference", settings.upscaleMethodPreference)),
+		0,
+		2,
+		"iUpscaleMethodPreference");
+	settings.qualityMode = ClampIntSetting(
+		static_cast<int>(upscalerIni.GetLongValue("Settings", "iQualityMode", settings.qualityMode)),
+		0,
+		4,
+		"iQualityMode");
+
+	logger::info("[Upscaler] iUpscaleMethodPreference: {}", settings.upscaleMethodPreference);
+	logger::info("[Upscaler] iQualityMode: {}", settings.qualityMode);
 }
 
 void Upscaling::PostPostLoad()
@@ -599,6 +670,7 @@ struct DrawWorld_Reticle
 
 void Upscaling::InstallHooks()
 {
+
 #if defined(FALLOUT_POST_NG)
 	stl::detour_thunk<WindowSizeChanged>(REL::ID(2276824));
 	stl::write_thunk_call<SetUseDynamicResolutionViewportAsDefaultViewport>(REL::ID(2318322).address() + 0xC5);
