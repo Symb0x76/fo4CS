@@ -8,6 +8,18 @@
 
 namespace
 {
+	struct F4SEInterfaceLayout
+	{
+		std::uint32_t f4seVersion;
+		std::uint32_t runtimeVersion;
+		std::uint32_t editorVersion;
+		std::uint32_t isEditor;
+		void*(F4SEAPI* QueryInterface)(std::uint32_t);
+		std::uint32_t(F4SEAPI* GetPluginHandle)();
+		std::uint32_t(F4SEAPI* GetReleaseIndex)();
+		const void*(F4SEAPI* GetPluginInfo)(const char*);
+	};
+
 	std::filesystem::path GetCurrentPluginDirectory()
 	{
 		HMODULE module = nullptr;
@@ -27,15 +39,22 @@ namespace
 		return std::filesystem::path(buffer.data(), buffer.data() + length).parent_path();
 	}
 
-	bool IsUpscalerPluginInstalled()
+	bool IsUpscalerPluginAvailable(const F4SE::LoadInterface* a_f4se)
 	{
+		const auto f4se = reinterpret_cast<const F4SEInterfaceLayout*>(a_f4se);
+		const bool registered =
+			f4se &&
+			f4se->GetPluginInfo &&
+			(f4se->GetPluginInfo("Upscaler") || f4se->GetPluginInfo("Upscaler.dll"));
+		if (registered || GetModuleHandleW(L"Upscaler.dll") != nullptr)
+			return true;
+
 		const auto pluginDir = GetCurrentPluginDirectory();
-		if (pluginDir.empty()) {
-			return GetModuleHandleW(L"Upscaler.dll") != nullptr;
-		}
+		if (pluginDir.empty())
+			return false;
 
 		std::error_code ec;
-		return std::filesystem::exists(pluginDir / L"Upscaler.dll", ec) || GetModuleHandleW(L"Upscaler.dll") != nullptr;
+		return std::filesystem::exists(pluginDir / L"Upscaler.dll", ec);
 	}
 }
 
@@ -59,9 +78,14 @@ extern "C" DLLEXPORT bool F4SEAPI F4SEPlugin_Load(const F4SE::LoadInterface* a_f
 	F4SE::Init(a_f4se);
 	fo4cs::WaitForDebuggerIfNeeded();
 	fo4cs::InitializeLog();
-	if (IsUpscalerPluginInstalled()) {
-		logger::info("Upscaler.dll detected, leaving DX hooks to Upscaler");
+
+	const bool upscalerPluginAvailable = IsUpscalerPluginAvailable(a_f4se);
+	if (upscalerPluginAvailable) {
+		Upscaling::GetSingleton()->LoadFrameGenerationSettings();
+		logger::info("[FrameGen] Upscaler plugin available, leaving DX hooks to Upscaler");
 	} else {
+		Upscaling::GetSingleton()->LoadSettings();
+		logger::info("[FrameGen] Upscaler plugin not available, installing FrameGen DX hooks");
 		DX11Hooks::Install();
 	}
 	return true;

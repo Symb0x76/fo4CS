@@ -2,6 +2,10 @@
 
 #include "Buffer.h"
 
+#include <array>
+#include <memory>
+#include <vector>
+
 #include "SimpleIni.h"
 
 class Upscaling
@@ -19,11 +23,30 @@ public:
 		bool frameLimitMode = 1;
 		int upscaleMethodPreference = 2;
 		int qualityMode = 1;
+		bool debugLogging = false;
+		int streamlineLogLevel = 0;
+		int debugFrameLogCount = 240;
+	};
+
+	enum class PluginMode
+	{
+		kFrameGen,
+		kUpscaler
+	};
+
+	enum class UpscaleMethod
+	{
+		kDisabled = 0,
+		kFSR = 1,
+		kDLSS = 2
 	};
 
 	Settings settings;
 
+	PluginMode pluginMode = PluginMode::kFrameGen;
+	bool renderBackendEnabled = false;
 	bool highFPSPhysicsFixLoaded = false;
+	bool debugTraceCurrentPresent = false;
 
 	bool d3d12Interop = false;
 	double refreshRate = 0.0f;
@@ -31,10 +54,14 @@ public:
 	Texture2D* HUDLessBufferShared[2];
 	Texture2D* depthBufferShared[2];
 	Texture2D* motionVectorBufferShared[2];
+	Texture2D* upscalerInputShared[2]{};
+	Texture2D* upscalerOutputShared[2]{};
 	
 	winrt::com_ptr<ID3D12Resource> HUDLessBufferShared12[2];
 	winrt::com_ptr<ID3D12Resource> depthBufferShared12[2];
 	winrt::com_ptr<ID3D12Resource> motionVectorBufferShared12[2];
+	winrt::com_ptr<ID3D12Resource> upscalerInputShared12[2];
+	winrt::com_ptr<ID3D12Resource> upscalerOutputShared12[2];
 
 	ID3D11ComputeShader* copyDepthToSharedBufferCS;
 	ID3D11ComputeShader* generateSharedBuffersCS;
@@ -42,8 +69,10 @@ public:
 	bool setupBuffers = false;
 
 	void LoadSettings();
+	void LoadFrameGenerationSettings();
 
 	void PostPostLoad();
+	void OnD3D11DeviceCreated(ID3D11Device* a_device, IDXGIAdapter* a_adapter);
 
 	void CreateFrameGenerationResources();
 	void PreAlpha();
@@ -61,6 +90,84 @@ public:
 	void PostDisplay();
 
 	void Reset();
+
+	UpscaleMethod GetPreferredUpscaleMethod() const;
+	bool UsesDLSSUpscaling() const;
+	bool UsesFSRUpscaling() const;
+	bool UsesDLSSFrameGeneration() const;
+	bool UsesFSRFrameGeneration() const;
+
+	UpscaleMethod GetUpscaleMethod(bool a_checkMenu) const;
+	void UpdateUpscaling();
+	void Upscale();
+	void CheckResources();
+
+	void UpdateRenderTargets(float a_currentWidthRatio, float a_currentHeightRatio);
+	void OverrideRenderTargets(const std::vector<int>& a_indicesToCopy = {});
+	void ResetRenderTargets(const std::vector<int>& a_indicesToCopy = {});
+	void UpdateRenderTarget(int a_index, float a_currentWidthRatio, float a_currentHeightRatio);
+	void OverrideRenderTarget(int a_index, bool a_doCopy = true);
+	void ResetRenderTarget(int a_index, bool a_doCopy = true);
+
+	void UpdateDepth(float a_currentWidthRatio, float a_currentHeightRatio);
+	void OverrideDepth(bool a_doCopy = true);
+	void ResetDepth();
+	void CopyDepth();
+
+	void UpdateSamplerStates(float a_currentMipBias);
+	void OverrideSamplerStates();
+	void ResetSamplerStates();
+	void UpdateGameSettings();
+	void CreateUpscalingResources();
+	void DestroyUpscalingResources();
+	void PatchSSRShader();
+
+	ID3D11ComputeShader* GetDilateMotionVectorCS();
+	ID3D11ComputeShader* GetOverrideLinearDepthCS();
+	ID3D11ComputeShader* GetOverrideDepthCS();
+	ID3D11VertexShader* GetCopyDepthVS();
+	ID3D11PixelShader* GetCopyDepthPS();
+	ID3D11DepthStencilState* GetCopyDepthStencilState();
+	ID3D11BlendState* GetCopyBlendState();
+	ID3D11RasterizerState* GetCopyRasterizerState();
+	ID3D11SamplerState* GetCopySamplerState();
+	ID3D11PixelShader* GetBSImagespaceShaderSSLRRaytracing();
+
+	struct UpscalingCB
+	{
+		uint ScreenSize[2];
+		uint RenderSize[2];
+		float4 CameraData;
+	};
+
+	ConstantBuffer* GetUpscalingCB();
+	void UpdateAndBindUpscalingCB(ID3D11DeviceContext* a_context, float2 a_screenSize, float2 a_renderSize);
+
+	float2 jitter = { 0.0f, 0.0f };
+	UpscaleMethod upscaleMethodNoMenu = UpscaleMethod::kDisabled;
+	UpscaleMethod upscaleMethod = UpscaleMethod::kDisabled;
+
+	RE::BSGraphics::RenderTarget originalRenderTargets[101]{};
+	RE::BSGraphics::RenderTarget proxyRenderTargets[101]{};
+	RE::BSGraphics::DepthStencilTarget originalDepthStencilTarget{};
+	RE::BSGraphics::DepthStencilTarget depthOverrideTarget{};
+
+	std::array<ID3D11SamplerState*, 320> originalSamplerStates{};
+	std::array<ID3D11SamplerState*, 320> biasedSamplerStates{};
+
+	std::unique_ptr<Texture2D> upscalingTexture;
+	std::unique_ptr<Texture2D> dilatedMotionVectorTexture;
+
+	winrt::com_ptr<ID3D11ComputeShader> dilateMotionVectorCS;
+	winrt::com_ptr<ID3D11ComputeShader> overrideLinearDepthCS;
+	winrt::com_ptr<ID3D11ComputeShader> overrideDepthCS;
+	winrt::com_ptr<ID3D11VertexShader> copyDepthVS;
+	winrt::com_ptr<ID3D11PixelShader> copyDepthPS;
+	winrt::com_ptr<ID3D11PixelShader> BSImagespaceShaderSSLRRaytracing;
+	winrt::com_ptr<ID3D11DepthStencilState> copyDepthStencilState;
+	winrt::com_ptr<ID3D11BlendState> copyBlendState;
+	winrt::com_ptr<ID3D11RasterizerState> copyRasterizerState;
+	winrt::com_ptr<ID3D11SamplerState> copySamplerState;
 
 	static void InstallHooks();
 };

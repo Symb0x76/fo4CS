@@ -2,12 +2,18 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <optional>
+#include <string>
 #include <vector>
 
 #include <d3dcompiler.h>
 
 #include "DX12SwapChain.h"
 #include "DirectXMath.h"
+#include "FidelityFX.h"
+#include "Streamline.h"
+
+void InstallUpscalerRenderBackendHooks();
 
 enum class RenderTarget
 {
@@ -103,7 +109,7 @@ namespace
 			return false;
 		}
 
-		logger::info("[{}] Loaded {} settings from {}", component, source.label, source.path.string());
+		logger::debug("[{}] Loaded {} settings from {}", component, source.label, source.path.string());
 		return true;
 	}
 
@@ -114,6 +120,30 @@ namespace
 			logger::warn("[Upscaler] {}={} is out of range, clamping to {}", settingName, value, clamped);
 		}
 		return clamped;
+	}
+
+	std::optional<std::string> GetEnvironmentValue(const char* name)
+	{
+		char buffer[64]{};
+		const auto length = GetEnvironmentVariableA(name, buffer, static_cast<DWORD>(std::size(buffer)));
+		if (length == 0 || length >= std::size(buffer)) {
+			return std::nullopt;
+		}
+		return std::string(buffer, length);
+	}
+
+	bool IsTruthy(std::string_view value)
+	{
+		return value == "1" || value == "true" || value == "TRUE" || value == "on" || value == "ON";
+	}
+
+	std::optional<int> ParseIntSetting(std::string_view value)
+	{
+		try {
+			return std::stoi(std::string(value));
+		} catch (...) {
+			return std::nullopt;
+		}
 	}
 }
 
@@ -149,14 +179,10 @@ ID3D11DeviceChild* CompileShader(const wchar_t* FilePath, const char* ProgramTyp
 	return regShader;
 }
 
-void Upscaling::LoadSettings()
+void Upscaling::LoadFrameGenerationSettings()
 {
-	logger::info("[Frame Generation] Loading settings");
-
 	const std::vector<IniSource> iniSources{
 		{ std::filesystem::path("Data\\MCM\\Config\\FrameGen\\settings.ini"), "MCM default" },
-		{ std::filesystem::path("Data\\F4SE\\Plugins\\FrameGeneration.ini"), "legacy plugin" },
-		{ std::filesystem::path("Data\\F4SE\\Plugins\\FrameGeneration\\FrameGeneration.ini"), "legacy plugin" },
 		{ std::filesystem::path("Data\\MCM\\Settings\\FrameGen.ini"), "MCM user override" }
 	};
 
@@ -169,23 +195,59 @@ void Upscaling::LoadSettings()
 	}
 
 	if (!loadedAny) {
-		logger::warn("[Frame Generation] Settings file not found, using defaults");
+		logger::warn("[FrameGen] Settings file not found, using defaults");
 	}
 
 	settings.frameGenerationMode = ini.GetBoolValue("Settings", "bFrameGenerationMode", true);
 	settings.frameLimitMode = ini.GetBoolValue("Settings", "bFrameLimitMode", true);
+#ifndef NDEBUG
+	settings.debugLogging = ini.GetBoolValue("Debug", "bDebugLogging", settings.debugLogging);
+#else
+	settings.debugLogging = false;
+#endif
+	settings.streamlineLogLevel = ClampIntSetting(
+		static_cast<int>(ini.GetLongValue("Debug", "iStreamlineLogLevel", settings.streamlineLogLevel)),
+		0,
+		2,
+		"iStreamlineLogLevel");
+	settings.debugFrameLogCount = ClampIntSetting(
+		static_cast<int>(ini.GetLongValue("Debug", "iDebugFrameLogCount", settings.debugFrameLogCount)),
+		0,
+		600,
+		"iDebugFrameLogCount");
 
-	logger::info("[Frame Generation] bFrameGenerationMode: {}", settings.frameGenerationMode);
-	logger::info("[Frame Generation] bFrameLimitMode: {}", settings.frameLimitMode);
+#ifndef NDEBUG
+	if (const auto value = GetEnvironmentValue("FO4CS_DEBUG_LOG")) {
+		settings.debugLogging = IsTruthy(*value);
+	}
+	if (const auto value = GetEnvironmentValue("FO4CS_STREAMLINE_LOG_LEVEL")) {
+		if (const auto parsed = ParseIntSetting(*value)) {
+			settings.streamlineLogLevel = ClampIntSetting(*parsed, 0, 2, "FO4CS_STREAMLINE_LOG_LEVEL");
+		}
+	}
+	if (const auto value = GetEnvironmentValue("FO4CS_DEBUG_FRAMES")) {
+		if (const auto parsed = ParseIntSetting(*value)) {
+			settings.debugFrameLogCount = ClampIntSetting(*parsed, 0, 600, "FO4CS_DEBUG_FRAMES");
+		}
+	}
+#else
+	settings.streamlineLogLevel = 0;
+	settings.debugFrameLogCount = 0;
+#endif
+	if (settings.debugLogging) {
+		spdlog::set_level(spdlog::level::debug);
+		if (auto log = spdlog::default_logger()) {
+			log->flush_on(spdlog::level::debug);
+		}
+	}
+}
 
-	logger::info("[Upscaler] Loading settings");
+void Upscaling::LoadSettings()
+{
+	LoadFrameGenerationSettings();
 
 	const std::vector<IniSource> upscalerIniSources{
-		{ std::filesystem::path("Data\\MCM\\Config\\Upscaling\\settings.ini"), "MCM default (legacy)" },
 		{ std::filesystem::path("Data\\MCM\\Config\\Upscaler\\settings.ini"), "MCM default" },
-		{ std::filesystem::path("Data\\F4SE\\Plugins\\Upscaler.ini"), "legacy plugin" },
-		{ std::filesystem::path("Data\\F4SE\\Plugins\\Upscaler\\Upscaler.ini"), "legacy plugin" },
-		{ std::filesystem::path("Data\\MCM\\Settings\\Upscaling.ini"), "MCM user override (legacy)" },
 		{ std::filesystem::path("Data\\MCM\\Settings\\Upscaler.ini"), "MCM user override" }
 	};
 
@@ -212,25 +274,64 @@ void Upscaling::LoadSettings()
 		4,
 		"iQualityMode");
 
-	logger::info("[Upscaler] iUpscaleMethodPreference: {}", settings.upscaleMethodPreference);
-	logger::info("[Upscaler] iQualityMode: {}", settings.qualityMode);
+	logger::info(
+		"[Settings] FrameGen(enabled={}, limiter={}), Upscaler(method={}, quality={}), Debug(enabled={}, streamlineLogLevel={}, frames={})",
+		settings.frameGenerationMode,
+		settings.frameLimitMode,
+		settings.upscaleMethodPreference,
+		settings.qualityMode,
+		settings.debugLogging,
+		settings.streamlineLogLevel,
+		settings.debugFrameLogCount);
+}
+
+Upscaling::UpscaleMethod Upscaling::GetPreferredUpscaleMethod() const
+{
+	switch (static_cast<UpscaleMethod>(settings.upscaleMethodPreference)) {
+	case UpscaleMethod::kFSR:
+		return UpscaleMethod::kFSR;
+	case UpscaleMethod::kDLSS:
+		return UpscaleMethod::kDLSS;
+	default:
+		return UpscaleMethod::kDisabled;
+	}
+}
+
+bool Upscaling::UsesDLSSUpscaling() const
+{
+	return pluginMode == PluginMode::kUpscaler && GetPreferredUpscaleMethod() == UpscaleMethod::kDLSS;
+}
+
+bool Upscaling::UsesFSRUpscaling() const
+{
+	return pluginMode == PluginMode::kUpscaler && GetPreferredUpscaleMethod() == UpscaleMethod::kFSR;
+}
+
+bool Upscaling::UsesDLSSFrameGeneration() const
+{
+	return settings.frameGenerationMode && GetPreferredUpscaleMethod() == UpscaleMethod::kDLSS;
+}
+
+bool Upscaling::UsesFSRFrameGeneration() const
+{
+	return settings.frameGenerationMode && GetPreferredUpscaleMethod() == UpscaleMethod::kFSR;
 }
 
 void Upscaling::PostPostLoad()
 {
 	highFPSPhysicsFixLoaded = GetModuleHandleA("Data\\F4SE\\Plugins\\HighFPSPhysicsFix.dll") != nullptr;
 
-	if (highFPSPhysicsFixLoaded)
-		logger::info("[Frame Generation] HighFPSPhysicsFix.dll is loaded");
-	else
-		logger::info("[Frame Generation] HighFPSPhysicsFix.dll is not loaded");
+	logger::debug("[FrameGen] HighFPSPhysicsFix.dll loaded: {}", highFPSPhysicsFixLoaded);
 
+	renderBackendEnabled = pluginMode == PluginMode::kUpscaler &&
+		((UsesDLSSUpscaling() && Streamline::GetSingleton()->featureDLSS) ||
+		 (UsesFSRUpscaling() && d3d12Interop && FidelityFX::GetSingleton()->featureFSR));
 	InstallHooks();
 }
 
 void Upscaling::CreateFrameGenerationResources()
 {
-	logger::info("[Frame Generation] Creating resources");
+	logger::debug("[FrameGen] Creating resources");
 	
 	setupBuffers = true;
 
@@ -633,8 +734,10 @@ struct SetUseDynamicResolutionViewportAsDefaultViewport
 	static void thunk(RE::BSGraphics::RenderTargetManager* This, bool a_true)
 	{
 		func(This, a_true);
-		if (!a_true)
+		if (!a_true) {
+			Upscaling::GetSingleton()->Upscale();
 			Upscaling::GetSingleton()->PostDisplay();
+		}
 	}
 	static inline REL::Relocation<decltype(thunk)> func;
 };
@@ -670,6 +773,8 @@ struct DrawWorld_Reticle
 
 void Upscaling::InstallHooks()
 {
+	if (GetSingleton()->pluginMode == PluginMode::kUpscaler)
+		InstallUpscalerRenderBackendHooks();
 
 #if defined(FALLOUT_POST_NG)
 	stl::detour_thunk<WindowSizeChanged>(REL::ID(2276824));
@@ -688,5 +793,5 @@ void Upscaling::InstallHooks()
 	stl::write_thunk_call<DrawWorld_Reticle>(REL::ID(338205).address() + 0x253);
 #endif
 
-	logger::info("[Upscaling] Installed hooks");
+	logger::debug("[Upscaler] Installed hooks");
 }

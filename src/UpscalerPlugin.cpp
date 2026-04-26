@@ -34,16 +34,19 @@ extern "C" DLLEXPORT bool F4SEAPI F4SEPlugin_Query(const F4SE::QueryInterface*, 
 extern "C" DLLEXPORT bool F4SEAPI F4SEPlugin_Load(const F4SE::LoadInterface* a_f4se)
 {
 #if defined(FALLOUT_POST_AE)
-	F4SE::Init(a_f4se, { .trampoline = true, .trampolineSize = 2 * stl::kThunkCallTrampolineSize });
+	F4SE::Init(a_f4se, { .trampoline = true, .trampolineSize = 16 * stl::kThunkCallTrampolineSize });
 #else
 	F4SE::Init(a_f4se);
-	F4SE::AllocTrampoline(2 * stl::kThunkCallTrampolineSize);
+	F4SE::AllocTrampoline(16 * stl::kThunkCallTrampolineSize);
 #endif
 	fo4cs::WaitForDebuggerIfNeeded();
 	fo4cs::InitializeLog();
 
+	auto upscaling = Upscaling::GetSingleton();
+	upscaling->pluginMode = Upscaling::PluginMode::kUpscaler;
+	upscaling->LoadSettings();
+
 	DX11Hooks::Install();
-	Upscaling::GetSingleton()->LoadSettings();
 
 	auto messaging = F4SE::GetMessagingInterface();
 	messaging->RegisterListener(MessageHandler);

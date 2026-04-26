@@ -1,13 +1,105 @@
 #include "DX12SwapChain.h"
 
+#include <algorithm>
+#include <atomic>
+#include <cstdint>
 #include <dx12/ffx_api_dx12.hpp>
 #include <dxgi1_6.h>
+#include <string_view>
 
 #include "FidelityFX.h"
 #include "Streamline.h"
 #include "Upscaler.h"
 
 extern bool enbLoaded;
+
+namespace
+{
+	std::string FormatHRESULT(HRESULT hr)
+	{
+		return std::format("0x{:08X}", static_cast<std::uint32_t>(hr));
+	}
+
+	enum class PresentTracePhase
+	{
+		kNone,
+		kLoading,
+		kGameplay
+	};
+
+	const char* GetPresentTracePhaseName(PresentTracePhase phase)
+	{
+		switch (phase) {
+		case PresentTracePhase::kLoading:
+			return "loading";
+		case PresentTracePhase::kGameplay:
+			return "gameplay";
+		default:
+			return "none";
+		}
+	}
+
+	bool ShouldTracePresentFrame(uint64_t presentID, PresentTracePhase tracePhase)
+	{
+		const auto settings = Upscaling::GetSingleton()->settings;
+		if (!settings.debugLogging || settings.debugFrameLogCount <= 0) {
+			return false;
+		}
+
+		const auto bootstrapFrames = static_cast<uint64_t>(std::min(settings.debugFrameLogCount, 12));
+		if (presentID < bootstrapFrames) {
+			return true;
+		}
+
+		static PresentTracePhase previousTracePhase = PresentTracePhase::kNone;
+		static uint64_t traceWindowStart = UINT64_MAX;
+
+		if (tracePhase != PresentTracePhase::kNone && tracePhase != previousTracePhase) {
+			traceWindowStart = presentID;
+			logger::info(
+				"[DX12SwapChain] Present trace window started at present={} phase={} for {} frames",
+				presentID,
+				GetPresentTracePhaseName(tracePhase),
+				settings.debugFrameLogCount);
+		}
+		previousTracePhase = tracePhase;
+
+		return traceWindowStart != UINT64_MAX &&
+			presentID >= traceWindowStart &&
+			presentID - traceWindowStart < static_cast<uint64_t>(settings.debugFrameLogCount);
+	}
+
+	struct ScopedPresentTraceFlag
+	{
+		explicit ScopedPresentTraceFlag(Upscaling* a_upscaling, bool a_enabled) :
+			upscaling(a_upscaling)
+		{
+			if (upscaling) {
+				upscaling->debugTraceCurrentPresent = a_enabled;
+			}
+		}
+
+		~ScopedPresentTraceFlag()
+		{
+			if (upscaling) {
+				upscaling->debugTraceCurrentPresent = false;
+			}
+		}
+
+		Upscaling* upscaling;
+	};
+
+	const char* GetFrameGenerationBackendName(bool dlss, bool fsr)
+	{
+		if (dlss) {
+			return "DLSS-G";
+		}
+		if (fsr) {
+			return "FSR-FG";
+		}
+		return "none";
+	}
+}
 
 void DX12SwapChain::CreateD3D12Device(IDXGIAdapter* a_adapter)
 {
@@ -28,7 +120,7 @@ void DX12SwapChain::CreateD3D12Device(IDXGIAdapter* a_adapter)
 	}
 }
 
-void DX12SwapChain::CreateSwapChain(IDXGIFactory5* a_dxgiFactory, DXGI_SWAP_CHAIN_DESC a_swapChainDesc)
+void DX12SwapChain::CreateSwapChain(IDXGIFactory4* a_dxgiFactory, DXGI_SWAP_CHAIN_DESC a_swapChainDesc)
 {
 	swapChainDesc = {};
 	swapChainDesc.BufferCount = 2;
@@ -40,35 +132,72 @@ void DX12SwapChain::CreateSwapChain(IDXGIFactory5* a_dxgiFactory, DXGI_SWAP_CHAI
 	swapChainDesc.SampleDesc.Count = 1;
 
 	BOOL allowTearing = FALSE;
-	DX::ThrowIfFailed(a_dxgiFactory->CheckFeatureSupport(
-		DXGI_FEATURE_PRESENT_ALLOW_TEARING,
-		&allowTearing,
-		sizeof(allowTearing)
-	));
-
-	swapChainDesc.Flags = allowTearing ? DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING : 0;
-
-	ffx::CreateContextDescFrameGenerationSwapChainForHwndDX12 ffxSwapChainDesc{};
-
-	ffxSwapChainDesc.desc = &swapChainDesc;
-	ffxSwapChainDesc.dxgiFactory = a_dxgiFactory;
-	ffxSwapChainDesc.fullscreenDesc = nullptr;
-	ffxSwapChainDesc.gameQueue = commandQueue.get();
-	ffxSwapChainDesc.hwnd = a_swapChainDesc.OutputWindow;
-	ffxSwapChainDesc.swapchain = &swapChain;
-
-	auto fidelityFX = FidelityFX::GetSingleton();
-
-	if (ffx::CreateContext(fidelityFX->swapChainContext, nullptr, ffxSwapChainDesc) != ffx::ReturnCode::Ok) {
-		logger::critical("[FidelityFX] Failed to create swap chain context!");
+	if (winrt::com_ptr<IDXGIFactory5> dxgiFactory5; SUCCEEDED(a_dxgiFactory->QueryInterface(IID_PPV_ARGS(dxgiFactory5.put())))) {
+		DX::ThrowIfFailed(dxgiFactory5->CheckFeatureSupport(
+			DXGI_FEATURE_PRESENT_ALLOW_TEARING,
+			&allowTearing,
+			sizeof(allowTearing)
+		));
 	}
+
+	swapChainDesc.Flags = DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT;
+	if (allowTearing) {
+		swapChainDesc.Flags |= DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING;
+	}
+
+	auto upscaling = Upscaling::GetSingleton();
+	auto fidelityFX = FidelityFX::GetSingleton();
+	const bool useFidelityFXSwapChain = upscaling->UsesFSRFrameGeneration() && fidelityFX->module;
+	logger::info(
+		"[DX12SwapChain] Creating D3D12 proxy swap chain {}x{} fmt={} flags=0x{:X} backend={}",
+		swapChainDesc.Width,
+		swapChainDesc.Height,
+		static_cast<uint32_t>(swapChainDesc.Format),
+		swapChainDesc.Flags,
+		useFidelityFXSwapChain ? "FidelityFX" : "native");
+
+	const auto createNativeSwapChain = [&]() {
+		winrt::com_ptr<IDXGISwapChain1> nativeSwapChain;
+		DX::ThrowIfFailed(a_dxgiFactory->CreateSwapChainForHwnd(
+			commandQueue.get(),
+			a_swapChainDesc.OutputWindow,
+			&swapChainDesc,
+			nullptr,
+			nullptr,
+			nativeSwapChain.put()));
+		DX::ThrowIfFailed(nativeSwapChain->QueryInterface(IID_PPV_ARGS(&swapChain)));
+	};
+
+	if (useFidelityFXSwapChain) {
+		ffx::CreateContextDescFrameGenerationSwapChainForHwndDX12 ffxSwapChainDesc{};
+
+		ffxSwapChainDesc.desc = &swapChainDesc;
+		ffxSwapChainDesc.dxgiFactory = a_dxgiFactory;
+		ffxSwapChainDesc.fullscreenDesc = nullptr;
+		ffxSwapChainDesc.gameQueue = commandQueue.get();
+		ffxSwapChainDesc.hwnd = a_swapChainDesc.OutputWindow;
+		ffxSwapChainDesc.swapchain = &swapChain;
+
+		if (ffx::CreateContext(fidelityFX->swapChainContext, nullptr, ffxSwapChainDesc) != ffx::ReturnCode::Ok || !swapChain) {
+			logger::error("[FidelityFX] Failed to create swap chain context, using native D3D12 swap chain");
+			swapChain = nullptr;
+			fidelityFX->swapChainContext = nullptr;
+			createNativeSwapChain();
+		}
+	} else {
+		createNativeSwapChain();
+	}
+
+	Streamline::GetSingleton()->UpgradeSwapChainForDLSSG(&swapChain);
 
 	DX::ThrowIfFailed(swapChain->GetBuffer(0, IID_PPV_ARGS(&swapChainBuffers[0])));
 	DX::ThrowIfFailed(swapChain->GetBuffer(1, IID_PPV_ARGS(&swapChainBuffers[1])));
 
 	frameIndex = swapChain->GetCurrentBackBufferIndex();
+	logger::info("[DX12SwapChain] Swap chain ready (frameIndex={}, buffers={})", frameIndex, swapChainDesc.BufferCount);
 
-	fidelityFX->SetupFrameGeneration();
+	if (useFidelityFXSwapChain && fidelityFX->swapChainContext != nullptr)
+		fidelityFX->SetupFrameGeneration();
 
 	swapChainProxy = new DXGISwapChainProxy(swapChain);
 }
@@ -129,92 +258,189 @@ HRESULT DX12SwapChain::GetBuffer(void** ppSurface)
 
 HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
 {
-	// Copy proxy to wrapped resource
-	if (enbLoaded)
-		d3d11Context->CopyResource(swapChainBufferWrapped[frameIndex]->resource11, swapChainBufferProxyENB->resource11);
-	else
-		d3d11Context->CopyResource(swapChainBufferWrapped[frameIndex]->resource11, swapChainBufferProxy->resource.get());
+	static std::atomic_uint64_t presentCounter{ 0 };
+	static bool lastFrameGenerationActive = false;
+	static const char* lastFrameGenerationBackend = "none";
 
-	// Wait for D3D11 to finish
-	DX::ThrowIfFailed(d3d11Context->Signal(d3d11Fence.get(), fenceValue));
-	DX::ThrowIfFailed(commandQueue->Wait(d3d12Fence.get(), fenceValue));
-	fenceValue++;
-
-	// New frame, reset
-	DX::ThrowIfFailed(commandAllocators[frameIndex]->Reset());
-	DX::ThrowIfFailed(commandLists[frameIndex]->Reset(commandAllocators[frameIndex].get(), nullptr));
-
-	// Copy shared texture to swap chain buffer
-	{
-		auto fakeSwapChain = swapChainBufferWrapped[frameIndex]->resource.get();
-		auto realSwapChain = swapChainBuffers[frameIndex].get();
-		{
-			std::vector<D3D12_RESOURCE_BARRIER> barriers;
-			barriers.push_back(CD3DX12_RESOURCE_BARRIER::Transition(fakeSwapChain, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_SOURCE));
-			barriers.push_back(CD3DX12_RESOURCE_BARRIER::Transition(realSwapChain, D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_COPY_DEST));
-			commandLists[frameIndex]->ResourceBarrier(static_cast<UINT>(barriers.size()), barriers.data());
-		}
-
-		commandLists[frameIndex]->CopyResource(realSwapChain, fakeSwapChain);
-
-		{
-			std::vector<D3D12_RESOURCE_BARRIER> barriers;
-			barriers.push_back(CD3DX12_RESOURCE_BARRIER::Transition(fakeSwapChain, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_COMMON));
-			barriers.push_back(CD3DX12_RESOURCE_BARRIER::Transition(realSwapChain, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PRESENT));
-			commandLists[frameIndex]->ResourceBarrier(static_cast<UINT>(barriers.size()), barriers.data());
-		}
+	const auto presentID = presentCounter.fetch_add(1, std::memory_order_relaxed);
+	auto upscaling = Upscaling::GetSingleton();
+	bool gameActive = false;
+	bool inMenuMode = true;
+	bool uiDirectionalBlock = false;
+	bool loadingMenuOpen = false;
+	if (auto main = RE::Main::GetSingleton()) {
+		gameActive = main->gameActive;
+		inMenuMode = main->inMenuMode;
+	}
+	if (auto ui = RE::UI::GetSingleton()) {
+		uiDirectionalBlock = ui->movementToDirectionalCount != 0;
+		loadingMenuOpen = ui->GetMenuOpen("LoadingMenu");
 	}
 
-	auto upscaling = Upscaling::GetSingleton();
+	const auto tracePhase = loadingMenuOpen ? PresentTracePhase::kLoading :
+		(gameActive && !inMenuMode ? PresentTracePhase::kGameplay : PresentTracePhase::kNone);
+	const bool traceFrame = ShouldTracePresentFrame(presentID, tracePhase);
+	ScopedPresentTraceFlag scopedTraceFlag(upscaling, traceFrame);
+	const char* stage = "begin";
+	const auto trace = [&](const char* nextStage) {
+		stage = nextStage;
+		if (traceFrame) {
+			logger::debug(
+				"[DX12SwapChain] Present#{} frameIndex={} phase={} stage={} gameActive={} inMenu={} loadingMenu={} uiBlock={}",
+				presentID,
+				frameIndex,
+				GetPresentTracePhaseName(tracePhase),
+				stage,
+				gameActive,
+				inMenuMode,
+				loadingMenuOpen,
+				uiDirectionalBlock);
+		}
+	};
 
-	bool useFrameGenerationThisFrame = false;
-	
-	if (auto main = RE::Main::GetSingleton())
-		if (auto ui = RE::UI::GetSingleton())
-			useFrameGenerationThisFrame = upscaling->settings.frameGenerationMode && main->gameActive && !main->inMenuMode && !ui->movementToDirectionalCount;
+	try {
+		trace("copy-d3d11-proxy-to-shared");
+		if (enbLoaded)
+			d3d11Context->CopyResource(swapChainBufferWrapped[frameIndex]->resource11, swapChainBufferProxyENB->resource11);
+		else
+			d3d11Context->CopyResource(swapChainBufferWrapped[frameIndex]->resource11, swapChainBufferProxy->resource.get());
 
-	auto streamline = Streamline::GetSingleton();
-	streamline->TagResourcesAndConfigure(
-		upscaling->HUDLessBufferShared12[frameIndex].get(),
-		upscaling->depthBufferShared12[frameIndex].get(),
-		upscaling->motionVectorBufferShared12[frameIndex].get(),
-		useFrameGenerationThisFrame);
+		trace("wait-d3d11-to-d3d12");
+		DX::ThrowIfFailed(d3d11Context->Signal(d3d11Fence.get(), fenceValue));
+		DX::ThrowIfFailed(commandQueue->Wait(d3d12Fence.get(), fenceValue));
+		fenceValue++;
 
-	FidelityFX::GetSingleton()->Present(useFrameGenerationThisFrame);
+		trace("reset-command-list");
+		DX::ThrowIfFailed(commandAllocators[frameIndex]->Reset());
+		DX::ThrowIfFailed(commandLists[frameIndex]->Reset(commandAllocators[frameIndex].get(), nullptr));
 
-	DX::ThrowIfFailed(commandLists[frameIndex]->Close());
+		trace("copy-shared-to-backbuffer");
+		{
+			auto fakeSwapChain = swapChainBufferWrapped[frameIndex]->resource.get();
+			auto realSwapChain = swapChainBuffers[frameIndex].get();
+			{
+				std::vector<D3D12_RESOURCE_BARRIER> barriers;
+				barriers.push_back(CD3DX12_RESOURCE_BARRIER::Transition(fakeSwapChain, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_SOURCE));
+				barriers.push_back(CD3DX12_RESOURCE_BARRIER::Transition(realSwapChain, D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_COPY_DEST));
+				commandLists[frameIndex]->ResourceBarrier(static_cast<UINT>(barriers.size()), barriers.data());
+			}
 
-	ID3D12CommandList* commandListsToExecute[] = { commandLists[frameIndex].get() };
-	commandQueue->ExecuteCommandLists(1, commandListsToExecute);
+			commandLists[frameIndex]->CopyResource(realSwapChain, fakeSwapChain);
 
-	// Fix FPS cap being e.g. 55 instead of 60
-	if (!upscaling->highFPSPhysicsFixLoaded && SyncInterval > 0)
-		SyncInterval = 1;
+			{
+				std::vector<D3D12_RESOURCE_BARRIER> barriers;
+				barriers.push_back(CD3DX12_RESOURCE_BARRIER::Transition(fakeSwapChain, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_COMMON));
+				barriers.push_back(CD3DX12_RESOURCE_BARRIER::Transition(realSwapChain, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PRESENT));
+				commandLists[frameIndex]->ResourceBarrier(static_cast<UINT>(barriers.size()), barriers.data());
+			}
+		}
 
-	// Present the frame
-	DX::ThrowIfFailed(swapChain->Present(SyncInterval, Flags));
+		bool useFrameGenerationThisFrame = false;
+		auto streamline = Streamline::GetSingleton();
+		auto fidelityFX = FidelityFX::GetSingleton();
+		const bool useDLSSFrameGeneration = upscaling->UsesDLSSFrameGeneration() && streamline->featureDLSSG;
+		const bool useFSRFrameGeneration = upscaling->UsesFSRFrameGeneration() && fidelityFX->featureFrameGen;
+		const bool frameGenerationBackendAvailable = useDLSSFrameGeneration || useFSRFrameGeneration;
+		const char* frameGenerationBackend = GetFrameGenerationBackendName(useDLSSFrameGeneration, useFSRFrameGeneration);
 
-	streamline->AdvanceFrame();
+		useFrameGenerationThisFrame = frameGenerationBackendAvailable && gameActive && !inMenuMode && !loadingMenuOpen && !uiDirectionalBlock;
 
-	// Wait for previous frame to have finished
-	auto frameLatencyWaitableObject = swapChain->GetFrameLatencyWaitableObject();
-	WaitForSingleObjectEx(frameLatencyWaitableObject, INFINITE, TRUE);
+		if (presentID == 0 || lastFrameGenerationActive != useFrameGenerationThisFrame || std::string_view(lastFrameGenerationBackend) != frameGenerationBackend) {
+			logger::info(
+				"[FrameGen] present={} backend={} active={} available={} phase={} gameActive={} inMenu={} loadingMenu={} uiBlock={}",
+				presentID,
+				frameGenerationBackend,
+				useFrameGenerationThisFrame,
+				frameGenerationBackendAvailable,
+				GetPresentTracePhaseName(tracePhase),
+				gameActive,
+				inMenuMode,
+				loadingMenuOpen,
+				uiDirectionalBlock);
+			lastFrameGenerationActive = useFrameGenerationThisFrame;
+			lastFrameGenerationBackend = frameGenerationBackend;
+		}
 
-	// Update the frame index
-	frameIndex = swapChain->GetCurrentBackBufferIndex();
+		trace("frame-generation");
+		if (useDLSSFrameGeneration) {
+			const bool dlssgTagged = streamline->TagResourcesAndConfigure(
+				upscaling->HUDLessBufferShared12[frameIndex].get(),
+				upscaling->depthBufferShared12[frameIndex].get(),
+				upscaling->motionVectorBufferShared12[frameIndex].get(),
+				useFrameGenerationThisFrame);
+			if (!dlssgTagged && useFrameGenerationThisFrame) {
+				logger::warn("[FrameGen] DLSS-G skipped this frame after Streamline tagging/configuration failure");
+				useFrameGenerationThisFrame = false;
+			}
+		}
 
-	// Clear resources
-	upscaling->Reset();
+		if (useFSRFrameGeneration) {
+			fidelityFX->Present(useFrameGenerationThisFrame);
+		}
 
-	// Fix game running too fast
-	if (!upscaling->highFPSPhysicsFixLoaded)
-		upscaling->GameFrameLimiter();
+		trace("close-command-list");
+		DX::ThrowIfFailed(commandLists[frameIndex]->Close());
 
-	// If VSync is disabled, use frame limiter to prevent tearing and optimize pacing
-	if (SyncInterval == 0)
-		upscaling->FrameLimiter(useFrameGenerationThisFrame);
+		trace("execute-command-list");
+		ID3D12CommandList* commandListsToExecute[] = { commandLists[frameIndex].get() };
+		commandQueue->ExecuteCommandLists(1, commandListsToExecute);
 
-	return S_OK;
+		// Fix FPS cap being e.g. 55 instead of 60
+		if (!upscaling->highFPSPhysicsFixLoaded && SyncInterval > 0)
+			SyncInterval = 1;
+
+		trace("present");
+		const auto presentResult = swapChain->Present(SyncInterval, Flags);
+		if (FAILED(presentResult)) {
+			logger::error("[DX12SwapChain] IDXGISwapChain::Present failed: {}", FormatHRESULT(presentResult));
+			return presentResult;
+		}
+
+		trace("wait-d3d12-to-d3d11");
+		DX::ThrowIfFailed(commandQueue->Signal(d3d12Fence.get(), fenceValue));
+		DX::ThrowIfFailed(d3d11Context->Wait(d3d11Fence.get(), fenceValue));
+		fenceValue++;
+
+		streamline->AdvanceFrame();
+
+		trace("frame-latency-wait");
+		auto frameLatencyWaitableObject = swapChain->GetFrameLatencyWaitableObject();
+		if (frameLatencyWaitableObject) {
+			WaitForSingleObjectEx(frameLatencyWaitableObject, INFINITE, TRUE);
+		} else if (traceFrame) {
+			logger::debug("[DX12SwapChain] Frame latency waitable object is unavailable");
+		}
+
+		trace("update-frame-index");
+		frameIndex = swapChain->GetCurrentBackBufferIndex();
+
+		trace("reset-shared-resources");
+		upscaling->Reset();
+
+		trace("game-frame-limiter");
+		if (!upscaling->highFPSPhysicsFixLoaded)
+			upscaling->GameFrameLimiter();
+
+		trace("frame-limiter");
+		if (SyncInterval == 0)
+			upscaling->FrameLimiter(useFrameGenerationThisFrame);
+
+		if (traceFrame) {
+			logger::debug("[DX12SwapChain] Present#{} completed (nextFrameIndex={})", presentID, frameIndex);
+		}
+
+		return S_OK;
+	} catch (const winrt::hresult_error& e) {
+		const auto hr = static_cast<HRESULT>(e.code());
+		logger::error("[DX12SwapChain] Present failed at stage '{}' with HRESULT {}", stage, FormatHRESULT(hr));
+		return hr;
+	} catch (const std::exception& e) {
+		logger::error("[DX12SwapChain] Present failed at stage '{}': {}", stage, e.what());
+		return DXGI_ERROR_DEVICE_REMOVED;
+	} catch (...) {
+		logger::error("[DX12SwapChain] Present failed at stage '{}' with unknown exception", stage);
+		return DXGI_ERROR_DEVICE_REMOVED;
+	}
 }
 
 HRESULT DX12SwapChain::GetDevice(REFIID uuid, void** ppDevice)
@@ -225,6 +451,29 @@ HRESULT DX12SwapChain::GetDevice(REFIID uuid, void** ppDevice)
 	}
 
 	return swapChain->GetDevice(uuid, ppDevice);
+}
+
+ID3D12GraphicsCommandList4* DX12SwapChain::BeginInteropCommandList()
+{
+	DX::ThrowIfFailed(d3d11Context->Signal(d3d11Fence.get(), fenceValue));
+	DX::ThrowIfFailed(commandQueue->Wait(d3d12Fence.get(), fenceValue));
+	fenceValue++;
+
+	DX::ThrowIfFailed(commandAllocators[frameIndex]->Reset());
+	DX::ThrowIfFailed(commandLists[frameIndex]->Reset(commandAllocators[frameIndex].get(), nullptr));
+	return commandLists[frameIndex].get();
+}
+
+void DX12SwapChain::ExecuteInteropCommandListAndWait()
+{
+	DX::ThrowIfFailed(commandLists[frameIndex]->Close());
+
+	ID3D12CommandList* lists[] = { commandLists[frameIndex].get() };
+	commandQueue->ExecuteCommandLists(1, lists);
+
+	DX::ThrowIfFailed(commandQueue->Signal(d3d12Fence.get(), fenceValue));
+	DX::ThrowIfFailed(d3d11Context->Wait(d3d11Fence.get(), fenceValue));
+	fenceValue++;
 }
 
 WrappedResource::WrappedResource(D3D11_TEXTURE2D_DESC a_texDesc, ID3D11Device5* a_d3d11Device, ID3D12Device* a_d3d12Device)

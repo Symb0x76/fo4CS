@@ -96,7 +96,7 @@ public:
 	DXGISwapChainProxy* swapChainProxy = nullptr;
 
 	void CreateD3D12Device(IDXGIAdapter* a_adapter);
-	void CreateSwapChain(IDXGIFactory5* a_dxgiFactory, DXGI_SWAP_CHAIN_DESC swapChainDesc);
+	void CreateSwapChain(IDXGIFactory4* a_dxgiFactory, DXGI_SWAP_CHAIN_DESC swapChainDesc);
 
 	void CreateInterop();
 
@@ -107,4 +107,7 @@ public:
 	HRESULT GetBuffer(void** ppSurface);
 	HRESULT Present(UINT SyncInterval, UINT Flags);
 	HRESULT GetDevice(_In_ REFIID riid, _COM_Outptr_ void** ppDevice);
+
+	ID3D12GraphicsCommandList4* BeginInteropCommandList();
+	void ExecuteInteropCommandListAndWait();
 };

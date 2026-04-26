@@ -46,11 +46,14 @@ namespace fo4cs
 		const auto level = spdlog::level::info;
 #endif
 
-		auto log = std::make_shared<spdlog::logger>("global log"s, std::move(sink));
+		const auto loggerName = std::string(Plugin::NAME);
+		spdlog::drop(loggerName);
+
+		auto log = std::make_shared<spdlog::logger>(loggerName, std::move(sink));
 		log->set_level(level);
 		log->flush_on(spdlog::level::info);
 
-		spdlog::set_default_logger(std::move(log));
+		spdlog::set_default_logger(log);
 		spdlog::set_pattern("%v"s);
 	}
 
@@ -87,12 +90,16 @@ namespace fo4cs
 
 	inline void WaitForDebuggerIfNeeded()
 	{
-#ifndef NDEBUG
+		wchar_t waitForDebugger[8]{};
+		if (GetEnvironmentVariableW(L"FO4CS_WAIT_FOR_DEBUGGER", waitForDebugger, static_cast<DWORD>(std::size(waitForDebugger))) == 0 ||
+			wcscmp(waitForDebugger, L"1") != 0) {
+			return;
+		}
+
 #	if defined(FALLOUT_POST_NG)
 		while (!REX::W32::IsDebuggerPresent()) {}
 #	else
 		while (!IsDebuggerPresent()) {}
-#	endif
 #endif
 	}
 }

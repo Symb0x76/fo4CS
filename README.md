@@ -71,17 +71,21 @@ The generated package installs files under the normal Fallout 4 `Data` layout. I
 
 ```text
 F4SE\Plugins\FrameGen.dll
-F4SE\Plugins\FrameGeneration.ini
 F4SE\Plugins\Upscaler.dll
-F4SE\Plugins\Upscaler.ini
 F4SE\Plugins\FrameGeneration\
 F4SE\Plugins\Upscaler\
+F4SE\Plugins\FidelityFX\
 F4SE\Plugins\Streamline\
 MCM\Config\FrameGen\
 MCM\Config\Upscaler\
+MCM\Settings\FrameGen.ini
+MCM\Settings\Upscaler.ini
 ```
 
+`F4SE\Plugins\FidelityFX\` is a shared AMD FidelityFX runtime folder used by both FrameGen and Upscaler.
 `F4SE\Plugins\Streamline\` is a shared runtime dependency folder used by both FrameGen and Upscaler.
+
+FrameGen and Upscaler settings are MCM-only. Defaults live under `MCM\Config\...`; user overrides are written by MCM under `MCM\Settings\...`. Legacy `F4SE\Plugins\*.ini` config files are not read or packaged.
 
 ## NVIDIA Streamline / DLSS Runtime Files
 
@@ -101,11 +105,11 @@ The plugins search this shared folder first. Legacy fallback folders under `Data
 | ------------------- | --------------------- | ------------------------------------------------------------------------------- |
 | `sl.interposer.dll` | DLSS / DLSS-G         | [NVIDIA Streamline SDK](https://github.com/NVIDIAGameWorks/Streamline)          |
 | `sl.common.dll`     | DLSS / DLSS-G         | NVIDIA Streamline SDK                                                           |
-| `sl.dlss.dll`       | DLSS Upscaling        | NVIDIA Streamline SDK                                                           |
+| `sl.dlss.dll`       | DLSS Upscaler         | NVIDIA Streamline SDK                                                           |
 | `sl.dlss_g.dll`     | DLSS Frame Generation | NVIDIA Streamline SDK                                                           |
 | `sl.reflex.dll`     | DLSS Frame Generation | NVIDIA Streamline SDK                                                           |
 | `sl.pcl.dll`        | DLSS Frame Generation | NVIDIA Streamline SDK                                                           |
-| `nvngx_dlss.dll`    | DLSS Upscaling        | NVIDIA driver / NVIDIA DLSS runtime                                             |
+| `nvngx_dlss.dll`    | DLSS Upscaler         | NVIDIA driver / NVIDIA DLSS runtime                                             |
 | `nvngx_dlssg.dll`   | DLSS Frame Generation | NVIDIA driver installation, commonly `C:\Windows\System32` on supported systems |
 
 The Streamline SDK DLLs must be obtained from the [NVIDIA Streamline SDK releases](https://github.com/NVIDIAGameWorks/Streamline/releases) according to NVIDIA's current access and redistribution terms.

@@ -1,5 +1,8 @@
 #include "FidelityFX.h"
 
+#include <algorithm>
+#include <array>
+
 #include "Upscaler.h"
 
 #include "DX12SwapChain.h"
@@ -9,14 +12,41 @@ ffxFunctions ffxModule;
 
 void FidelityFX::LoadFFX()
 {
-	module = LoadLibrary(L"Data\\F4SE\\Plugins\\FrameGeneration\\FidelityFX\\amd_fidelityfx_dx12.dll");
+	struct RuntimePath
+	{
+		const wchar_t* path;
+		const char* label;
+	};
+	static constexpr std::array<RuntimePath, 2> runtimePaths{ {
+		{ L"Data\\F4SE\\Plugins\\FidelityFX\\amd_fidelityfx_dx12.dll", "shared" },
+		{ L"Data\\F4SE\\Plugins\\FrameGeneration\\FidelityFX\\amd_fidelityfx_dx12.dll", "legacy FrameGeneration" }
+	} };
 
-	if (module)
+	for (const auto& runtimePath : runtimePaths) {
+		module = LoadLibrary(runtimePath.path);
+		if (module) {
+			logger::info("[FidelityFX] Loaded {} runtime", runtimePath.label);
+			break;
+		}
+	}
+
+	if (module) {
 		ffxLoadFunctions(&ffxModule, module);
+		featureFSR = true;
+	} else {
+		logger::warn("[FidelityFX] amd_fidelityfx_dx12.dll is not loaded");
+	}
 }
 
 void FidelityFX::SetupFrameGeneration()
 {
+	featureFrameGen = false;
+
+	if (!module) {
+		logger::warn("[FidelityFX] Runtime is not loaded, skipping frame generation context");
+		return;
+	}
+
 	auto dx12SwapChain = DX12SwapChain::GetSingleton();
 
 	ffx::CreateContextDescFrameGeneration createFg{};
@@ -29,8 +59,147 @@ void FidelityFX::SetupFrameGeneration()
 	createBackend.device = dx12SwapChain->d3d12Device.get();
 
 	if (ffx::CreateContext(frameGenContext, nullptr, createFg, createBackend) != ffx::ReturnCode::Ok) {
-		logger::critical("[FidelityFX] Failed to create frame generation context!");
+		logger::error("[FidelityFX] Failed to create frame generation context");
+		frameGenContext = nullptr;
+		return;
 	}
+
+	featureFrameGen = true;
+}
+
+bool FidelityFX::SetupUpscaling(ID3D12Device* a_device, uint32_t a_maxRenderWidth, uint32_t a_maxRenderHeight, uint32_t a_outputWidth, uint32_t a_outputHeight)
+{
+	if (!module || !a_device)
+		return false;
+
+	const auto maxRenderWidth = std::max(1u, a_maxRenderWidth);
+	const auto maxRenderHeight = std::max(1u, a_maxRenderHeight);
+	const auto outputWidth = std::max(1u, a_outputWidth);
+	const auto outputHeight = std::max(1u, a_outputHeight);
+
+	if (upscaleContext != nullptr &&
+		upscaleMaxRenderWidth == maxRenderWidth &&
+		upscaleMaxRenderHeight == maxRenderHeight &&
+		upscaleMaxOutputWidth == outputWidth &&
+		upscaleMaxOutputHeight == outputHeight) {
+		return true;
+	}
+
+	DestroyUpscaling();
+
+	ffx::CreateContextDescUpscale createUpscale{};
+	createUpscale.flags = FFX_UPSCALE_ENABLE_AUTO_EXPOSURE | FFX_UPSCALE_ENABLE_DYNAMIC_RESOLUTION | FFX_UPSCALE_ENABLE_NON_LINEAR_COLORSPACE;
+	createUpscale.maxRenderSize = { maxRenderWidth, maxRenderHeight };
+	createUpscale.maxUpscaleSize = { outputWidth, outputHeight };
+	createUpscale.fpMessage = nullptr;
+
+	ffx::CreateBackendDX12Desc backendDesc{};
+	backendDesc.device = a_device;
+
+	if (ffx::CreateContext(upscaleContext, nullptr, createUpscale, backendDesc) != ffx::ReturnCode::Ok) {
+		logger::error("[FidelityFX] Failed to create upscaler context");
+		upscaleContext = nullptr;
+		return false;
+	}
+
+	upscaleMaxRenderWidth = maxRenderWidth;
+	upscaleMaxRenderHeight = maxRenderHeight;
+	upscaleMaxOutputWidth = outputWidth;
+	upscaleMaxOutputHeight = outputHeight;
+	return true;
+}
+
+bool FidelityFX::Upscale(
+	ID3D12GraphicsCommandList* a_commandList,
+	ID3D12Resource* a_color,
+	ID3D12Resource* a_output,
+	ID3D12Resource* a_depth,
+	ID3D12Resource* a_motionVectors,
+	float2 a_jitter,
+	float2 a_renderSize,
+	float2 a_displaySize,
+	uint a_qualityMode)
+{
+	if (!featureFSR || !upscaleContext || !a_commandList || !a_color || !a_output || !a_depth || !a_motionVectors)
+		return false;
+
+	ffx::DispatchDescUpscale dispatchUpscale{};
+	dispatchUpscale.commandList = a_commandList;
+	dispatchUpscale.color = ffxApiGetResourceDX12(a_color, FFX_API_RESOURCE_STATE_COMMON);
+	dispatchUpscale.depth = ffxApiGetResourceDX12(a_depth, FFX_API_RESOURCE_STATE_COMMON);
+	dispatchUpscale.motionVectors = ffxApiGetResourceDX12(a_motionVectors, FFX_API_RESOURCE_STATE_COMMON);
+	dispatchUpscale.exposure = FfxApiResource({});
+	dispatchUpscale.reactive = FfxApiResource({});
+	dispatchUpscale.transparencyAndComposition = FfxApiResource({});
+	dispatchUpscale.output = ffxApiGetResourceDX12(a_output, FFX_API_RESOURCE_STATE_COMMON);
+	dispatchUpscale.jitterOffset.x = -a_jitter.x;
+	dispatchUpscale.jitterOffset.y = -a_jitter.y;
+	dispatchUpscale.motionVectorScale.x = a_renderSize.x;
+	dispatchUpscale.motionVectorScale.y = a_renderSize.y;
+	dispatchUpscale.renderSize.width = std::max(1u, static_cast<uint32_t>(a_renderSize.x));
+	dispatchUpscale.renderSize.height = std::max(1u, static_cast<uint32_t>(a_renderSize.y));
+	dispatchUpscale.upscaleSize.width = std::max(1u, static_cast<uint32_t>(a_displaySize.x));
+	dispatchUpscale.upscaleSize.height = std::max(1u, static_cast<uint32_t>(a_displaySize.y));
+	dispatchUpscale.enableSharpening = false;
+	dispatchUpscale.sharpness = 0.0f;
+	static LARGE_INTEGER frequency = []() {
+		LARGE_INTEGER freq{};
+		QueryPerformanceFrequency(&freq);
+		return freq;
+	}();
+	static LARGE_INTEGER lastFrameTime = []() {
+		LARGE_INTEGER time{};
+		QueryPerformanceCounter(&time);
+		return time;
+	}();
+	LARGE_INTEGER currentFrameTime{};
+	QueryPerformanceCounter(&currentFrameTime);
+	dispatchUpscale.frameTimeDelta = std::max(
+		static_cast<float>(currentFrameTime.QuadPart - lastFrameTime.QuadPart) * 1000.0f / static_cast<float>(frequency.QuadPart),
+		0.0f);
+	lastFrameTime = currentFrameTime;
+	dispatchUpscale.preExposure = 1.0f;
+	dispatchUpscale.reset = false;
+
+#if defined(FALLOUT_POST_NG)
+	dispatchUpscale.cameraNear = *(float*)REL::ID(2712882).address();
+	dispatchUpscale.cameraFar = *(float*)REL::ID(2712883).address();
+#else
+	dispatchUpscale.cameraNear = *(float*)REL::ID(57985).address();
+	dispatchUpscale.cameraFar = *(float*)REL::ID(958877).address();
+#endif
+
+	dispatchUpscale.cameraFovAngleVertical = 1.0f;
+	dispatchUpscale.viewSpaceToMetersFactor = 0.01428222656f;
+	dispatchUpscale.flags = FFX_UPSCALE_FLAG_NON_LINEAR_COLOR_SRGB;
+
+	switch (a_qualityMode) {
+	case 0:
+		dispatchUpscale.flags = 0;
+		break;
+	default:
+		break;
+	}
+
+	if (ffx::Dispatch(upscaleContext, dispatchUpscale) != ffx::ReturnCode::Ok) {
+		logger::error("[FidelityFX] Failed to dispatch upscaling");
+		return false;
+	}
+
+	return true;
+}
+
+void FidelityFX::DestroyUpscaling()
+{
+	if (upscaleContext != nullptr) {
+		ffx::DestroyContext(upscaleContext);
+		upscaleContext = nullptr;
+	}
+
+	upscaleMaxRenderWidth = 0;
+	upscaleMaxRenderHeight = 0;
+	upscaleMaxOutputWidth = 0;
+	upscaleMaxOutputHeight = 0;
 }
 
 [[nodiscard]] static RE::BSGraphics::State* State_GetSingleton()
@@ -56,6 +225,9 @@ void FidelityFX::SetupFrameGeneration()
 
 void FidelityFX::Present(bool a_useFrameGeneration)
 {
+	if (!featureFrameGen || frameGenContext == nullptr)
+		return;
+
 	auto upscaling = Upscaling::GetSingleton();
 	auto dx12SwapChain = DX12SwapChain::GetSingleton();
 	auto commandList = dx12SwapChain->commandLists[dx12SwapChain->frameIndex].get();
@@ -63,10 +235,23 @@ void FidelityFX::Present(bool a_useFrameGeneration)
 	auto HUDLessColor = upscaling->HUDLessBufferShared12[dx12SwapChain->frameIndex].get();
 	auto depth = upscaling->depthBufferShared12[dx12SwapChain->frameIndex].get();
 	auto motionVectors = upscaling->motionVectorBufferShared12[dx12SwapChain->frameIndex].get();
+	const bool canUseFrameGeneration = a_useFrameGeneration &&
+		commandList &&
+		HUDLessColor &&
+		depth &&
+		motionVectors;
+
+	if (a_useFrameGeneration && !canUseFrameGeneration) {
+		static bool loggedMissingResources = false;
+		if (!loggedMissingResources) {
+			logger::warn("[FidelityFX] Frame generation resources are not ready; skipping generated frames");
+			loggedMissingResources = true;
+		}
+	}
 
 	ffx::ConfigureDescFrameGeneration configParameters{};
 
-	if (a_useFrameGeneration) {
+	if (canUseFrameGeneration) {
 		configParameters.frameGenerationEnabled = true;
 
 		configParameters.frameGenerationCallback = [](ffxDispatchDescFrameGeneration* params, void* pUserCtx) -> ffxReturnCode_t {
@@ -124,7 +309,7 @@ void FidelityFX::Present(bool a_useFrameGeneration)
 	
 	lastFrameTime = currentFrameTime;
 
-	if (a_useFrameGeneration) {
+	if (canUseFrameGeneration) {
 		ffx::DispatchDescFrameGenerationPrepare dispatchParameters{};
 
 		dispatchParameters.commandList = commandList;

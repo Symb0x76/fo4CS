@@ -64,6 +64,7 @@ add_library(Core OBJECT
     src/Streamline.h
     src/Upscaler.cpp
     src/Upscaler.h
+    src/UpscalerRenderBackend.cpp
 )
 
 # Core 不是插件目标，不调用 fo4cs_apply_plugin_defaults()，
@@ -74,6 +75,7 @@ target_compile_features(Core PRIVATE cxx_std_23)
 
 target_include_directories(Core
     PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/extern/Streamline/include
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
