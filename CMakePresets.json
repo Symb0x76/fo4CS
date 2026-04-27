@@ -12,6 +12,7 @@
 			"cacheVariables": {
 				"F4SE_SUPPORT_XBYAK": "ON",
 				"FRAMEGEN": true,
+				"REFLEX": true,
 				"UPSCALER": true
 			},
 			"binaryDir": "${sourceDir}/build"
@@ -58,6 +59,7 @@
 			"hidden": true,
 			"cacheVariables": {
 				"FRAMEGEN": true,
+				"REFLEX": false,
 				"UPSCALER": false
 			}
 		},
@@ -66,7 +68,17 @@
 			"hidden": true,
 			"cacheVariables": {
 				"FRAMEGEN": false,
+				"REFLEX": false,
 				"UPSCALER": true
+			}
+		},
+		{
+			"name": "Reflex",
+			"hidden": true,
+			"cacheVariables": {
+				"FRAMEGEN": false,
+				"REFLEX": true,
+				"UPSCALER": false
 			}
 		},
 		{
@@ -74,6 +86,7 @@
 			"hidden": true,
 			"cacheVariables": {
 				"FRAMEGEN": true,
+				"REFLEX": true,
 				"UPSCALER": true
 			}
 		},

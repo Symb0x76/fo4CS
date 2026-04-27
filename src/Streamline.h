@@ -32,6 +32,7 @@ public:
 	bool featureDLSS = false;
 	bool featureDLSSG = false;
 	bool featureReflex = false;
+	bool featurePCL = false;
 	bool dlssgDisabledAfterError = false;
 
 	sl::ViewportHandle viewport{ 0 };
@@ -65,10 +66,12 @@ public:
 	PFun_slReflexGetState* slReflexGetState{};
 	PFun_slReflexSleep* slReflexSleep{};
 	PFun_slReflexSetOptions* slReflexSetOptions{};
+	PFun_slPCLSetMarker* slPCLSetMarker{};
 
 	sl::FrameToken* frameToken = nullptr;
 	uint64_t frameID = 0;
 	uint64_t frameTokenFrameID = UINT64_MAX;
+	uint64_t constantsFrameID = UINT64_MAX;
 
 	bool dlssgOptionsValid = false;
 	sl::DLSSGMode dlssgConfiguredMode = sl::DLSSGMode::eOff;
@@ -87,7 +90,11 @@ public:
 	void LoadAndInit();
 
 	// Call after D3D12 device is created
+	bool UpgradeD3D12DeviceForDLSSG(ID3D12Device** device);
 	void PostDevice(ID3D12Device* device, IDXGIAdapter* adapter);
+
+	// Call before creating a D3D12 swap chain.
+	bool UpgradeDXGIFactoryForDLSSG(IDXGIFactory4** factory);
 
 	// Call immediately after native D3D12 swap chain creation and before any swap chain methods.
 	bool UpgradeSwapChainForDLSSG(IDXGISwapChain4** swapChain);
@@ -101,6 +108,8 @@ public:
 
 	// Call after Present to advance frame
 	void AdvanceFrame();
+	void LogD3D12CommandQueueProxyState(ID3D12CommandQueue* commandQueue);
+	void LogDLSSGPresentState(bool active, uint64_t presentID);
 
 	bool Upscale(
 		ID3D12GraphicsCommandList* a_commandList,
@@ -115,7 +124,10 @@ public:
 	bool EnsureFrameToken(const char* caller);
 	bool ConfigureDLSSG(ID3D12Resource* hudless, ID3D12Resource* depth, ID3D12Resource* motionVectors, sl::DLSSGMode mode, const char* reason);
 	void DisableDLSSGAfterError(const char* reason);
+	bool ConfigureReflex(sl::ReflexMode mode, const char* reason);
 	void ConfigureReflexForDLSSG();
+	bool SleepReflexFrame(const char* reason);
+	bool SetPCLMarker(sl::PCLMarker marker, const char* reason);
 	void UpdateConstants(float2 a_jitter);
 	void DestroyDLSSResources();
 };

@@ -84,7 +84,10 @@ target_include_directories(Core
 if(WIN32)
     target_compile_definitions(Core PRIVATE _WINDOWS)
 endif()
-target_compile_definitions(Core PRIVATE _AMD64_)
+target_compile_definitions(Core PRIVATE
+    _AMD64_
+    "$<$<OR:$<CONFIG:Debug>,$<CONFIG:RelWithDebInfo>>:FO4CS_ENABLE_DEBUG_SETTINGS=1>"
+)
 
 if(CMAKE_GENERATOR MATCHES "Visual Studio")
     target_compile_definitions(Core PRIVATE _UNICODE "$<$<CONFIG:DEBUG>:DEBUG>")
@@ -156,6 +159,16 @@ if(FRAMEGEN)
     # 通过链接 Core 复用共享对象与 include 目录
     target_link_libraries(FrameGen PRIVATE Core)
     fo4cs_install_plugin(FrameGen)
+endif()
+
+if(REFLEX)
+    fo4cs_create_plugin(Reflex Reflex "Reflex" ${FO4CS_COMMON_DEPENDENCIES})
+    target_sources(Reflex PRIVATE
+        src/ReflexPlugin.cpp
+    )
+    target_compile_definitions(Reflex PRIVATE REFLEX=1)
+    target_link_libraries(Reflex PRIVATE Core)
+    fo4cs_install_plugin(Reflex)
 endif()
 
 if(UPSCALER)

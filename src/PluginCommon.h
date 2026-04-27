@@ -28,33 +28,37 @@ namespace fo4cs
 
 	inline void InitializeLog()
 	{
-#ifndef NDEBUG
-		auto sink = std::make_shared<spdlog::sinks::msvc_sink_mt>();
-#else
 		auto path = GetLogDirectory();
 		if (!path) {
 			stl::report_and_fail("Failed to find standard logging directory"sv);
 		}
 
 		*path /= std::format("{}.log"sv, Plugin::NAME);
-		auto sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(path->string(), true);
-#endif
 
-#ifndef NDEBUG
+		std::vector<spdlog::sink_ptr> sinks;
+		sinks.push_back(std::make_shared<spdlog::sinks::basic_file_sink_mt>(path->string(), true));
+
+		#ifndef NDEBUG
+		if (IsDebuggerPresent()) {
+			sinks.push_back(std::make_shared<spdlog::sinks::msvc_sink_mt>());
+		}
 		const auto level = spdlog::level::trace;
-#else
+		const auto flushLevel = spdlog::level::warn;
+		#else
 		const auto level = spdlog::level::info;
-#endif
+		const auto flushLevel = spdlog::level::info;
+		#endif
 
 		const auto loggerName = std::string(Plugin::NAME);
 		spdlog::drop(loggerName);
 
-		auto log = std::make_shared<spdlog::logger>(loggerName, std::move(sink));
+		auto log = std::make_shared<spdlog::logger>(loggerName, sinks.begin(), sinks.end());
 		log->set_level(level);
-		log->flush_on(spdlog::level::info);
+		log->flush_on(flushLevel);
 
 		spdlog::set_default_logger(log);
 		spdlog::set_pattern("%v"s);
+		logger::info("[Logger] Initialized file sink at {}", path->string());
 	}
 
 #if defined(FALLOUT_POST_NG)

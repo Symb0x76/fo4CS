@@ -21,7 +21,7 @@ namespace
 	bool ShouldLoadStreamline()
 	{
 		auto upscaling = Upscaling::GetSingleton();
-		return upscaling->UsesDLSSUpscaling() || upscaling->UsesDLSSFrameGeneration();
+		return upscaling->UsesDLSSUpscaling() || upscaling->UsesDLSSFrameGeneration() || upscaling->UsesReflex();
 	}
 
 	bool ShouldLoadFidelityFX()

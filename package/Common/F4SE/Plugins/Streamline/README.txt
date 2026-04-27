@@ -8,6 +8,13 @@ Place the required NVIDIA Streamline / DLSS DLLs in this directory after install
 
 The FrameGen and Upscaler plugins both search this shared directory first. Legacy fallback locations are still supported, but new installations should use this shared folder.
 
+Required for standalone NVIDIA Reflex
+-------------------------------------
+- sl.interposer.dll
+- sl.common.dll
+- sl.reflex.dll
+- sl.pcl.dll
+
 Required for DLSS Frame Generation / DLSS-G
 -------------------------------------------
 - sl.interposer.dll

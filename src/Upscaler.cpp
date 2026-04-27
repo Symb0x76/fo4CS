@@ -145,6 +145,58 @@ namespace
 			return std::nullopt;
 		}
 	}
+
+#ifdef FO4CS_ENABLE_DEBUG_SETTINGS
+	constexpr bool kDebugSettingsSupported = true;
+#else
+	constexpr bool kDebugSettingsSupported = false;
+#endif
+
+	void LoadSharedDebugSettings(Upscaling::Settings& settings)
+	{
+		if constexpr (kDebugSettingsSupported) {
+			settings.debugLogging = true;
+			settings.streamlineLogLevel = 2;
+			settings.debugFrameLogCount = 240;
+		} else {
+			settings.debugLogging = false;
+			settings.streamlineLogLevel = 0;
+			settings.debugFrameLogCount = 0;
+		}
+	}
+
+	void ApplyDebugEnvironmentOverrides(Upscaling::Settings& settings)
+	{
+		if constexpr (!kDebugSettingsSupported) {
+			return;
+		}
+
+		if (const auto value = GetEnvironmentValue("FO4CS_DEBUG_LOG")) {
+			settings.debugLogging = IsTruthy(*value);
+		}
+		if (const auto value = GetEnvironmentValue("FO4CS_STREAMLINE_LOG_LEVEL")) {
+			if (const auto parsed = ParseIntSetting(*value)) {
+				settings.streamlineLogLevel = ClampIntSetting(*parsed, 0, 2, "FO4CS_STREAMLINE_LOG_LEVEL");
+			}
+		}
+		if (const auto value = GetEnvironmentValue("FO4CS_DEBUG_FRAMES")) {
+			if (const auto parsed = ParseIntSetting(*value)) {
+				settings.debugFrameLogCount = ClampIntSetting(*parsed, 0, 600, "FO4CS_DEBUG_FRAMES");
+			}
+		}
+	}
+
+	void ConfigureDebugLogging(const Upscaling::Settings& settings)
+	{
+		if (!settings.debugLogging) {
+			return;
+		}
+
+		spdlog::set_level(spdlog::level::debug);
+		if (auto log = spdlog::default_logger()) {
+			log->flush_on(spdlog::level::warn);
+		}
+	}
 }
 
 ID3D11DeviceChild* CompileShader(const wchar_t* FilePath, const char* ProgramType, const char* Program = "main")
@@ -200,46 +252,47 @@ void Upscaling::LoadFrameGenerationSettings()
 
 	settings.frameGenerationMode = ini.GetBoolValue("Settings", "bFrameGenerationMode", true);
 	settings.frameLimitMode = ini.GetBoolValue("Settings", "bFrameLimitMode", true);
-#ifndef NDEBUG
-	settings.debugLogging = ini.GetBoolValue("Debug", "bDebugLogging", settings.debugLogging);
-#else
-	settings.debugLogging = false;
-#endif
-	settings.streamlineLogLevel = ClampIntSetting(
-		static_cast<int>(ini.GetLongValue("Debug", "iStreamlineLogLevel", settings.streamlineLogLevel)),
+	LoadSharedDebugSettings(settings);
+	ApplyDebugEnvironmentOverrides(settings);
+	ConfigureDebugLogging(settings);
+}
+
+void Upscaling::LoadReflexSettings()
+{
+	const std::vector<IniSource> iniSources{
+		{ std::filesystem::path("Data\\MCM\\Config\\Reflex\\settings.ini"), "MCM default" },
+		{ std::filesystem::path("Data\\MCM\\Settings\\Reflex.ini"), "MCM user override" }
+	};
+
+	CSimpleIniA ini;
+	ini.SetUnicode();
+
+	bool loadedAny = false;
+	for (const auto& source : iniSources) {
+		loadedAny = LoadIniIfExists(ini, source, "Reflex") || loadedAny;
+	}
+
+	if (!loadedAny) {
+		logger::warn("[Reflex] Settings file not found, using defaults");
+	}
+
+	settings.reflexMode = ClampIntSetting(
+		static_cast<int>(ini.GetLongValue("Settings", "iReflexMode", settings.reflexMode)),
 		0,
 		2,
-		"iStreamlineLogLevel");
-	settings.debugFrameLogCount = ClampIntSetting(
-		static_cast<int>(ini.GetLongValue("Debug", "iDebugFrameLogCount", settings.debugFrameLogCount)),
-		0,
-		600,
-		"iDebugFrameLogCount");
+		"iReflexMode");
+	settings.reflexSleepMode = ini.GetBoolValue("Settings", "bReflexSleepMode", settings.reflexSleepMode);
+	LoadSharedDebugSettings(settings);
+	ApplyDebugEnvironmentOverrides(settings);
+	ConfigureDebugLogging(settings);
 
-#ifndef NDEBUG
-	if (const auto value = GetEnvironmentValue("FO4CS_DEBUG_LOG")) {
-		settings.debugLogging = IsTruthy(*value);
-	}
-	if (const auto value = GetEnvironmentValue("FO4CS_STREAMLINE_LOG_LEVEL")) {
-		if (const auto parsed = ParseIntSetting(*value)) {
-			settings.streamlineLogLevel = ClampIntSetting(*parsed, 0, 2, "FO4CS_STREAMLINE_LOG_LEVEL");
-		}
-	}
-	if (const auto value = GetEnvironmentValue("FO4CS_DEBUG_FRAMES")) {
-		if (const auto parsed = ParseIntSetting(*value)) {
-			settings.debugFrameLogCount = ClampIntSetting(*parsed, 0, 600, "FO4CS_DEBUG_FRAMES");
-		}
-	}
-#else
-	settings.streamlineLogLevel = 0;
-	settings.debugFrameLogCount = 0;
-#endif
-	if (settings.debugLogging) {
-		spdlog::set_level(spdlog::level::debug);
-		if (auto log = spdlog::default_logger()) {
-			log->flush_on(spdlog::level::debug);
-		}
-	}
+	logger::info(
+		"[Settings] Reflex(mode={}, sleep={}), Debug(enabled={}, streamlineLogLevel={}, frames={})",
+		settings.reflexMode,
+		settings.reflexSleepMode,
+		settings.debugLogging,
+		settings.streamlineLogLevel,
+		settings.debugFrameLogCount);
 }
 
 void Upscaling::LoadSettings()
@@ -309,12 +362,17 @@ bool Upscaling::UsesFSRUpscaling() const
 
 bool Upscaling::UsesDLSSFrameGeneration() const
 {
-	return settings.frameGenerationMode && GetPreferredUpscaleMethod() == UpscaleMethod::kDLSS;
+	return pluginMode != PluginMode::kReflex && settings.frameGenerationMode && GetPreferredUpscaleMethod() == UpscaleMethod::kDLSS;
 }
 
 bool Upscaling::UsesFSRFrameGeneration() const
 {
-	return settings.frameGenerationMode && GetPreferredUpscaleMethod() == UpscaleMethod::kFSR;
+	return pluginMode != PluginMode::kReflex && settings.frameGenerationMode && GetPreferredUpscaleMethod() == UpscaleMethod::kFSR;
+}
+
+bool Upscaling::UsesReflex() const
+{
+	return UsesDLSSFrameGeneration() || (pluginMode == PluginMode::kReflex && settings.reflexMode > 0);
 }
 
 void Upscaling::PostPostLoad()

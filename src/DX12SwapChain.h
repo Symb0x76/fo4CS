@@ -90,6 +90,8 @@ public:
 
 	UINT frameIndex = 0;
 	UINT64 fenceValue = 0;
+	UINT64 commandAllocatorFenceValues[2]{};
+	HANDLE d3d12FenceEvent = nullptr;
 
 	LARGE_INTEGER qpf;
 
@@ -107,6 +109,8 @@ public:
 	HRESULT GetBuffer(void** ppSurface);
 	HRESULT Present(UINT SyncInterval, UINT Flags);
 	HRESULT GetDevice(_In_ REFIID riid, _COM_Outptr_ void** ppDevice);
+
+	void WaitForCommandAllocator(UINT a_index);
 
 	ID3D12GraphicsCommandList4* BeginInteropCommandList();
 	void ExecuteInteropCommandListAndWait();

@@ -5,11 +5,13 @@ REM === 插件选择 ===
 REM 可在调用前设置环境变量覆盖默认值，例如：
 REM   set FRAMEGEN=OFF && BuildReleasePostNG.bat
 if not defined FRAMEGEN set FRAMEGEN=ON
+if not defined REFLEX set REFLEX=ON
 if not defined UPSCALER set UPSCALER=ON
 set "FRAMEGEN=%FRAMEGEN: =%"
+set "REFLEX=%REFLEX: =%"
 set "UPSCALER=%UPSCALER: =%"
 
-echo [PostNG] FrameGen=%FRAMEGEN%  Upscaler=%UPSCALER%
+echo [PostNG] FrameGen=%FRAMEGEN%  Reflex=%REFLEX%  Upscaler=%UPSCALER%
 
 set "COMMONLIB_PATH=extern\CommonLibF4PostNG"
 set "BUILD_OUTPUT=build\PostNG\Release"
@@ -23,6 +25,7 @@ RMDIR dist /S /Q
 
 cmake -S . --preset=PostNG ^
     -DFRAMEGEN=%FRAMEGEN% ^
+    -DREFLEX=%REFLEX% ^
     -DUPSCALER=%UPSCALER%
 if %ERRORLEVEL% NEQ 0 exit /b 1
 cmake --build build\PostNG --config Release
@@ -32,6 +35,10 @@ if /I "%FRAMEGEN%"=="ON" (
     xcopy "%BUILD_OUTPUT%\FrameGen.dll" "dist\F4SE\Plugins\" /I /Y
     if exist "%BUILD_OUTPUT%\FrameGen.pdb" xcopy "%BUILD_OUTPUT%\FrameGen.pdb" "dist\F4SE\Plugins\" /I /Y
 )
+if /I "%REFLEX%"=="ON" (
+    xcopy "%BUILD_OUTPUT%\Reflex.dll" "dist\F4SE\Plugins\" /I /Y
+    if exist "%BUILD_OUTPUT%\Reflex.pdb" xcopy "%BUILD_OUTPUT%\Reflex.pdb" "dist\F4SE\Plugins\" /I /Y
+)
 if /I "%UPSCALER%"=="ON" (
     xcopy "%BUILD_OUTPUT%\Upscaler.dll" "dist\F4SE\Plugins\" /I /Y
     if exist "%BUILD_OUTPUT%\Upscaler.pdb" xcopy "%BUILD_OUTPUT%\Upscaler.pdb" "dist\F4SE\Plugins\" /I /Y
@@ -39,6 +46,7 @@ if /I "%UPSCALER%"=="ON" (
 
 if exist "package\Common" xcopy "package\Common" "dist" /I /Y /E
 if /I "%FRAMEGEN%"=="ON" if exist "package\FrameGen" xcopy "package\FrameGen" "dist" /I /Y /E
+if /I "%REFLEX%"=="ON" if exist "package\Reflex" xcopy "package\Reflex" "dist" /I /Y /E
 if /I "%UPSCALER%"=="ON" if exist "package\Upscaler" xcopy "package\Upscaler" "dist" /I /Y /E
 
 if exist "dist\F4SE\Plugins\Streamline\*.dll" del /Q "dist\F4SE\Plugins\Streamline\*.dll"

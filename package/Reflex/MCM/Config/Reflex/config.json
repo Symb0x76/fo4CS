@@ -1,0 +1,56 @@
+{
+	"modName": "Reflex",
+	"displayName": "NVIDIA Reflex",
+	"minMcmVersion": 2,
+	"pluginRequirements": [],
+	"content": [
+		{
+			"text": "<font size='30'><p align='center'>NVIDIA REFLEX</p></font>",
+			"html": true,
+			"type": "text"
+		},
+		{
+			"text": "ABOUT",
+			"type": "section"
+		},
+		{
+			"text": "Reflex uses the existing D3D12 proxy path to enable NVIDIA low latency mode.",
+			"type": "text"
+		},
+		{
+			"text": "",
+			"type": "text"
+		},
+		{
+			"text": "Changes take effect after restarting the game.",
+			"type": "text"
+		},
+		{
+			"text": "",
+			"type": "text"
+		},
+		{
+			"text": "SETTINGS",
+			"type": "section"
+		},
+		{
+			"id": "iReflexMode:Settings",
+			"text": "Reflex Mode",
+			"type": "stepper",
+			"help": "Controls NVIDIA Reflex low latency mode for the standalone Reflex plugin. Changes take effect after restart.",
+			"valueOptions": {
+				"sourceType": "ModSettingInt",
+				"options": ["Disabled", "Low Latency", "Low Latency + Boost"]
+			}
+		},
+		{
+			"id": "bReflexSleepMode:Settings",
+			"text": "Reflex Sleep",
+			"type": "switcher",
+			"help": "Calls Reflex sleep once per presented frame through the D3D12 proxy path. Changes take effect after restart.",
+			"valueOptions": {
+				"sourceType": "ModSettingBool"
+			}
+		}
+	]
+}

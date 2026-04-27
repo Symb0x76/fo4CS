@@ -39,6 +39,16 @@ namespace
 		return std::to_string(static_cast<int>(result));
 	}
 
+	sl::float4x4 IdentityMatrix()
+	{
+		return {
+			sl::float4(1.0f, 0.0f, 0.0f, 0.0f),
+			sl::float4(0.0f, 1.0f, 0.0f, 0.0f),
+			sl::float4(0.0f, 0.0f, 1.0f, 0.0f),
+			sl::float4(0.0f, 0.0f, 0.0f, 1.0f),
+		};
+	}
+
 	template <class T>
 	std::string EnumToString(T value)
 	{
@@ -96,6 +106,18 @@ namespace
 		return settings.debugLogging &&
 			(upscaling->debugTraceCurrentPresent ||
 			 frameID < static_cast<uint64_t>(bootstrapFrames));
+	}
+
+	sl::ReflexMode GetConfiguredReflexMode()
+	{
+		switch (Upscaling::GetSingleton()->settings.reflexMode) {
+		case 2:
+			return sl::ReflexMode::eLowLatencyWithBoost;
+		case 1:
+			return sl::ReflexMode::eLowLatency;
+		default:
+			return sl::ReflexMode::eOff;
+		}
 	}
 
 	void StreamlineLogCallback(sl::LogType type, const char* msg)
@@ -292,12 +314,21 @@ void Streamline::LoadAndInit()
 
 	sl::Preferences pref{};
 	std::vector<sl::Feature> featuresToLoad;
+	const auto addFeature = [&](sl::Feature feature) {
+		if (std::find(featuresToLoad.begin(), featuresToLoad.end(), feature) == featuresToLoad.end()) {
+			featuresToLoad.push_back(feature);
+		}
+	};
 	if (upscaling->UsesDLSSUpscaling())
-		featuresToLoad.push_back(sl::kFeatureDLSS);
+		addFeature(sl::kFeatureDLSS);
 	if (upscaling->UsesDLSSFrameGeneration()) {
-		featuresToLoad.push_back(sl::kFeatureDLSS_G);
-		featuresToLoad.push_back(sl::kFeatureReflex);
-		featuresToLoad.push_back(sl::kFeaturePCL);
+		addFeature(sl::kFeatureDLSS_G);
+		addFeature(sl::kFeatureReflex);
+		addFeature(sl::kFeaturePCL);
+	}
+	if (upscaling->UsesReflex()) {
+		addFeature(sl::kFeatureReflex);
+		addFeature(sl::kFeaturePCL);
 	}
 	if (featuresToLoad.empty()) {
 		logger::info("[Streamline] Runtime not required for current settings");
@@ -385,6 +416,7 @@ void Streamline::PostDevice(ID3D12Device* device, IDXGIAdapter* adapter)
 	checkFeatureAvailability(sl::kFeatureDLSS, "DLSS", featureDLSS);
 	checkFeatureAvailability(sl::kFeatureDLSS_G, "DLSS-G", featureDLSSG);
 	checkFeatureAvailability(sl::kFeatureReflex, "Reflex", featureReflex);
+	checkFeatureAvailability(sl::kFeaturePCL, "PCL", featurePCL);
 
 	const auto bindFeatureFn = [&](sl::Feature feature, const char* functionName, void*& fn) {
 		fn = nullptr;
@@ -425,9 +457,21 @@ void Streamline::PostDevice(ID3D12Device* device, IDXGIAdapter* adapter)
 		featureReflex = reflexBound && slReflexSetOptions;
 		if (featureReflex) {
 			logger::info("[Streamline] Reflex ready");
+			if (Upscaling::GetSingleton()->UsesReflex()) {
+				ConfigureReflex(GetConfiguredReflexMode(), "startup");
+			}
 		} else {
 			logger::warn("[Streamline] Reflex unavailable after binding; DLSS-G status may reject frame generation");
 		}
+	}
+
+	if (featurePCL) {
+		bool pclBound = true;
+		pclBound &= bindFeatureFn(sl::kFeaturePCL, "slPCLSetMarker", (void*&)slPCLSetMarker);
+		featurePCL = pclBound && slPCLSetMarker;
+		logger::info("[Streamline] PCL {}", featurePCL ? "ready" : "unavailable after binding");
+	} else {
+		logger::info("[Streamline] PCL unavailable");
 	}
 
 	if (featureDLSSG) {
@@ -442,6 +486,60 @@ void Streamline::PostDevice(ID3D12Device* device, IDXGIAdapter* adapter)
 	} else {
 		logger::info("[Streamline] DLSS-G unavailable");
 	}
+}
+
+bool Streamline::UpgradeD3D12DeviceForDLSSG(ID3D12Device** device)
+{
+	if (!Upscaling::GetSingleton()->UsesDLSSFrameGeneration() || !initialized || dlssgDisabledAfterError) {
+		return false;
+	}
+
+	if (!slUpgradeInterface || !device || !*device) {
+		DisableDLSSGAfterError("slUpgradeInterface or D3D12 device is unavailable");
+		return false;
+	}
+
+	void* upgradedInterface = *device;
+	const auto result = slUpgradeInterface(&upgradedInterface);
+	if (result != sl::Result::eOk || !upgradedInterface) {
+		logger::error("[Streamline] slUpgradeInterface failed for D3D12 device: {}", ResultToString(result));
+		DisableDLSSGAfterError("slUpgradeInterface failed for D3D12 device");
+		return false;
+	}
+
+	const bool upgraded = upgradedInterface != *device;
+	*device = static_cast<ID3D12Device*>(upgradedInterface);
+	logger::info(
+		"[Streamline] D3D12 device {} for manual-hooked DLSS-G command queue path",
+		upgraded ? "upgraded" : "kept native");
+	return upgraded;
+}
+
+bool Streamline::UpgradeDXGIFactoryForDLSSG(IDXGIFactory4** factory)
+{
+	if (!Upscaling::GetSingleton()->UsesDLSSFrameGeneration() || !initialized || dlssgDisabledAfterError) {
+		return false;
+	}
+
+	if (!slUpgradeInterface || !factory || !*factory) {
+		DisableDLSSGAfterError("slUpgradeInterface or DXGI factory is unavailable");
+		return false;
+	}
+
+	void* upgradedInterface = *factory;
+	const auto result = slUpgradeInterface(&upgradedInterface);
+	if (result != sl::Result::eOk || !upgradedInterface) {
+		logger::error("[Streamline] slUpgradeInterface failed for DXGI factory: {}", ResultToString(result));
+		DisableDLSSGAfterError("slUpgradeInterface failed for DXGI factory");
+		return false;
+	}
+
+	const bool upgraded = upgradedInterface != *factory;
+	*factory = static_cast<IDXGIFactory4*>(upgradedInterface);
+	logger::info(
+		"[Streamline] DXGI factory {} for manual-hooked DLSS-G swap chain creation path",
+		upgraded ? "upgraded" : "kept native");
+	return upgraded;
 }
 
 bool Streamline::UpgradeSwapChainForDLSSG(IDXGISwapChain4** swapChain)
@@ -471,12 +569,33 @@ bool Streamline::UpgradeSwapChainForDLSSG(IDXGISwapChain4** swapChain)
 		const auto nativeResult = slGetNativeInterface(*swapChain, &nativeInterface);
 		if (nativeResult == sl::Result::eOk && nativeInterface) {
 			logger::debug("[Streamline] Native swap chain interface is available behind Streamline proxy");
+			static_cast<IUnknown*>(nativeInterface)->Release();
 		} else if (Upscaling::GetSingleton()->settings.debugLogging) {
 			logger::debug("[Streamline] slGetNativeInterface for swap chain returned {}", ResultToString(nativeResult));
 		}
 	}
 
 	return true;
+}
+
+void Streamline::LogD3D12CommandQueueProxyState(ID3D12CommandQueue* commandQueue)
+{
+	if (!Upscaling::GetSingleton()->UsesDLSSFrameGeneration() || !initialized || !slGetNativeInterface || !commandQueue) {
+		return;
+	}
+
+	void* nativeInterface = nullptr;
+	const auto result = slGetNativeInterface(commandQueue, &nativeInterface);
+	if (result != sl::Result::eOk || !nativeInterface) {
+		logger::warn("[Streamline] slGetNativeInterface for D3D12 command queue returned {}", ResultToString(result));
+		return;
+	}
+
+	const bool proxied = nativeInterface != commandQueue;
+	static_cast<IUnknown*>(nativeInterface)->Release();
+	logger::info(
+		"[Streamline] D3D12 command queue {}",
+		proxied ? "is available behind Streamline proxy" : "is native; DLSS-G Present path may not present generated frames");
 }
 
 bool Streamline::EnsureFrameToken(const char* caller)
@@ -506,39 +625,112 @@ bool Streamline::EnsureFrameToken(const char* caller)
 	return true;
 }
 
+bool Streamline::ConfigureReflex(sl::ReflexMode mode, const char* reason)
+{
+	if (!featureReflex || !slReflexSetOptions) {
+		static bool loggedMissingReflex = false;
+		if (!loggedMissingReflex) {
+			logger::warn("[Streamline] Reflex is unavailable; requested by {}", reason ? reason : "unknown");
+			loggedMissingReflex = true;
+		}
+		return false;
+	}
+
+	sl::ReflexOptions options{};
+	options.mode = mode;
+	options.frameLimitUs = 0;
+	options.useMarkersToOptimize = false;
+
+	if (reflexOptionsValid && reflexConfiguredMode == options.mode) {
+		return true;
+	}
+
+	const auto result = slReflexSetOptions(options);
+	if (result != sl::Result::eOk) {
+		logger::warn("[Streamline] slReflexSetOptions failed: {}", ResultToString(result));
+		return false;
+	}
+
+	reflexOptionsValid = true;
+	reflexConfiguredMode = options.mode;
+	logger::info("[Streamline] Reflex mode={} reason={}", EnumToString(options.mode), reason ? reason : "unknown");
+	return true;
+}
+
 void Streamline::ConfigureReflexForDLSSG()
 {
 	if (!featureDLSSG) {
 		return;
 	}
 
-	if (!featureReflex || !slReflexSetOptions) {
-		static bool loggedMissingReflex = false;
-		if (!loggedMissingReflex) {
+	if (!ConfigureReflex(sl::ReflexMode::eLowLatency, "DLSS-G")) {
+		static bool loggedDLSSGMissingReflex = false;
+		if (!loggedDLSSGMissingReflex) {
 			logger::warn("[Streamline] Reflex is unavailable; DLSS-G may report eFailReflexNotDetectedAtRuntime");
-			loggedMissingReflex = true;
+			loggedDLSSGMissingReflex = true;
 		}
-		return;
+	}
+}
+
+bool Streamline::SleepReflexFrame(const char* reason)
+{
+	auto upscaling = Upscaling::GetSingleton();
+	if (!upscaling->UsesReflex() || (upscaling->pluginMode == Upscaling::PluginMode::kReflex && !upscaling->settings.reflexSleepMode)) {
+		return false;
 	}
 
-	sl::ReflexOptions options{};
-	options.mode = sl::ReflexMode::eLowLatency;
-	options.frameLimitUs = 0;
-	options.useMarkersToOptimize = false;
-
-	if (reflexOptionsValid && reflexConfiguredMode == options.mode) {
-		return;
+	if (!initialized || !featureReflex || !slReflexSleep) {
+		return false;
 	}
 
-	const auto result = slReflexSetOptions(options);
+	if (upscaling->pluginMode == Upscaling::PluginMode::kReflex && !ConfigureReflex(GetConfiguredReflexMode(), reason)) {
+		return false;
+	}
+
+	if (!EnsureFrameToken(reason ? reason : "Reflex sleep")) {
+		return false;
+	}
+
+	const auto result = slReflexSleep(*frameToken);
 	if (result != sl::Result::eOk) {
-		logger::warn("[Streamline] slReflexSetOptions failed: {}", ResultToString(result));
-		return;
+		static bool loggedSleepFailure = false;
+		if (!loggedSleepFailure || upscaling->settings.debugLogging) {
+			logger::warn("[Streamline] slReflexSleep failed: {}", ResultToString(result));
+			loggedSleepFailure = true;
+		}
+		return false;
 	}
 
-	reflexOptionsValid = true;
-	reflexConfiguredMode = options.mode;
-	logger::info("[Streamline] Reflex low latency enabled for DLSS-G");
+	if (ShouldTraceStreamlineFrame(frameID)) {
+		logger::debug("[Streamline] Reflex sleep completed (frame={}, reason={})", frameID, reason ? reason : "unknown");
+	}
+	return true;
+}
+
+bool Streamline::SetPCLMarker(sl::PCLMarker marker, const char* reason)
+{
+	if (!initialized || !featurePCL || !slPCLSetMarker) {
+		return false;
+	}
+
+	if (!EnsureFrameToken(reason ? reason : "PCL marker")) {
+		return false;
+	}
+
+	const auto result = slPCLSetMarker(marker, *frameToken);
+	if (result != sl::Result::eOk) {
+		static bool loggedMarkerFailure = false;
+		if (!loggedMarkerFailure || Upscaling::GetSingleton()->settings.debugLogging) {
+			logger::warn("[Streamline] slPCLSetMarker failed marker={} reason={} result={}", static_cast<uint32_t>(marker), reason ? reason : "unknown", ResultToString(result));
+			loggedMarkerFailure = true;
+		}
+		return false;
+	}
+
+	if (ShouldTraceStreamlineFrame(frameID)) {
+		logger::debug("[Streamline] PCL marker set (frame={}, marker={}, reason={})", frameID, static_cast<uint32_t>(marker), reason ? reason : "unknown");
+	}
+	return true;
 }
 
 void Streamline::DisableDLSSGAfterError(const char* reason)
@@ -705,6 +897,8 @@ bool Streamline::TagResourcesAndConfigure(
 		return false;
 	}
 
+	UpdateConstants(Upscaling::GetSingleton()->jitter);
+
 	auto dx12 = DX12SwapChain::GetSingleton();
 
 	sl::Resource hudlessRes{ sl::ResourceType::eTex2d, hudless, D3D12_RESOURCE_STATE_COMMON };
@@ -737,6 +931,38 @@ bool Streamline::TagResourcesAndConfigure(
 
 	return ConfigureDLSSG(hudless, depth, motionVectors, requestedMode, enable ? "active-frame" : "inactive-frame");
 }
+
+void Streamline::LogDLSSGPresentState(bool active, uint64_t presentID)
+{
+	const auto settings = Upscaling::GetSingleton()->settings;
+	if (!settings.debugLogging || !active || !initialized || !featureDLSSG || dlssgDisabledAfterError || !slDLSSGGetState) {
+		return;
+	}
+
+	static bool loggedFirstActive = false;
+	constexpr uint64_t kSampleInterval = 120;
+	if (loggedFirstActive && presentID % kSampleInterval != 0) {
+		return;
+	}
+
+	sl::DLSSGState state{};
+	const auto stateResult = slDLSSGGetState(viewport, state, nullptr);
+	if (stateResult != sl::Result::eOk) {
+		logger::warn("[Streamline] slDLSSGGetState failed after Present: {}", ResultToString(stateResult));
+		return;
+	}
+
+	loggedFirstActive = true;
+	logger::info(
+		"[Streamline] DLSS-G present state present={} frame={} status={} presentedSinceLast={} maxGenerated={} fenceValue={}",
+		presentID,
+		frameID,
+		EnumToString(state.status),
+		state.numFramesActuallyPresented,
+		state.numFramesToGenerateMax,
+		state.lastPresentInputsProcessingCompletionFenceValue);
+}
+
 
 void Streamline::AdvanceFrame()
 {
@@ -834,9 +1060,33 @@ void Streamline::UpdateConstants(float2 a_jitter)
 	if (!slGetNewFrameToken || !slSetConstants)
 		return;
 
+	if (constantsFrameID == frameID) {
+		if (ShouldTraceStreamlineFrame(frameID)) {
+			logger::debug("[Streamline] DLSS constants already set for frame {}", frameID);
+		}
+		return;
+	}
+
 	sl::Constants slConstants{};
+	auto dx12 = DX12SwapChain::GetSingleton();
+	const float aspectRatio =
+		dx12->swapChainDesc.Height != 0 ?
+			static_cast<float>(dx12->swapChainDesc.Width) / static_cast<float>(dx12->swapChainDesc.Height) :
+			(16.0f / 9.0f);
+
+	slConstants.cameraViewToClip = IdentityMatrix();
+	slConstants.clipToCameraView = IdentityMatrix();
+	slConstants.clipToPrevClip = IdentityMatrix();
+	slConstants.prevClipToClip = IdentityMatrix();
+	slConstants.cameraPinholeOffset = { 0.0f, 0.0f };
+	slConstants.cameraPos = { 0.0f, 0.0f, 0.0f };
+	slConstants.cameraUp = { 0.0f, 1.0f, 0.0f };
+	slConstants.cameraRight = { 1.0f, 0.0f, 0.0f };
+	slConstants.cameraFwd = { 0.0f, 0.0f, 1.0f };
 	slConstants.cameraNear = 0.0f;
 	slConstants.cameraFar = 1.0f;
+	slConstants.cameraFOV = 1.0471976f;
+	slConstants.cameraAspectRatio = aspectRatio;
 	slConstants.cameraMotionIncluded = sl::Boolean::eTrue;
 	slConstants.depthInverted = sl::Boolean::eFalse;
 	slConstants.jitterOffset = { -a_jitter.x, -a_jitter.y };
@@ -855,7 +1105,11 @@ void Streamline::UpdateConstants(float2 a_jitter)
 	const auto result = slSetConstants(slConstants, *frameToken, viewport);
 	if (result != sl::Result::eOk) {
 		logger::warn("[Streamline] Could not set DLSS constants: {}", ResultToString(result));
-	} else if (ShouldTraceStreamlineFrame(frameID)) {
+		return;
+	}
+
+	constantsFrameID = frameID;
+	if (ShouldTraceStreamlineFrame(frameID)) {
 		logger::debug("[Streamline] DLSS constants set (frame={}, jitter={}, {})", frameID, a_jitter.x, a_jitter.y);
 	}
 }

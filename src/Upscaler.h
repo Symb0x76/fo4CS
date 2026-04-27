@@ -21,6 +21,8 @@ public:
 	{
 		bool frameGenerationMode = 1;
 		bool frameLimitMode = 1;
+		int reflexMode = 1;
+		bool reflexSleepMode = true;
 		int upscaleMethodPreference = 2;
 		int qualityMode = 1;
 		bool debugLogging = false;
@@ -31,7 +33,8 @@ public:
 	enum class PluginMode
 	{
 		kFrameGen,
-		kUpscaler
+		kUpscaler,
+		kReflex
 	};
 
 	enum class UpscaleMethod
@@ -70,6 +73,7 @@ public:
 
 	void LoadSettings();
 	void LoadFrameGenerationSettings();
+	void LoadReflexSettings();
 
 	void PostPostLoad();
 	void OnD3D11DeviceCreated(ID3D11Device* a_device, IDXGIAdapter* a_adapter);
@@ -96,6 +100,7 @@ public:
 	bool UsesFSRUpscaling() const;
 	bool UsesDLSSFrameGeneration() const;
 	bool UsesFSRFrameGeneration() const;
+	bool UsesReflex() const;
 
 	UpscaleMethod GetUpscaleMethod(bool a_checkMenu) const;
 	void UpdateUpscaling();

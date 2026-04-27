@@ -144,7 +144,7 @@ namespace
 	void TraceRenderBackendStage(std::string_view stage)
 	{
 		auto upscaling = Upscaling::GetSingleton();
-		if (!upscaling->settings.debugLogging && !upscaling->debugTraceCurrentPresent) {
+		if (!upscaling->debugTraceCurrentPresent) {
 			return;
 		}
 
@@ -155,9 +155,6 @@ namespace
 
 		previousStage = stage;
 		logger::debug("[Upscaler] Render backend stage: {}", stage);
-		if (auto log = spdlog::default_logger()) {
-			log->flush();
-		}
 	}
 
 	struct SamplerStates

@@ -33,9 +33,8 @@ using uint = uint32_t;
 #include <directx/d3dx12.h>
 
 #include <magic_enum/magic_enum.hpp>
-#ifdef NDEBUG
-#	include <spdlog/sinks/basic_file_sink.h>
-#else
+#include <spdlog/sinks/basic_file_sink.h>
+#ifndef NDEBUG
 #	include <spdlog/sinks/msvc_sink.h>
 #endif
 
