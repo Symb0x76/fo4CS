@@ -56,23 +56,23 @@ Build a release package for your runtime flavor:
 BuildReleasePostAE.bat
 ```
 
-Or run CMake directly:
+Or run CMake directly to build the plugin DLLs only:
 
 ```bat
 cmake -S . --preset=PostAE -DFRAMEGEN=ON -DUPSCALER=ON
-cmake --build build\PostAE --config Release --target package
+cmake --build build\PostAE --config Release
 ```
 
-The package zip is written to `dist/`.
+The `dist\` directory is produced only by the `BuildRelease*.bat` scripts.
 
 ## Package layout
 
-The generated package installs files under the normal Fallout 4 `Data` layout. Important paths include:
+The build scripts copy files under the normal Fallout 4 `Data` layout. Important paths include:
 
 ```text
 F4SE\Plugins\FrameGen.dll
 F4SE\Plugins\Upscaler.dll
-F4SE\Plugins\FrameGeneration\
+F4SE\Plugins\FrameGen\
 F4SE\Plugins\Upscaler\
 F4SE\Plugins\FidelityFX\
 F4SE\Plugins\Streamline\
@@ -97,7 +97,7 @@ After installing the mod, place the required NVIDIA DLLs in this shared runtime 
 Data\F4SE\Plugins\Streamline\
 ```
 
-The plugins search this shared folder first. Legacy fallback folders under `Data\F4SE\Plugins\FrameGeneration\Streamline\` and `Data\F4SE\Plugins\Upscaling\Streamline\` are still supported, but new installations should use the shared folder above.
+The plugins search this shared folder first. Legacy fallback folders under `Data\F4SE\Plugins\FrameGen\Streamline\` and `Data\F4SE\Plugins\Upscaling\Streamline\` are still supported, but new installations should use the shared folder above.
 
 ### Required DLLs
 
@@ -114,7 +114,7 @@ The plugins search this shared folder first. Legacy fallback folders under `Data
 
 The Streamline SDK DLLs must be obtained from the [NVIDIA Streamline SDK releases](https://github.com/NVIDIAGameWorks/Streamline/releases) according to NVIDIA's current access and redistribution terms.
 
-The generated package includes `F4SE\Plugins\Streamline\README.txt` as an installation reminder, but it does not include the NVIDIA DLLs themselves.
+The script-produced `dist\` layout includes `F4SE\Plugins\Streamline\README.txt` as an installation reminder, but it does not include the NVIDIA DLLs themselves.
 
 ## License
 

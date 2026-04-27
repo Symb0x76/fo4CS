@@ -1,9 +1,11 @@
 #include "Upscaler.h"
 
 #include <algorithm>
+#include <array>
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <d3dcompiler.h>
@@ -137,6 +139,12 @@ namespace
 		return value == "1" || value == "true" || value == "TRUE" || value == "on" || value == "ON";
 	}
 
+	bool IsFrameGenPluginVisible()
+	{
+		std::error_code ec;
+		return std::filesystem::exists("Data\\F4SE\\Plugins\\FrameGen.dll", ec);
+	}
+
 	std::optional<int> ParseIntSetting(std::string_view value)
 	{
 		try {
@@ -231,6 +239,24 @@ ID3D11DeviceChild* CompileShader(const wchar_t* FilePath, const char* ProgramTyp
 	return regShader;
 }
 
+ID3D11DeviceChild* CompileFrameGenerationShader(const wchar_t* fileName, const char* programType, const char* program = "main")
+{
+	static constexpr std::array<std::wstring_view, 1> shaderDirectories{
+		L"Data\\F4SE\\Plugins\\FrameGen"
+	};
+
+	for (const auto directory : shaderDirectories) {
+		const auto path = std::filesystem::path(directory) / fileName;
+		std::error_code ec;
+		if (std::filesystem::exists(path, ec)) {
+			return CompileShader(path.c_str(), programType, program);
+		}
+	}
+
+	logger::error("[FrameGen] Failed to compile shader; {} was not found in FrameGen", std::filesystem::path(fileName).string());
+	return nullptr;
+}
+
 void Upscaling::LoadFrameGenerationSettings()
 {
 	const std::vector<IniSource> iniSources{
@@ -252,6 +278,7 @@ void Upscaling::LoadFrameGenerationSettings()
 
 	settings.frameGenerationMode = ini.GetBoolValue("Settings", "bFrameGenerationMode", true);
 	settings.frameLimitMode = ini.GetBoolValue("Settings", "bFrameLimitMode", true);
+	settings.frameGenerationBackend = static_cast<int>(ini.GetLongValue("Settings", "iFrameGenerationBackend", 0));
 	LoadSharedDebugSettings(settings);
 	ApplyDebugEnvironmentOverrides(settings);
 	ConfigureDebugLogging(settings);
@@ -299,6 +326,12 @@ void Upscaling::LoadSettings()
 {
 	LoadFrameGenerationSettings();
 
+	if (pluginMode == PluginMode::kUpscaler && !IsFrameGenPluginVisible()) {
+		settings.frameGenerationMode = false;
+		settings.frameLimitMode = false;
+		logger::info("[FrameGen] FrameGen.dll is not visible; disabling frame generation in Upscaler mode");
+	}
+
 	const std::vector<IniSource> upscalerIniSources{
 		{ std::filesystem::path("Data\\MCM\\Config\\Upscaler\\settings.ini"), "MCM default" },
 		{ std::filesystem::path("Data\\MCM\\Settings\\Upscaler.ini"), "MCM user override" }
@@ -326,13 +359,21 @@ void Upscaling::LoadSettings()
 		0,
 		4,
 		"iQualityMode");
+	settings.dlssPreset = ClampIntSetting(
+		static_cast<int>(upscalerIni.GetLongValue("Settings", "iDLSSPreset", settings.dlssPreset)),
+		0,
+		15,
+		"iDLSSPreset");
 
 	logger::info(
-		"[Settings] FrameGen(enabled={}, limiter={}), Upscaler(method={}, quality={}), Debug(enabled={}, streamlineLogLevel={}, frames={})",
+		"[Settings] FrameGen(enabled={}, limiter={}, backend={}), Upscaler(method={}, quality={}, dlssPreset={}), Reflex(mode={}), Debug(enabled={}, streamlineLogLevel={}, frames={})",
 		settings.frameGenerationMode,
 		settings.frameLimitMode,
+		settings.frameGenerationBackend,
 		settings.upscaleMethodPreference,
 		settings.qualityMode,
+		settings.dlssPreset,
+		settings.reflexMode,
 		settings.debugLogging,
 		settings.streamlineLogLevel,
 		settings.debugFrameLogCount);
@@ -362,12 +403,36 @@ bool Upscaling::UsesFSRUpscaling() const
 
 bool Upscaling::UsesDLSSFrameGeneration() const
 {
-	return pluginMode != PluginMode::kReflex && settings.frameGenerationMode && GetPreferredUpscaleMethod() == UpscaleMethod::kDLSS;
+	if (pluginMode == PluginMode::kReflex || !settings.frameGenerationMode)
+		return false;
+
+	switch (settings.frameGenerationBackend) {
+	case 0: // Auto: follow upscale preference
+		return GetPreferredUpscaleMethod() == UpscaleMethod::kDLSS;
+	case 1: // Force NVIDIA DLSS-G
+		return true;
+	case 2: // Force AMD FSR FG
+		return false;
+	default: // Off
+		return false;
+	}
 }
 
 bool Upscaling::UsesFSRFrameGeneration() const
 {
-	return pluginMode != PluginMode::kReflex && settings.frameGenerationMode && GetPreferredUpscaleMethod() == UpscaleMethod::kFSR;
+	if (pluginMode == PluginMode::kReflex || !settings.frameGenerationMode)
+		return false;
+
+	switch (settings.frameGenerationBackend) {
+	case 0: // Auto: follow upscale preference
+		return GetPreferredUpscaleMethod() == UpscaleMethod::kFSR;
+	case 1: // Force NVIDIA DLSS-G
+		return false;
+	case 2: // Force AMD FSR FG
+		return true;
+	default: // Off
+		return false;
+	}
 }
 
 bool Upscaling::UsesReflex() const
@@ -394,6 +459,7 @@ void Upscaling::CreateFrameGenerationResources()
 	setupBuffers = true;
 
 	auto rendererData = fo4cs::GetRendererData();
+	auto context = reinterpret_cast<ID3D11DeviceContext*>(rendererData->context);
 	auto& main = rendererData->renderTargets[(uint)RenderTarget::kMain];
 
 	for (int index = 0; index < 2; index++) {
@@ -414,6 +480,16 @@ void Upscaling::CreateFrameGenerationResources()
 
 		texDesc.MiscFlags = D3D11_RESOURCE_MISC_SHARED | D3D11_RESOURCE_MISC_SHARED_NTHANDLE;
 
+		// Save the render-target dimensions (kMain / internal resolution)
+		// for depth + motion-vector buffers, then override for HUDLess and
+		// UI buffers which DLSS-G requires at backbuffer (swap chain) size.
+		const auto renderWidth = texDesc.Width;
+		const auto renderHeight = texDesc.Height;
+		auto dx12SwapChain = DX12SwapChain::GetSingleton();
+
+		// ---- HUDLess, UI, reticle: backbuffer resolution ----
+		texDesc.Width = dx12SwapChain->swapChainDesc.Width;
+		texDesc.Height = dx12SwapChain->swapChainDesc.Height;
 		texDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
 		srvDesc.Format = texDesc.Format;
 		rtvDesc.Format = texDesc.Format;
@@ -424,6 +500,19 @@ void Upscaling::CreateFrameGenerationResources()
 		HUDLessBufferShared[index]->CreateRTV(rtvDesc);
 		HUDLessBufferShared[index]->CreateUAV(uavDesc);
 
+		uiColorAndAlphaBufferShared[index] = new Texture2D(texDesc);
+		uiColorAndAlphaBufferShared[index]->CreateSRV(srvDesc);
+		uiColorAndAlphaBufferShared[index]->CreateRTV(rtvDesc);
+		uiColorAndAlphaBufferShared[index]->CreateUAV(uavDesc);
+
+		reticleColorAndAlphaBufferShared[index] = new Texture2D(texDesc);
+		reticleColorAndAlphaBufferShared[index]->CreateSRV(srvDesc);
+		reticleColorAndAlphaBufferShared[index]->CreateRTV(rtvDesc);
+		reticleColorAndAlphaBufferShared[index]->CreateUAV(uavDesc);
+
+		// ---- Depth: internal render resolution ----
+		texDesc.Width = renderWidth;
+		texDesc.Height = renderHeight;
 		texDesc.Format = DXGI_FORMAT_R32_FLOAT;
 		srvDesc.Format = texDesc.Format;
 		rtvDesc.Format = texDesc.Format;
@@ -438,6 +527,9 @@ void Upscaling::CreateFrameGenerationResources()
 		D3D11_TEXTURE2D_DESC texDescMotionVector{};
 		reinterpret_cast<ID3D11Texture2D*>(motionVector.texture)->GetDesc(&texDescMotionVector);
 
+		// ---- Motion vectors: internal render resolution ----
+		texDesc.Width = renderWidth;
+		texDesc.Height = renderHeight;
 		texDesc.Format = texDescMotionVector.Format;
 		srvDesc.Format = texDesc.Format;
 		rtvDesc.Format = texDesc.Format;
@@ -447,8 +539,6 @@ void Upscaling::CreateFrameGenerationResources()
 		motionVectorBufferShared[index]->CreateSRV(srvDesc);
 		motionVectorBufferShared[index]->CreateRTV(rtvDesc);
 		motionVectorBufferShared[index]->CreateUAV(uavDesc);
-
-		auto dx12SwapChain = DX12SwapChain::GetSingleton();
 
 		{
 			IDXGIResource1* dxgiResource = nullptr;
@@ -492,6 +582,26 @@ void Upscaling::CreateFrameGenerationResources()
 
 		{
 			IDXGIResource1* dxgiResource = nullptr;
+			DX::ThrowIfFailed(uiColorAndAlphaBufferShared[index]->resource->QueryInterface(IID_PPV_ARGS(&dxgiResource)));
+
+			if (dx12SwapChain->swapChain) {
+				HANDLE sharedHandle = nullptr;
+				DX::ThrowIfFailed(dxgiResource->CreateSharedHandle(
+					nullptr,
+					DXGI_SHARED_RESOURCE_READ | DXGI_SHARED_RESOURCE_WRITE,
+					nullptr,
+					&sharedHandle));
+
+				DX::ThrowIfFailed(dx12SwapChain->d3d12Device->OpenSharedHandle(
+					sharedHandle,
+					IID_PPV_ARGS(&uiColorAndAlphaBufferShared12[index])));
+
+				CloseHandle(sharedHandle);
+			}
+		}
+
+		{
+			IDXGIResource1* dxgiResource = nullptr;
 			DX::ThrowIfFailed(motionVectorBufferShared[index]->resource->QueryInterface(IID_PPV_ARGS(&dxgiResource)));
 
 			if (dx12SwapChain->swapChain) {
@@ -509,21 +619,44 @@ void Upscaling::CreateFrameGenerationResources()
 				CloseHandle(sharedHandle);
 			}
 		}
+
+		FLOAT clearColor[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+		context->ClearRenderTargetView(HUDLessBufferShared[index]->rtv.get(), clearColor);
+		context->ClearRenderTargetView(uiColorAndAlphaBufferShared[index]->rtv.get(), clearColor);
+		context->ClearRenderTargetView(reticleColorAndAlphaBufferShared[index]->rtv.get(), clearColor);
+		context->ClearRenderTargetView(depthBufferShared[index]->rtv.get(), clearColor);
+		context->ClearRenderTargetView(motionVectorBufferShared[index]->rtv.get(), clearColor);
 	}
 
-	copyDepthToSharedBufferCS = (ID3D11ComputeShader*)CompileShader(L"Data\\F4SE\\Plugins\\FrameGeneration\\CopyDepthToSharedBufferCS.hlsl", "cs_5_0");	
-	generateSharedBuffersCS = (ID3D11ComputeShader*)CompileShader(L"Data\\F4SE\\Plugins\\FrameGeneration\\GenerateSharedBuffersCS.hlsl", "cs_5_0");
+	copyDepthToSharedBufferCS = (ID3D11ComputeShader*)CompileFrameGenerationShader(L"CopyDepthToSharedBufferCS.hlsl", "cs_5_0");
+	generateSharedBuffersCS = (ID3D11ComputeShader*)CompileFrameGenerationShader(L"GenerateSharedBuffersCS.hlsl", "cs_5_0");
+	buildUIColorAndAlphaCS = (ID3D11ComputeShader*)CompileFrameGenerationShader(L"BuildUIColorAndAlphaCS.hlsl", "cs_5_0");
+	buildReticleUIColorAndAlphaCS = (ID3D11ComputeShader*)CompileFrameGenerationShader(L"BuildReticleUIColorAndAlphaCS.hlsl", "cs_5_0");
+	patchHUDLessReticleCS = (ID3D11ComputeShader*)CompileFrameGenerationShader(L"PatchHUDLessReticleCS.hlsl", "cs_5_0");
 }
 
 void Upscaling::PreAlpha()
 {
 	auto rendererData = fo4cs::GetRendererData();
 	auto context = reinterpret_cast<ID3D11DeviceContext*>(rendererData->context);
-	
+
 	auto& colorMain = rendererData->renderTargets[(uint)RenderTarget::kMain];
 	auto& colorPostAlpha = rendererData->renderTargets[(uint)RenderTarget::kMainTemp];
 
 	context->CopyResource(reinterpret_cast<ID3D11Texture2D*>(colorMain.texture), reinterpret_cast<ID3D11Texture2D*>(colorPostAlpha.texture));
+
+	// DLSS-G HUDLess: capture from kFrameBuffer at PreAlpha time.
+	// At this point post-processing (bloom, tonemapping) is complete but
+	// reticle and UI have not been drawn yet.  This guarantees that
+	// FinalColor - HUDLess = UI contribution only (no post-process noise).
+	if (!d3d12Interop)
+		return;
+	if (!setupBuffers)
+		CreateFrameGenerationResources();
+
+	auto& frameBuffer = rendererData->renderTargets[(uint)RenderTarget::kFrameBuffer];
+	const auto frameIndex = DX12SwapChain::GetSingleton()->frameIndex;
+	context->CopyResource(HUDLessBufferShared[frameIndex]->resource.get(), reinterpret_cast<ID3D11Texture2D*>(frameBuffer.texture));
 }
 
 void Upscaling::PostAlpha()
@@ -538,6 +671,7 @@ void Upscaling::PostAlpha()
 
 	auto context = reinterpret_cast<ID3D11DeviceContext*>(rendererData->context);
 	auto dx12SwapChain = DX12SwapChain::GetSingleton();
+	const auto frameIndex = dx12SwapChain->frameIndex;
 
 	context->OMSetRenderTargets(0, nullptr, nullptr);
 
@@ -569,7 +703,7 @@ void Upscaling::PostAlpha()
 			context->Dispatch(dispatchX, dispatchY, 1);
 		}
 
-		ID3D11ShaderResourceView* views[3] = { nullptr, nullptr, nullptr };
+		ID3D11ShaderResourceView* views[4] = { nullptr, nullptr, nullptr, nullptr };
 		context->CSSetShaderResources(0, ARRAYSIZE(views), views);
 
 		ID3D11UnorderedAccessView* uavs[2] = { nullptr, nullptr };
@@ -577,6 +711,31 @@ void Upscaling::PostAlpha()
 
 		ID3D11ComputeShader* shader = nullptr;
 		context->CSSetShader(shader, nullptr, 0);
+
+		if (reticleColorAndAlphaBufferShared[frameIndex] && buildReticleUIColorAndAlphaCS) {
+			const uint32_t dispatchX = static_cast<uint32_t>(std::ceil(static_cast<float>(dx12SwapChain->swapChainDesc.Width) / 8.0f));
+			const uint32_t dispatchY = static_cast<uint32_t>(std::ceil(static_cast<float>(dx12SwapChain->swapChainDesc.Height) / 8.0f));
+
+			ID3D11ShaderResourceView* reticleViews[2] = {
+				reinterpret_cast<ID3D11ShaderResourceView*>(colorPreAlpha.srView),
+				reinterpret_cast<ID3D11ShaderResourceView*>(colorPostAlpha.srView)
+			};
+			context->CSSetShaderResources(0, ARRAYSIZE(reticleViews), reticleViews);
+
+			ID3D11UnorderedAccessView* reticleUAVs[1] = { reticleColorAndAlphaBufferShared[frameIndex]->uav.get() };
+			context->CSSetUnorderedAccessViews(0, ARRAYSIZE(reticleUAVs), reticleUAVs, nullptr);
+
+			context->CSSetShader(buildReticleUIColorAndAlphaCS, nullptr, 0);
+			context->Dispatch(dispatchX, dispatchY, 1);
+
+			ID3D11ShaderResourceView* nullReticleViews[2] = { nullptr, nullptr };
+			context->CSSetShaderResources(0, ARRAYSIZE(nullReticleViews), nullReticleViews);
+
+			ID3D11UnorderedAccessView* nullReticleUAVs[1] = { nullptr };
+			context->CSSetUnorderedAccessViews(0, ARRAYSIZE(nullReticleUAVs), nullReticleUAVs, nullptr);
+
+			context->CSSetShader(shader, nullptr, 0);
+		}
 	}
 }
 
@@ -626,6 +785,73 @@ auto rendererData = fo4cs::GetRendererData();
 		ID3D11ComputeShader* shader = nullptr;
 		context->CSSetShader(shader, nullptr, 0);
 	}	
+}
+
+bool Upscaling::BuildUIColorAndAlphaResource(ID3D11Texture2D* a_finalFrame)
+{
+	if (!d3d12Interop || !a_finalFrame)
+		return false;
+
+	if (!setupBuffers)
+		CreateFrameGenerationResources();
+
+	auto dx12SwapChain = DX12SwapChain::GetSingleton();
+	const auto frameIndex = dx12SwapChain->frameIndex;
+	if (!HUDLessBufferShared[frameIndex] || !uiColorAndAlphaBufferShared[frameIndex] || !reticleColorAndAlphaBufferShared[frameIndex] || !buildUIColorAndAlphaCS)
+		return false;
+
+	auto rendererData = fo4cs::GetRendererData();
+	auto device = reinterpret_cast<ID3D11Device*>(rendererData->device);
+	auto context = reinterpret_cast<ID3D11DeviceContext*>(rendererData->context);
+
+	D3D11_TEXTURE2D_DESC finalDesc{};
+	a_finalFrame->GetDesc(&finalDesc);
+	if (finalDesc.Width == 0 || finalDesc.Height == 0)
+		return false;
+
+	D3D11_SHADER_RESOURCE_VIEW_DESC finalSrvDesc{};
+	finalSrvDesc.Format = finalDesc.Format;
+	finalSrvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+	finalSrvDesc.Texture2D.MostDetailedMip = 0;
+	finalSrvDesc.Texture2D.MipLevels = 1;
+
+	winrt::com_ptr<ID3D11ShaderResourceView> finalFrameSRV;
+	if (FAILED(device->CreateShaderResourceView(a_finalFrame, &finalSrvDesc, finalFrameSRV.put()))) {
+		static bool loggedSRVFailure = false;
+		if (!loggedSRVFailure) {
+			logger::warn("[FrameGen] Could not create final-frame SRV; DLSS-G UI alpha tag is unavailable");
+			loggedSRVFailure = true;
+		}
+		return false;
+	}
+
+	context->OMSetRenderTargets(0, nullptr, nullptr);
+
+	const uint32_t dispatchX = static_cast<uint32_t>(std::ceil(static_cast<float>(finalDesc.Width) / 8.0f));
+	const uint32_t dispatchY = static_cast<uint32_t>(std::ceil(static_cast<float>(finalDesc.Height) / 8.0f));
+
+	ID3D11ShaderResourceView* views[3] = {
+		finalFrameSRV.get(),
+		HUDLessBufferShared[frameIndex]->srv.get(),
+		reticleColorAndAlphaBufferShared[frameIndex]->srv.get()
+	};
+	context->CSSetShaderResources(0, ARRAYSIZE(views), views);
+
+	ID3D11UnorderedAccessView* uavs[1] = { uiColorAndAlphaBufferShared[frameIndex]->uav.get() };
+	context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
+
+	context->CSSetShader(buildUIColorAndAlphaCS, nullptr, 0);
+	context->Dispatch(dispatchX, dispatchY, 1);
+
+	ID3D11ShaderResourceView* nullViews[3] = { nullptr, nullptr, nullptr };
+	context->CSSetShaderResources(0, ARRAYSIZE(nullViews), nullViews);
+
+	ID3D11UnorderedAccessView* nullUAVs[1] = { nullptr };
+	context->CSSetUnorderedAccessViews(0, ARRAYSIZE(nullUAVs), nullUAVs, nullptr);
+
+	ID3D11ComputeShader* shader = nullptr;
+	context->CSSetShader(shader, nullptr, 0);
+	return true;
 }
 
 void Upscaling::TimerSleepQPC(int64_t targetQPC)
@@ -752,12 +978,17 @@ void Upscaling::PostDisplay()
 
 
 	auto& swapChain = rendererData->renderTargets[(uint)RenderTarget::kFrameBuffer];
-	ID3D11Resource* swapChainResource;
+	ID3D11Resource* swapChainResource = nullptr;
 	reinterpret_cast<ID3D11RenderTargetView*>(swapChain.rtView)->GetResource(&swapChainResource);
-	
+
 	auto dx12SwapChain = DX12SwapChain::GetSingleton();
 
-	reinterpret_cast<ID3D11DeviceContext*>(rendererData->context)->CopyResource(HUDLessBufferShared[dx12SwapChain->frameIndex]->resource.get(), swapChainResource);
+	auto context = reinterpret_cast<ID3D11DeviceContext*>(rendererData->context);
+	const auto frameIndex = dx12SwapChain->frameIndex;
+	context->CopyResource(HUDLessBufferShared[frameIndex]->resource.get(), swapChainResource);
+	if (swapChainResource)
+		swapChainResource->Release();
+
 }
 
 void Upscaling::Reset()
@@ -775,6 +1006,10 @@ void Upscaling::Reset()
 
 	FLOAT clearColor[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
 	context->ClearRenderTargetView(HUDLessBufferShared[dx12SwapChain->frameIndex]->rtv.get(), clearColor);
+	if (uiColorAndAlphaBufferShared[dx12SwapChain->frameIndex])
+		context->ClearRenderTargetView(uiColorAndAlphaBufferShared[dx12SwapChain->frameIndex]->rtv.get(), clearColor);
+	if (reticleColorAndAlphaBufferShared[dx12SwapChain->frameIndex])
+		context->ClearRenderTargetView(reticleColorAndAlphaBufferShared[dx12SwapChain->frameIndex]->rtv.get(), clearColor);
 	context->ClearRenderTargetView(depthBufferShared[dx12SwapChain->frameIndex]->rtv.get(), clearColor);
 	context->ClearRenderTargetView(motionVectorBufferShared[dx12SwapChain->frameIndex]->rtv.get(), clearColor);
 }

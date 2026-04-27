@@ -21,10 +21,12 @@ public:
 	{
 		bool frameGenerationMode = 1;
 		bool frameLimitMode = 1;
+		int frameGenerationBackend = 0;
 		int reflexMode = 1;
 		bool reflexSleepMode = true;
 		int upscaleMethodPreference = 2;
 		int qualityMode = 1;
+		int dlssPreset = 0;
 		bool debugLogging = false;
 		int streamlineLogLevel = 0;
 		int debugFrameLogCount = 240;
@@ -55,12 +57,15 @@ public:
 	double refreshRate = 0.0f;
 
 	Texture2D* HUDLessBufferShared[2];
+	Texture2D* uiColorAndAlphaBufferShared[2]{};
+	Texture2D* reticleColorAndAlphaBufferShared[2]{};
 	Texture2D* depthBufferShared[2];
 	Texture2D* motionVectorBufferShared[2];
 	Texture2D* upscalerInputShared[2]{};
 	Texture2D* upscalerOutputShared[2]{};
 	
 	winrt::com_ptr<ID3D12Resource> HUDLessBufferShared12[2];
+	winrt::com_ptr<ID3D12Resource> uiColorAndAlphaBufferShared12[2];
 	winrt::com_ptr<ID3D12Resource> depthBufferShared12[2];
 	winrt::com_ptr<ID3D12Resource> motionVectorBufferShared12[2];
 	winrt::com_ptr<ID3D12Resource> upscalerInputShared12[2];
@@ -68,6 +73,9 @@ public:
 
 	ID3D11ComputeShader* copyDepthToSharedBufferCS;
 	ID3D11ComputeShader* generateSharedBuffersCS;
+	ID3D11ComputeShader* buildUIColorAndAlphaCS;
+	ID3D11ComputeShader* buildReticleUIColorAndAlphaCS;
+	ID3D11ComputeShader* patchHUDLessReticleCS;
 
 	bool setupBuffers = false;
 
@@ -82,6 +90,7 @@ public:
 	void PreAlpha();
 	void PostAlpha();
 	void CopyBuffersToSharedResources();
+	bool BuildUIColorAndAlphaResource(ID3D11Texture2D* a_finalFrame);
 
 	static void TimerSleepQPC(int64_t targetQPC);
 

@@ -43,6 +43,16 @@
 			}
 		},
 		{
+			"id": "iFrameGenerationBackend:Settings",
+			"text": "Frame Generation Backend",
+			"type": "stepper",
+			"help": "Selects the frame generation backend. Auto follows the upscale method preference from the Upscaler menu. Changes take effect after restart. (Default: Auto)",
+			"valueOptions": {
+				"sourceType": "ModSettingInt",
+				"options": ["Auto", "NVIDIA DLSS-G", "AMD FSR FG", "Off"]
+			}
+		},
+		{
 			"id": "bFrameLimitMode:Settings",
 			"text": "Frame Rate Limiter",
 			"type": "switcher",

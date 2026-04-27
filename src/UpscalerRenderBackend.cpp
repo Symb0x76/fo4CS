@@ -133,6 +133,35 @@ namespace
 		return nullptr;
 	}
 
+	void CopyNativeAABorder(ID3D11DeviceContext* context, ID3D11Resource* source, Texture2D* output)
+	{
+		if (!context || !source || !output || !output->resource)
+			return;
+
+		const auto width = output->desc.Width;
+		const auto height = output->desc.Height;
+		if (width == 0 || height == 0)
+			return;
+
+		constexpr UINT kBorderPixels = 4;
+		const auto border = std::min({ kBorderPixels, width / 2, height / 2 });
+		if (border == 0)
+			return;
+
+		auto destination = output->resource.get();
+		auto copyBox = [&](UINT left, UINT top, UINT right, UINT bottom) {
+			D3D11_BOX box{ left, top, 0, right, bottom, 1 };
+			context->CopySubresourceRegion(destination, 0, left, top, 0, source, 0, &box);
+		};
+
+		// Native AA is 1:1, so preserving the original frame edge avoids a narrow
+		// upscaler border where edge texels can be clamped into a stretched strip.
+		copyBox(0, 0, border, height);
+		copyBox(width - border, 0, width, height);
+		copyBox(0, 0, width, border);
+		copyBox(0, height - border, width, height);
+	}
+
 	bool IsLoadingMenuOpen()
 	{
 		if (auto ui = RE::UI::GetSingleton()) {
@@ -885,8 +914,11 @@ void Upscaling::Upscale()
 				settings.qualityMode);
 			dx12SwapChain->ExecuteInteropCommandListAndWait();
 
-			if (dispatched)
+			if (dispatched) {
+				if (settings.qualityMode == 0)
+					CopyNativeAABorder(context, frameBufferResource, upscalerOutputShared[frameIndex]);
 				context->CopyResource(frameBufferResource, upscalerOutputShared[frameIndex]->resource.get());
+			}
 		}
 	} else if (upscaleMethod == UpscaleMethod::kFSR && d3d12Interop) {
 		if (!setupBuffers)
@@ -926,8 +958,11 @@ void Upscaling::Upscale()
 				settings.qualityMode);
 			dx12SwapChain->ExecuteInteropCommandListAndWait();
 
-			if (dispatched)
+			if (dispatched) {
+				if (settings.qualityMode == 0)
+					CopyNativeAABorder(context, frameBufferResource, upscalerOutputShared[frameIndex]);
 				context->CopyResource(frameBufferResource, upscalerOutputShared[frameIndex]->resource.get());
+			}
 		}
 	}
 

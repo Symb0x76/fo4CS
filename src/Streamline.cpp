@@ -228,16 +228,10 @@ namespace
 
 		if (const auto pluginDir = GetCurrentPluginDirectory(); !pluginDir.empty()) {
 			addUnique(pluginDir / L"Streamline");
-			addUnique(pluginDir / L"Upscaler" / L"Streamline");
-			addUnique(pluginDir / L"Upscaling" / L"Streamline");
-			addUnique(pluginDir / L"FrameGeneration" / L"Streamline");
 		}
 
 		if (const auto exeDir = GetModuleDirectory(nullptr); !exeDir.empty()) {
 			addUnique(exeDir / L"Data" / L"F4SE" / L"Plugins" / L"Streamline");
-			addUnique(exeDir / L"Data" / L"F4SE" / L"Plugins" / L"Upscaler" / L"Streamline");
-			addUnique(exeDir / L"Data" / L"F4SE" / L"Plugins" / L"Upscaling" / L"Streamline");
-			addUnique(exeDir / L"Data" / L"F4SE" / L"Plugins" / L"FrameGeneration" / L"Streamline");
 		}
 
 		return directories;
@@ -756,6 +750,7 @@ void Streamline::DisableDLSSGAfterError(const char* reason)
 
 bool Streamline::ConfigureDLSSG(
 	ID3D12Resource* hudless,
+	ID3D12Resource* uiColorAndAlpha,
 	ID3D12Resource* depth,
 	ID3D12Resource* motionVectors,
 	sl::DLSSGMode mode,
@@ -772,6 +767,7 @@ bool Streamline::ConfigureDLSSG(
 
 	auto dx12 = DX12SwapChain::GetSingleton();
 	const auto hudlessDesc = hudless ? hudless->GetDesc() : D3D12_RESOURCE_DESC{};
+	const auto uiDesc = uiColorAndAlpha ? uiColorAndAlpha->GetDesc() : D3D12_RESOURCE_DESC{};
 	const auto depthDesc = depth ? depth->GetDesc() : D3D12_RESOURCE_DESC{};
 	const auto motionDesc = motionVectors ? motionVectors->GetDesc() : D3D12_RESOURCE_DESC{};
 
@@ -788,6 +784,13 @@ bool Streamline::ConfigureDLSSG(
 	options.mvecBufferFormat = static_cast<uint32_t>(motionDesc.Format);
 	options.depthBufferFormat = static_cast<uint32_t>(depthDesc.Format);
 	options.hudLessBufferFormat = static_cast<uint32_t>(hudlessDesc.Format);
+	options.uiBufferFormat = static_cast<uint32_t>(uiDesc.Format);
+	// OptiScaler-style: HUDLess provides a clean scene reference for optical
+	// flow without needing explicit UI separation.  Recomposition is kept off
+	// — the generated frames retain the game's own UI through normal
+	// interpolation while motion vectors are computed against the HUD-less
+	// scene, reducing the interference UI motion has on the algorithm.
+	options.enableUserInterfaceRecomposition = sl::Boolean::eFalse;
 
 	const bool unchanged =
 		dlssgOptionsValid &&
@@ -798,6 +801,7 @@ bool Streamline::ConfigureDLSSG(
 		dlssgConfiguredMvecFormat == options.mvecBufferFormat &&
 		dlssgConfiguredDepthFormat == options.depthBufferFormat &&
 		dlssgConfiguredHudlessFormat == options.hudLessBufferFormat &&
+		dlssgConfiguredUIFormat == options.uiBufferFormat &&
 		dlssgConfiguredBackBuffers == options.numBackBuffers;
 
 	if (unchanged) {
@@ -832,17 +836,27 @@ bool Streamline::ConfigureDLSSG(
 	dlssgConfiguredMvecFormat = options.mvecBufferFormat;
 	dlssgConfiguredDepthFormat = options.depthBufferFormat;
 	dlssgConfiguredHudlessFormat = options.hudLessBufferFormat;
+	dlssgConfiguredUIFormat = options.uiBufferFormat;
 	dlssgConfiguredBackBuffers = options.numBackBuffers;
 
 	logger::info(
-		"[Streamline] DLSS-G mode={} reason={} size={}x{} fmt(color={}, hudless={}, depth={}, mvec={})",
+		"[Streamline] DLSS-G mode={} reason={} color={}x{} fmt={} hudless={}x{} fmt={} ui={}x{} fmt={} depth={}x{} fmt={} mvec={}x{} fmt={}",
 		EnumToString(mode),
 		reason,
 		options.colorWidth,
 		options.colorHeight,
 		options.colorBufferFormat,
+		static_cast<uint32_t>(hudlessDesc.Width),
+		hudlessDesc.Height,
 		options.hudLessBufferFormat,
+		static_cast<uint32_t>(uiDesc.Width),
+		uiDesc.Height,
+		options.uiBufferFormat,
+		static_cast<uint32_t>(depthDesc.Width),
+		depthDesc.Height,
 		options.depthBufferFormat,
+		static_cast<uint32_t>(motionDesc.Width),
+		motionDesc.Height,
 		options.mvecBufferFormat);
 
 	if (mode == sl::DLSSGMode::eOn && slDLSSGGetState) {
@@ -870,6 +884,7 @@ bool Streamline::ConfigureDLSSG(
 
 bool Streamline::TagResourcesAndConfigure(
 	ID3D12Resource* hudless,
+	ID3D12Resource* uiColorAndAlpha,
 	ID3D12Resource* depth,
 	ID3D12Resource* motionVectors,
 	bool enable)
@@ -889,7 +904,7 @@ bool Streamline::TagResourcesAndConfigure(
 				motionVectors != nullptr);
 			loggedMissingResources = true;
 		}
-		return ConfigureDLSSG(hudless, depth, motionVectors, requestedMode, "missing-resources");
+		return ConfigureDLSSG(hudless, uiColorAndAlpha, depth, motionVectors, requestedMode, "missing-resources");
 	}
 
 	if (!EnsureFrameToken("DLSS-G resource tagging")) {
@@ -902,22 +917,36 @@ bool Streamline::TagResourcesAndConfigure(
 	auto dx12 = DX12SwapChain::GetSingleton();
 
 	sl::Resource hudlessRes{ sl::ResourceType::eTex2d, hudless, D3D12_RESOURCE_STATE_COMMON };
+	sl::Resource uiRes{ sl::ResourceType::eTex2d, uiColorAndAlpha, D3D12_RESOURCE_STATE_COMMON };
 	sl::Resource depthRes{ sl::ResourceType::eTex2d, depth, D3D12_RESOURCE_STATE_COMMON };
 	sl::Resource mvecRes{ sl::ResourceType::eTex2d, motionVectors, D3D12_RESOURCE_STATE_COMMON };
 
-	sl::Extent fullExtent{ 0, 0, dx12->swapChainDesc.Width, dx12->swapChainDesc.Height };
+	// HUDLess and UI must match the backbuffer (swap chain) resolution.
+	sl::Extent uiExtent{ 0, 0, dx12->swapChainDesc.Width, dx12->swapChainDesc.Height };
 
-	sl::ResourceTag tags[] = {
-		{ &hudlessRes, sl::kBufferTypeHUDLessColor, sl::ResourceLifecycle::eValidUntilPresent, &fullExtent },
-		{ &depthRes, sl::kBufferTypeDepth, sl::ResourceLifecycle::eValidUntilPresent, &fullExtent },
-		{ &mvecRes, sl::kBufferTypeMotionVectors, sl::ResourceLifecycle::eValidUntilPresent, &fullExtent },
-	};
+	// Depth and motion vectors are at the *internal render* resolution,
+	// which may be smaller than the swap chain when DLSS/FSR upscaling is
+	// active.  Using the swap-chain extent here would cause DLSS-G to read
+	// beyond buffer bounds → horizontal pixel stretch at render boundary.
+	auto depthDesc = depth->GetDesc();
+	auto mvecDesc = motionVectors->GetDesc();
+	sl::Extent renderExtent{ 0, 0, static_cast<uint32_t>(depthDesc.Width), depthDesc.Height };
+	sl::Extent mvecExtent{ 0, 0, static_cast<uint32_t>(mvecDesc.Width), mvecDesc.Height };
+
+	std::vector<sl::ResourceTag> tags;
+	tags.reserve(uiColorAndAlpha ? 4u : 3u);
+	tags.emplace_back(&hudlessRes, sl::kBufferTypeHUDLessColor, sl::ResourceLifecycle::eValidUntilPresent, &uiExtent);
+	if (uiColorAndAlpha) {
+		tags.emplace_back(&uiRes, sl::kBufferTypeUIColorAndAlpha, sl::ResourceLifecycle::eValidUntilPresent, &uiExtent);
+	}
+	tags.emplace_back(&depthRes, sl::kBufferTypeDepth, sl::ResourceLifecycle::eValidUntilPresent, &renderExtent);
+	tags.emplace_back(&mvecRes, sl::kBufferTypeMotionVectors, sl::ResourceLifecycle::eValidUntilPresent, &mvecExtent);
 
 	const auto tagResult = slSetTagForFrame(
 		*frameToken,
 		viewport,
-		tags,
-		_countof(tags),
+		tags.data(),
+		static_cast<uint32_t>(tags.size()),
 		reinterpret_cast<sl::CommandBuffer*>(dx12->commandLists[dx12->frameIndex].get()));
 	if (tagResult != sl::Result::eOk) {
 		logger::error("[Streamline] slSetTagForFrame failed: {}", ResultToString(tagResult));
@@ -926,10 +955,10 @@ bool Streamline::TagResourcesAndConfigure(
 	}
 
 	if (ShouldTraceStreamlineFrame(frameID)) {
-		logger::debug("[Streamline] DLSS-G resources tagged (frame={}, frameIndex={}, mode={})", frameID, dx12->frameIndex, EnumToString(requestedMode));
+		logger::debug("[Streamline] DLSS-G resources tagged (frame={}, frameIndex={}, mode={}, ui={})", frameID, dx12->frameIndex, EnumToString(requestedMode), uiColorAndAlpha != nullptr);
 	}
 
-	return ConfigureDLSSG(hudless, depth, motionVectors, requestedMode, enable ? "active-frame" : "inactive-frame");
+	return ConfigureDLSSG(hudless, uiColorAndAlpha, depth, motionVectors, requestedMode, enable ? "active-frame" : "inactive-frame");
 }
 
 void Streamline::LogDLSSGPresentState(bool active, uint64_t presentID)
@@ -1014,10 +1043,30 @@ bool Streamline::Upscale(
 	dlssOptions.colorBuffersHDR = sl::Boolean::eFalse;
 	dlssOptions.useAutoExposure = sl::Boolean::eTrue;
 
+	// Apply DLSS preset per-quality-mode.
+	// 0 = Auto (eDefault — DLSS auto-selects), 10 = J, 11 = K, 12 = L, 13 = M.
+	const auto presetSetting = Upscaling::GetSingleton()->settings.dlssPreset;
+	const auto resolvePreset = [](int presetValue) -> sl::DLSSPreset {
+		if (presetValue >= 10 && presetValue <= 15)
+			return static_cast<sl::DLSSPreset>(presetValue);
+		return sl::DLSSPreset::eDefault;
+	};
+	const auto p = resolvePreset(presetSetting);
+	dlssOptions.dlaaPreset = p;
+	dlssOptions.qualityPreset = p;
+	dlssOptions.balancedPreset = p;
+	dlssOptions.performancePreset = p;
+	dlssOptions.ultraPerformancePreset = p;
+	dlssOptions.ultraQualityPreset = p;
+
 	const auto optionsResult = slDLSSSetOptions(viewport, dlssOptions);
 	if (optionsResult != sl::Result::eOk) {
 		logger::warn("[Streamline] Could not enable DLSS: {}", ResultToString(optionsResult));
 		return false;
+	}
+
+	if (Upscaling::GetSingleton()->settings.debugLogging && presetSetting != 0) {
+		logger::debug("[Streamline] DLSS preset overridden to {} (mode={})", presetSetting, EnumToString(dlssMode));
 	}
 
 	sl::Extent lowResExtent{ 0, 0, std::max(1u, static_cast<uint32_t>(a_renderSize.x)), std::max(1u, static_cast<uint32_t>(a_renderSize.y)) };

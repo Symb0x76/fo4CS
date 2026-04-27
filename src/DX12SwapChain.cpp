@@ -320,11 +320,13 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
 		trace("reflex-sleep");
 		streamline->SleepReflexFrame("present");
 
+		ID3D11Texture2D* finalFrame = enbLoaded ? swapChainBufferProxyENB->resource11 : swapChainBufferProxy->resource.get();
+
 		trace("copy-d3d11-proxy-to-shared");
 		if (enbLoaded)
-			d3d11Context->CopyResource(swapChainBufferWrapped[frameIndex]->resource11, swapChainBufferProxyENB->resource11);
+			d3d11Context->CopyResource(swapChainBufferWrapped[frameIndex]->resource11, finalFrame);
 		else
-			d3d11Context->CopyResource(swapChainBufferWrapped[frameIndex]->resource11, swapChainBufferProxy->resource.get());
+			d3d11Context->CopyResource(swapChainBufferWrapped[frameIndex]->resource11, finalFrame);
 
 		trace("wait-d3d11-to-d3d12");
 		DX::ThrowIfFailed(d3d11Context->Signal(d3d11Fence.get(), fenceValue));
@@ -387,6 +389,7 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
 		if (useDLSSFrameGeneration) {
 			const bool dlssgTagged = streamline->TagResourcesAndConfigure(
 				upscaling->HUDLessBufferShared12[frameIndex].get(),
+				nullptr,
 				upscaling->depthBufferShared12[frameIndex].get(),
 				upscaling->motionVectorBufferShared12[frameIndex].get(),
 				useFrameGenerationThisFrame);

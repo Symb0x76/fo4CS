@@ -1,14 +1,14 @@
+# Builds
 /build
 /dist
 /bin
+
+# References
 /vendor
+
+# AI
 /.tocodex
-/.worktrees
+/.claude
 
 # NVIDIA Streamline / DLSS runtime binaries must not be redistributed.
-/package/F4SE/Plugins/Streamline/*.dll
-/package/F4SE/Plugins/FrameGeneration/Streamline/*.dll
-/package/F4SE/Plugins/Upscaler/Streamline/*.dll
-!/package/F4SE/Plugins/Streamline/README.txt
-!/package/F4SE/Plugins/Streamline/*.license.txt
-!/package/F4SE/Plugins/Streamline/license.txt
+/package/Common/F4SE/Plugins/Streamline/*.dll

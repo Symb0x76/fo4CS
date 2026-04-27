@@ -115,28 +115,6 @@ target_precompile_headers(Core PRIVATE include/PCH.h)
 # 链接共享依赖（OBJECT 库本身不链接，但 target_link_libraries 可传播 INTERFACE 属性给消费者）
 target_link_libraries(Core PUBLIC ${FO4CS_COMMON_DEPENDENCIES})
 
-function(fo4cs_install_plugin target)
-    if(NOT TARGET "${target}")
-        return()
-    endif()
-
-    install(TARGETS "${target}"
-        RUNTIME DESTINATION "F4SE/Plugins"
-        LIBRARY DESTINATION "F4SE/Plugins"
-    )
-endfunction()
-
-function(fo4cs_install_package_directory directory)
-    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${directory}")
-        install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/${directory}/"
-            DESTINATION "."
-            PATTERN "F4SE/Plugins/Streamline/*.dll" EXCLUDE
-            PATTERN "F4SE/Plugins/FrameGeneration/Streamline/*.dll" EXCLUDE
-            PATTERN "F4SE/Plugins/Upscaling/Streamline/*.dll" EXCLUDE
-        )
-    endif()
-endfunction()
-
 if(BUILD_PRE_NG)
     set(FO4CS_RUNTIME_FLAVOR "PreNG")
 elseif(BUILD_POST_NG)
@@ -158,7 +136,6 @@ if(FRAMEGEN)
     target_compile_definitions(FrameGen PRIVATE FRAMEGEN=1)
     # 通过链接 Core 复用共享对象与 include 目录
     target_link_libraries(FrameGen PRIVATE Core)
-    fo4cs_install_plugin(FrameGen)
 endif()
 
 if(REFLEX)
@@ -168,7 +145,6 @@ if(REFLEX)
     )
     target_compile_definitions(Reflex PRIVATE REFLEX=1)
     target_link_libraries(Reflex PRIVATE Core)
-    fo4cs_install_plugin(Reflex)
 endif()
 
 if(UPSCALER)
@@ -181,5 +157,4 @@ if(UPSCALER)
         UPSCALER_LDR=1
     )
     target_link_libraries(Upscaler PRIVATE Core)
-    fo4cs_install_plugin(Upscaler)
 endif()

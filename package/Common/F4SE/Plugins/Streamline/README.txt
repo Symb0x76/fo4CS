@@ -6,7 +6,7 @@ Place the required NVIDIA Streamline / DLSS DLLs in this directory after install
 
     Data\F4SE\Plugins\Streamline\
 
-The FrameGen and Upscaler plugins both search this shared directory first. Legacy fallback locations are still supported, but new installations should use this shared folder.
+The FrameGen and Upscaler plugins both load Streamline runtime files from this shared directory.
 
 Required for standalone NVIDIA Reflex
 -------------------------------------

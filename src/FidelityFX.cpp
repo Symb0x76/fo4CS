@@ -19,7 +19,6 @@ void FidelityFX::LoadFFX()
 	};
 	static constexpr std::array<RuntimePath, 2> runtimePaths{ {
 		{ L"Data\\F4SE\\Plugins\\FidelityFX\\amd_fidelityfx_dx12.dll", "shared" },
-		{ L"Data\\F4SE\\Plugins\\FrameGeneration\\FidelityFX\\amd_fidelityfx_dx12.dll", "legacy FrameGeneration" }
 	} };
 
 	for (const auto& runtimePath : runtimePaths) {
@@ -223,7 +222,7 @@ void FidelityFX::DestroyUpscaling()
 	return singleton.get();
 }
 
-void FidelityFX::Present(bool a_useFrameGeneration)
+void FidelityFX::Present(bool a_useFrameGen)
 {
 	if (!featureFrameGen || frameGenContext == nullptr)
 		return;
@@ -235,13 +234,13 @@ void FidelityFX::Present(bool a_useFrameGeneration)
 	auto HUDLessColor = upscaling->HUDLessBufferShared12[dx12SwapChain->frameIndex].get();
 	auto depth = upscaling->depthBufferShared12[dx12SwapChain->frameIndex].get();
 	auto motionVectors = upscaling->motionVectorBufferShared12[dx12SwapChain->frameIndex].get();
-	const bool canUseFrameGeneration = a_useFrameGeneration &&
+	const bool canUseFrameGen = a_useFrameGen &&
 		commandList &&
 		HUDLessColor &&
 		depth &&
 		motionVectors;
 
-	if (a_useFrameGeneration && !canUseFrameGeneration) {
+	if (a_useFrameGen && !canUseFrameGen) {
 		static bool loggedMissingResources = false;
 		if (!loggedMissingResources) {
 			logger::warn("[FidelityFX] Frame generation resources are not ready; skipping generated frames");
@@ -251,7 +250,7 @@ void FidelityFX::Present(bool a_useFrameGeneration)
 
 	ffx::ConfigureDescFrameGeneration configParameters{};
 
-	if (canUseFrameGeneration) {
+	if (canUseFrameGen) {
 		configParameters.frameGenerationEnabled = true;
 
 		configParameters.frameGenerationCallback = [](ffxDispatchDescFrameGeneration* params, void* pUserCtx) -> ffxReturnCode_t {
@@ -309,7 +308,7 @@ void FidelityFX::Present(bool a_useFrameGeneration)
 	
 	lastFrameTime = currentFrameTime;
 
-	if (canUseFrameGeneration) {
+	if (canUseFrameGen) {
 		ffx::DispatchDescFrameGenerationPrepare dispatchParameters{};
 
 		dispatchParameters.commandList = commandList;

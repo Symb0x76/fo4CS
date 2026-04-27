@@ -66,6 +66,23 @@
 					"Ultra Performance"
 				]
 			}
+		},
+		{
+			"id": "iDLSSPreset:Settings",
+			"text": "DLSS Preset (NVIDIA only)",
+			"type": "stepper",
+			"help": "Overrides the DLSS model preset. Auto lets DLSS pick the best preset per quality mode. Changes take effect after restart. (Default: Auto)",
+			"valueOptions": {
+				"sourceType": "ModSettingInt",
+				"options": [
+					"Auto (default)",
+					"Preset J — less ghosting, more flickering",
+					"Preset K — transformer, best quality (default for Quality/Balanced)",
+					"Preset L — sharper, more stable, less ghosting (default for UltraPerf)",
+					"Preset M — quality of L, speed close to J/K (default for Performance)"
+				],
+				"values": [0, 10, 11, 12, 13]
+			}
 		}
 	]
 }

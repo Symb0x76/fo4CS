@@ -82,6 +82,7 @@ public:
 	uint32_t dlssgConfiguredMvecFormat = 0;
 	uint32_t dlssgConfiguredDepthFormat = 0;
 	uint32_t dlssgConfiguredHudlessFormat = 0;
+	uint32_t dlssgConfiguredUIFormat = 0;
 	uint32_t dlssgConfiguredBackBuffers = 0;
 	bool reflexOptionsValid = false;
 	sl::ReflexMode reflexConfiguredMode = sl::ReflexMode::eOff;
@@ -102,6 +103,7 @@ public:
 	// Call each frame before Present — tags resources and configures DLSS-G
 	bool TagResourcesAndConfigure(
 		ID3D12Resource* hudless,
+		ID3D12Resource* uiColorAndAlpha,
 		ID3D12Resource* depth,
 		ID3D12Resource* motionVectors,
 		bool enable);
@@ -122,7 +124,7 @@ public:
 		float2 a_displaySize,
 		uint a_qualityMode);
 	bool EnsureFrameToken(const char* caller);
-	bool ConfigureDLSSG(ID3D12Resource* hudless, ID3D12Resource* depth, ID3D12Resource* motionVectors, sl::DLSSGMode mode, const char* reason);
+	bool ConfigureDLSSG(ID3D12Resource* hudless, ID3D12Resource* uiColorAndAlpha, ID3D12Resource* depth, ID3D12Resource* motionVectors, sl::DLSSGMode mode, const char* reason);
 	void DisableDLSSGAfterError(const char* reason);
 	bool ConfigureReflex(sl::ReflexMode mode, const char* reason);
 	void ConfigureReflexForDLSSG();
