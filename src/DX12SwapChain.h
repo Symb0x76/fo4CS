@@ -10,6 +10,9 @@
 #include <d3d12.h>
 
 #include "Buffer.h"
+#include "HDR.h"
+
+class HDRCalibrationOverlay;
 
 class WrappedResource
 {
@@ -74,6 +77,8 @@ public:
 	IDXGISwapChain4* swapChain;
 
 	DXGI_SWAP_CHAIN_DESC1 swapChainDesc;
+	HDRSettings hdrSettings;
+	HDRCalibrationOverlay* calibrationOverlay = nullptr;
 
 	Texture2D* swapChainBufferProxy;
 	WrappedResource* swapChainBufferProxyENB;
@@ -88,8 +93,15 @@ public:
 
 	winrt::com_ptr<ID3D12Resource> swapChainBuffers[2];
 
+	winrt::com_ptr<ID3D12RootSignature> colorSpaceRootSignature;
+	winrt::com_ptr<ID3D12PipelineState> colorSpacePipelineState;
+	winrt::com_ptr<ID3D12Resource> colorSpaceConstantBuffer;
+	std::uint8_t* colorSpaceMappedConstants = nullptr;
+	winrt::com_ptr<ID3D12DescriptorHeap> colorSpaceSrvHeap;
+	winrt::com_ptr<ID3D12DescriptorHeap> colorSpaceRtvHeap;
+
 	UINT frameIndex = 0;
-	UINT64 fenceValue = 0;
+	UINT64 fenceValue = 1;
 	UINT64 commandAllocatorFenceValues[2]{};
 	HANDLE d3d12FenceEvent = nullptr;
 
@@ -111,6 +123,9 @@ public:
 	HRESULT GetDevice(_In_ REFIID riid, _COM_Outptr_ void** ppDevice);
 
 	void WaitForCommandAllocator(UINT a_index);
+
+	void EnsureColorSpaceResources();
+	void DestroyColorSpaceResources();
 
 	ID3D12GraphicsCommandList4* BeginInteropCommandList();
 	void ExecuteInteropCommandListAndWait();

@@ -60,6 +60,11 @@ add_library(Core OBJECT
     src/DX12SwapChain.h
     src/FidelityFX.cpp
     src/FidelityFX.h
+    src/HDR.cpp
+    src/HDRCalibration.cpp
+    src/HDRCalibration.h
+    src/HDRCalibration.hlsl
+    src/HDR.h
     src/Streamline.cpp
     src/Streamline.h
     src/Upscaler.cpp
@@ -76,6 +81,7 @@ target_compile_features(Core PRIVATE cxx_std_23)
 target_include_directories(Core
     PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/extern/Streamline/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/extern/FidelityFX-SDK/Kits/OpenSource/imgui
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -115,6 +121,29 @@ target_precompile_headers(Core PRIVATE include/PCH.h)
 # 链接共享依赖（OBJECT 库本身不链接，但 target_link_libraries 可传播 INTERFACE 属性给消费者）
 target_link_libraries(Core PUBLIC ${FO4CS_COMMON_DEPENDENCIES})
 
+target_sources(Core PRIVATE
+    extern/FidelityFX-SDK/Kits/OpenSource/imgui/imgui.cpp
+    extern/FidelityFX-SDK/Kits/OpenSource/imgui/imgui_draw.cpp
+    extern/FidelityFX-SDK/Kits/OpenSource/imgui/imgui_tables.cpp
+    extern/FidelityFX-SDK/Kits/OpenSource/imgui/imgui_widgets.cpp
+    extern/FidelityFX-SDK/Kits/OpenSource/imgui/backends/imgui_impl_dx12.cpp
+    extern/FidelityFX-SDK/Kits/OpenSource/imgui/backends/imgui_impl_win32.cpp
+)
+
+set(FO4CS_IMGUI_SOURCES
+    extern/FidelityFX-SDK/Kits/OpenSource/imgui/imgui.cpp
+    extern/FidelityFX-SDK/Kits/OpenSource/imgui/imgui_draw.cpp
+    extern/FidelityFX-SDK/Kits/OpenSource/imgui/imgui_tables.cpp
+    extern/FidelityFX-SDK/Kits/OpenSource/imgui/imgui_widgets.cpp
+    extern/FidelityFX-SDK/Kits/OpenSource/imgui/backends/imgui_impl_dx12.cpp
+    extern/FidelityFX-SDK/Kits/OpenSource/imgui/backends/imgui_impl_win32.cpp
+)
+set_source_files_properties(${FO4CS_IMGUI_SOURCES} PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+set_source_files_properties(src/HDRCalibration.hlsl PROPERTIES HEADER_FILE_ONLY ON)
+if(CMAKE_GENERATOR MATCHES "Visual Studio")
+    set_source_files_properties(${FO4CS_IMGUI_SOURCES} PROPERTIES COMPILE_OPTIONS "/W0")
+endif()
+
 if(BUILD_PRE_NG)
     set(FO4CS_RUNTIME_FLAVOR "PreNG")
 elseif(BUILD_POST_NG)
@@ -128,6 +157,13 @@ endif()
 # ------------------------------------------------------------------
 # 插件目标
 # ------------------------------------------------------------------
+if(AIO)
+    set(FRAMEGEN OFF)
+    set(REFLEX OFF)
+    set(UPSCALER OFF)
+    set(HDR OFF)
+endif()
+
 if(FRAMEGEN)
     fo4cs_create_plugin(FrameGen FrameGen "FrameGen" ${FO4CS_COMMON_DEPENDENCIES})
     target_sources(FrameGen PRIVATE
@@ -147,6 +183,15 @@ if(REFLEX)
     target_link_libraries(Reflex PRIVATE Core)
 endif()
 
+if(HDR)
+    fo4cs_create_plugin(HDR HDR "HDR" ${FO4CS_COMMON_DEPENDENCIES})
+    target_sources(HDR PRIVATE
+        src/HDRPlugin.cpp
+    )
+    target_compile_definitions(HDR PRIVATE FO4CS_HDR=1)
+    target_link_libraries(HDR PRIVATE Core)
+endif()
+
 if(UPSCALER)
     fo4cs_create_plugin(Upscaler Upscaler "Upscaler" ${FO4CS_COMMON_DEPENDENCIES})
     target_sources(Upscaler PRIVATE
@@ -157,4 +202,13 @@ if(UPSCALER)
         UPSCALER_LDR=1
     )
     target_link_libraries(Upscaler PRIVATE Core)
+endif()
+
+if(AIO)
+    fo4cs_create_plugin(AIO AIO "aioGraphics" ${FO4CS_COMMON_DEPENDENCIES})
+    target_sources(AIO PRIVATE
+        src/AIOPlugin.cpp
+    )
+    set_target_properties(AIO PROPERTIES OUTPUT_NAME "aioGraphics")
+    target_link_libraries(AIO PRIVATE Core)
 endif()

@@ -10,6 +10,28 @@
 
 ffxFunctions ffxModule;
 
+// Stubs: forward the FFX SDK inline wrapper calls to the runtime-loaded function pointers
+extern "C" ffxReturnCode_t ffxCreateContext(ffxContext* context, ffxCreateContextDescHeader* desc, const ffxAllocationCallbacks* memCb)
+{
+	return ffxModule.CreateContext(context, desc, memCb);
+}
+extern "C" ffxReturnCode_t ffxDestroyContext(ffxContext* context, const ffxAllocationCallbacks* memCb)
+{
+	return ffxModule.DestroyContext(context, memCb);
+}
+extern "C" ffxReturnCode_t ffxConfigure(ffxContext* context, const ffxConfigureDescHeader* desc)
+{
+	return ffxModule.Configure(context, desc);
+}
+extern "C" ffxReturnCode_t ffxDispatch(ffxContext* context, const ffxDispatchDescHeader* desc)
+{
+	return ffxModule.Dispatch(context, desc);
+}
+extern "C" ffxReturnCode_t ffxQuery(ffxContext* context, ffxQueryDescHeader* desc)
+{
+	return ffxModule.Query(context, desc);
+}
+
 void FidelityFX::LoadFFX()
 {
 	struct RuntimePath
@@ -54,10 +76,13 @@ void FidelityFX::SetupFrameGeneration()
 	createFg.flags = FFX_FRAMEGENERATION_ENABLE_ASYNC_WORKLOAD_SUPPORT;
 	createFg.backBufferFormat = ffxApiGetSurfaceFormatDX12(dx12SwapChain->swapChainDesc.Format);
 
+	ffx::CreateContextDescFrameGenerationVersion createFgVersion{};
+	createFgVersion.version = FFX_FRAMEGENERATION_VERSION;
+
 	ffx::CreateBackendDX12Desc createBackend{};
 	createBackend.device = dx12SwapChain->d3d12Device.get();
 
-	if (ffx::CreateContext(frameGenContext, nullptr, createFg, createBackend) != ffx::ReturnCode::Ok) {
+	if (ffx::CreateContext(frameGenContext, nullptr, createFg, createFgVersion, createBackend) != ffx::ReturnCode::Ok) {
 		logger::error("[FidelityFX] Failed to create frame generation context");
 		frameGenContext = nullptr;
 		return;
@@ -225,7 +250,7 @@ void FidelityFX::DestroyUpscaling()
 void FidelityFX::Present(bool a_useFrameGen)
 {
 	if (!featureFrameGen || frameGenContext == nullptr)
-		return;
+	return;
 
 	auto upscaling = Upscaling::GetSingleton();
 	auto dx12SwapChain = DX12SwapChain::GetSingleton();
@@ -309,7 +334,7 @@ void FidelityFX::Present(bool a_useFrameGen)
 	lastFrameTime = currentFrameTime;
 
 	if (canUseFrameGen) {
-		ffx::DispatchDescFrameGenerationPrepare dispatchParameters{};
+		ffx::DispatchDescFrameGenerationPrepareV2 dispatchParameters{};
 
 		dispatchParameters.commandList = commandList;
 
@@ -323,7 +348,7 @@ void FidelityFX::Present(bool a_useFrameGen)
 		dispatchParameters.motionVectorScale.y = renderSize.y;
 		dispatchParameters.renderSize.width = static_cast<uint>(renderSize.x);
 		dispatchParameters.renderSize.height = static_cast<uint>(renderSize.y);
-		
+
 		float2 jitter;
 		jitter.x = -gameViewport->offsetX * screenSize.x / 2.0f;
 		jitter.y = gameViewport->offsetY * screenSize.y / 2.0f;
@@ -348,6 +373,16 @@ void FidelityFX::Present(bool a_useFrameGen)
 
 		dispatchParameters.depth = ffxApiGetResourceDX12(depth);
 		dispatchParameters.motionVectors = ffxApiGetResourceDX12(motionVectors);
+
+		static bool wasFrameGenActive = false;
+		const bool frameGenJustResumed = canUseFrameGen && !wasFrameGenActive;
+		wasFrameGenActive = canUseFrameGen;
+		dispatchParameters.reset = frameGenJustResumed;
+
+		dispatchParameters.cameraPosition[0] = 0.0f; dispatchParameters.cameraPosition[1] = 0.0f; dispatchParameters.cameraPosition[2] = 0.0f;
+		dispatchParameters.cameraUp[0] = 0.0f; dispatchParameters.cameraUp[1] = 1.0f; dispatchParameters.cameraUp[2] = 0.0f;
+		dispatchParameters.cameraRight[0] = 1.0f; dispatchParameters.cameraRight[1] = 0.0f; dispatchParameters.cameraRight[2] = 0.0f;
+		dispatchParameters.cameraForward[0] = 0.0f; dispatchParameters.cameraForward[1] = 0.0f; dispatchParameters.cameraForward[2] = 1.0f;
 
 		if (ffx::Dispatch(frameGenContext, dispatchParameters) != ffx::ReturnCode::Ok) {
 			logger::critical("[FidelityFX] Failed to dispatch frame generation!");

@@ -10,10 +10,12 @@
 			"name": "common",
 			"hidden": true,
 			"cacheVariables": {
+				"AIO": true,
 				"F4SE_SUPPORT_XBYAK": "ON",
 				"FRAMEGEN": true,
 				"REFLEX": true,
-				"UPSCALER": true
+				"UPSCALER": true,
+				"HDR": true
 			},
 			"binaryDir": "${sourceDir}/build"
 		},
@@ -58,26 +60,43 @@
 			"name": "Framegen",
 			"hidden": true,
 			"cacheVariables": {
+				"AIO": false,
 				"FRAMEGEN": true,
 				"REFLEX": false,
-				"UPSCALER": false
+				"UPSCALER": false,
+				"HDR": false
 			}
 		},
 		{
 			"name": "Upscaler",
 			"hidden": true,
 			"cacheVariables": {
+				"AIO": false,
 				"FRAMEGEN": false,
 				"REFLEX": false,
-				"UPSCALER": true
+				"UPSCALER": true,
+				"HDR": false
 			}
 		},
 		{
 			"name": "Reflex",
 			"hidden": true,
 			"cacheVariables": {
+				"AIO": false,
 				"FRAMEGEN": false,
 				"REFLEX": true,
+				"UPSCALER": false,
+				"HDR": false
+			}
+		},
+		{
+			"name": "HDR",
+			"hidden": true,
+			"cacheVariables": {
+				"AIO": false,
+				"FRAMEGEN": false,
+				"HDR": true,
+				"REFLEX": false,
 				"UPSCALER": false
 			}
 		},
@@ -85,9 +104,22 @@
 			"name": "all",
 			"hidden": true,
 			"cacheVariables": {
+				"AIO": true,
 				"FRAMEGEN": true,
 				"REFLEX": true,
-				"UPSCALER": true
+				"UPSCALER": true,
+				"HDR": true
+			}
+		},
+		{
+			"name": "AIO",
+			"hidden": true,
+			"cacheVariables": {
+				"AIO": true,
+				"FRAMEGEN": false,
+				"HDR": false,
+				"REFLEX": false,
+				"UPSCALER": false
 			}
 		},
 		{

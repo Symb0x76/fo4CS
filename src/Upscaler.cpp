@@ -13,6 +13,7 @@
 #include "DX12SwapChain.h"
 #include "DirectXMath.h"
 #include "FidelityFX.h"
+#include "HDR.h"
 #include "Streamline.h"
 
 void InstallUpscalerRenderBackendHooks();
@@ -142,7 +143,11 @@ namespace
 	bool IsFrameGenPluginVisible()
 	{
 		std::error_code ec;
-		return std::filesystem::exists("Data\\F4SE\\Plugins\\FrameGen.dll", ec);
+		if (std::filesystem::exists("Data\\F4SE\\Plugins\\FrameGen.dll", ec))
+			return true;
+		if (GetModuleHandleW(L"aioGraphics.dll") != nullptr)
+			return true;
+		return false;
 	}
 
 	std::optional<int> ParseIntSetting(std::string_view value)
@@ -322,9 +327,20 @@ void Upscaling::LoadReflexSettings()
 		settings.debugFrameLogCount);
 }
 
+void Upscaling::LoadHDRSettings()
+{
+	const auto hdrSettings = LoadHDRSettingsFromINI();
+	settings.hdrMode = hdrSettings.hdrMode;
+	settings.peakLuminance = hdrSettings.peakLuminance;
+	settings.paperWhiteLuminance = hdrSettings.paperWhiteLuminance;
+	settings.scRGBReferenceLuminance = hdrSettings.scRGBReferenceLuminance;
+	settings.hdrCalibrationActive = hdrSettings.calibrationActive;
+}
+
 void Upscaling::LoadSettings()
 {
 	LoadFrameGenerationSettings();
+	LoadHDRSettings();
 
 	if (pluginMode == PluginMode::kUpscaler && !IsFrameGenPluginVisible()) {
 		settings.frameGenerationMode = false;

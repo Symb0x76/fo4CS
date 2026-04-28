@@ -1,9 +1,18 @@
-set(FO4CS_BUILD_FRAMEGEN ON CACHE BOOL "Build the FrameGen plugin target")
-set(FO4CS_BUILD_UPSCALER ON CACHE BOOL "Build the Upscaler plugin target")
+set(AIO ON CACHE BOOL "Build the unified aioGraphics.dll (all-in-one)")
+set(FRAMEGEN ON CACHE BOOL "Build the FrameGen plugin target")
+set(REFLEX ON CACHE BOOL "Build the Reflex plugin target")
+set(UPSCALER ON CACHE BOOL "Build the Upscaler plugin target")
+set(HDR ON CACHE BOOL "Build the HDR plugin target")
+
+set(FO4CS_BUILD_AIO ${AIO} CACHE BOOL "Build the unified aioGraphics.dll" FORCE)
+set(FO4CS_BUILD_FRAMEGEN ${FRAMEGEN} CACHE BOOL "Build the FrameGen plugin target" FORCE)
+set(FO4CS_BUILD_REFLEX ${REFLEX} CACHE BOOL "Build the Reflex plugin target" FORCE)
+set(FO4CS_BUILD_UPSCALER ${UPSCALER} CACHE BOOL "Build the Upscaler plugin target" FORCE)
+set(FO4CS_BUILD_HDR ${HDR} CACHE BOOL "Build the HDR plugin target" FORCE)
 
 function(fo4cs_validate_plugin_selection)
-    if(NOT FO4CS_BUILD_FRAMEGEN AND NOT FO4CS_BUILD_UPSCALER)
-        message(FATAL_ERROR "At least one plugin target must be enabled. Set FO4CS_BUILD_FRAMEGEN and/or FO4CS_BUILD_UPSCALER to ON.")
+    if(NOT AIO AND NOT FRAMEGEN AND NOT REFLEX AND NOT UPSCALER AND NOT HDR)
+        message(FATAL_ERROR "At least one plugin target must be enabled. Set AIO, FRAMEGEN, REFLEX, UPSCALER, and/or HDR to ON.")
     endif()
 endfunction()
 

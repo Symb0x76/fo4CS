@@ -3,11 +3,17 @@
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
+#include <cstring>
 #include <dx12/ffx_api_dx12.hpp>
+#include <dx12/ffx_api_framegeneration_dx12.hpp>
 #include <dxgi1_6.h>
 #include <string_view>
 
+#include <d3dcompiler.h>
+#include <directx/d3dx12.h>
+
 #include "FidelityFX.h"
+#include "HDRCalibration.h"
 #include "Streamline.h"
 #include "Upscaler.h"
 
@@ -15,7 +21,97 @@ extern bool enbLoaded;
 
 namespace
 {
-	std::string FormatHRESULT(HRESULT hr)
+	constexpr const char* kColorSpaceShader = R"(
+cbuffer HDRColorSpaceCB : register(b0)
+{
+    uint2 dimensions;
+    float peakNits;
+    float paperWhiteNits;
+    float scRGBReferenceNits;
+    uint hdrMode;
+    float padding;
+};
+
+Texture2D<float4> SourceTexture : register(t0);
+SamplerState LinearSampler : register(s0);
+
+struct VSOut
+{
+    float4 position : SV_Position;
+    float2 uv : TEXCOORD0;
+};
+
+VSOut VSMain(uint vertexID : SV_VertexID)
+{
+    const float2 positions[3] = {
+        float2(-1.0, -1.0),
+        float2(-1.0,  3.0),
+        float2( 3.0, -1.0)
+    };
+    const float2 uvs[3] = {
+        float2(0.0, 1.0),
+        float2(0.0, -1.0),
+        float2(2.0, 1.0)
+    };
+
+    VSOut output;
+    output.position = float4(positions[vertexID], 0.0, 1.0);
+    output.uv = uvs[vertexID];
+    return output;
+}
+
+float3 sRGBToLinear(float3 srgb)
+{
+    float3 lo = srgb / 12.92;
+    float3 hi = pow((srgb + 0.055) / 1.055, 2.4);
+    return lerp(lo, hi, step(0.04045, srgb));
+}
+
+static const float3x3 Rec709ToRec2020 = {
+    { 0.6274, 0.3293, 0.0433 },
+    { 0.0691, 0.9195, 0.0114 },
+    { 0.0164, 0.0880, 0.8956 }
+};
+
+float3 LinearToPQ(float3 linearNits, float peakNitsValue)
+{
+    float3 y = saturate(linearNits / max(peakNitsValue, 1.0));
+    const float m1 = 0.1593017578125;
+    const float m2 = 78.84375;
+    const float c1 = 0.8359375;
+    const float c2 = 18.8515625;
+    const float c3 = 18.6875;
+    float3 yPow = pow(y, m1);
+    return pow((c1 + c2 * yPow) / (1.0 + c3 * yPow), m2);
+}
+
+float4 PSMain(VSOut input) : SV_Target
+{
+    float4 source = SourceTexture.SampleLevel(LinearSampler, input.uv, 0);
+    float3 linearColor = sRGBToLinear(saturate(source.rgb));
+
+    if (hdrMode == 1)
+    {
+        float scRGBScale = paperWhiteNits / max(scRGBReferenceNits, 1.0);
+        return float4(linearColor * scRGBScale, source.a);
+    }
+
+    float3 rec2020 = mul(Rec709ToRec2020, linearColor);
+    float3 pq = LinearToPQ(rec2020 * paperWhiteNits, peakNits);
+    return float4(pq, source.a);
+}
+)";
+
+struct ColorSpaceConstants
+{
+    std::uint32_t dimensions[2];
+    float peakNits;
+    float paperWhiteNits;
+    float scRGBReferenceNits;
+    std::uint32_t hdrMode;
+    float padding;
+};
+std::string FormatHRESULT(HRESULT hr)
 	{
 		return std::format("0x{:08X}", static_cast<std::uint32_t>(hr));
 	}
@@ -99,6 +195,58 @@ namespace
 		}
 		return "none";
 	}
+
+	DXGI_FORMAT GetHDRSwapChainFormat(const HDRSettings& settings)
+	{
+		switch (settings.GetMode()) {
+		case HDRMode::kScRGB:
+			return DXGI_FORMAT_R16G16B16A16_FLOAT;
+		case HDRMode::kHDR10:
+			return DXGI_FORMAT_R10G10B10A2_UNORM;
+		default:
+			return DXGI_FORMAT_UNKNOWN;
+		}
+	}
+
+	DXGI_COLOR_SPACE_TYPE GetHDRColorSpace(const HDRSettings& settings)
+	{
+		switch (settings.GetMode()) {
+		case HDRMode::kScRGB:
+			return DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709;
+		case HDRMode::kHDR10:
+			return DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020;
+		default:
+			return DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709;
+		}
+	}
+
+	UINT16 NitsToDXGIHDRValue(float nits)
+	{
+		return static_cast<UINT16>(std::clamp(nits, 0.0f, 65535.0f));
+	}
+
+	winrt::com_ptr<ID3DBlob> CompileColorSpaceShader(const char* entryPoint, const char* target)
+	{
+		winrt::com_ptr<ID3DBlob> shaderBlob;
+		winrt::com_ptr<ID3DBlob> errorBlob;
+		const auto result = D3DCompile(
+			kColorSpaceShader,
+			std::strlen(kColorSpaceShader),
+			"HDRColorSpace",
+			nullptr,
+			nullptr,
+			entryPoint,
+			target,
+			D3DCOMPILE_ENABLE_STRICTNESS | D3DCOMPILE_OPTIMIZATION_LEVEL3,
+			0,
+			shaderBlob.put(),
+			errorBlob.put());
+		if (FAILED(result)) {
+			logger::warn("[HDR] Color space shader compile failed: {}", errorBlob ? static_cast<const char*>(errorBlob->GetBufferPointer()) : "unknown");
+			DX::ThrowIfFailed(result);
+		}
+		return shaderBlob;
+	}
 }
 
 void DX12SwapChain::CreateD3D12Device(IDXGIAdapter* a_adapter)
@@ -126,11 +274,15 @@ void DX12SwapChain::CreateD3D12Device(IDXGIAdapter* a_adapter)
 
 void DX12SwapChain::CreateSwapChain(IDXGIFactory4* a_dxgiFactory, DXGI_SWAP_CHAIN_DESC a_swapChainDesc)
 {
+	hdrSettings = LoadHDRSettingsFromINI();
 	swapChainDesc = {};
 	swapChainDesc.BufferCount = 2;
 	swapChainDesc.Width = a_swapChainDesc.BufferDesc.Width;
 	swapChainDesc.Height = a_swapChainDesc.BufferDesc.Height;
 	swapChainDesc.Format = a_swapChainDesc.BufferDesc.Format;
+	if (const auto hdrFormat = GetHDRSwapChainFormat(hdrSettings); hdrFormat != DXGI_FORMAT_UNKNOWN) {
+		swapChainDesc.Format = hdrFormat;
+	}
 	swapChainDesc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
 	swapChainDesc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
 	swapChainDesc.SampleDesc.Count = 1;
@@ -160,12 +312,13 @@ void DX12SwapChain::CreateSwapChain(IDXGIFactory4* a_dxgiFactory, DXGI_SWAP_CHAI
 		streamlineFactory.attach(dxgiFactory);
 	}
 	logger::info(
-		"[DX12SwapChain] Creating D3D12 proxy swap chain {}x{} fmt={} flags=0x{:X} backend={}",
+		"[DX12SwapChain] Creating D3D12 proxy swap chain {}x{} fmt={} flags=0x{:X} backend={} hdrMode={}",
 		swapChainDesc.Width,
 		swapChainDesc.Height,
 		static_cast<uint32_t>(swapChainDesc.Format),
 		swapChainDesc.Flags,
-		useFidelityFXSwapChain ? "FidelityFX" : "native");
+		useFidelityFXSwapChain ? "FidelityFX" : "native",
+		hdrSettings.hdrMode);
 
 	const auto createNativeSwapChain = [&]() {
 		winrt::com_ptr<IDXGISwapChain1> nativeSwapChain;
@@ -201,6 +354,38 @@ void DX12SwapChain::CreateSwapChain(IDXGIFactory4* a_dxgiFactory, DXGI_SWAP_CHAI
 
 	if (!useStreamlineFactory) {
 		streamline->UpgradeSwapChainForDLSSG(&swapChain);
+	}
+
+	if (hdrSettings.IsEnabled()) {
+		const auto colorSpace = GetHDRColorSpace(hdrSettings);
+		const auto colorSpaceResult = swapChain->SetColorSpace1(colorSpace);
+		if (FAILED(colorSpaceResult)) {
+			logger::warn("[HDR] SetColorSpace1({}) failed: {}", static_cast<uint32_t>(colorSpace), FormatHRESULT(colorSpaceResult));
+		} else {
+			logger::info("[HDR] Color space set to {}", static_cast<uint32_t>(colorSpace));
+		}
+
+		if (hdrSettings.GetMode() == HDRMode::kHDR10) {
+			DXGI_HDR_METADATA_HDR10 metadata{};
+			metadata.RedPrimary[0] = 34000;
+			metadata.RedPrimary[1] = 16000;
+			metadata.GreenPrimary[0] = 13250;
+			metadata.GreenPrimary[1] = 34500;
+			metadata.BluePrimary[0] = 7500;
+			metadata.BluePrimary[1] = 3000;
+			metadata.WhitePoint[0] = 15635;
+			metadata.WhitePoint[1] = 16450;
+			metadata.MaxMasteringLuminance = static_cast<UINT>(std::clamp(hdrSettings.peakLuminance, 80.0f, 10000.0f) * 10000.0f);
+			metadata.MinMasteringLuminance = 0;
+			metadata.MaxContentLightLevel = NitsToDXGIHDRValue(hdrSettings.peakLuminance);
+			metadata.MaxFrameAverageLightLevel = NitsToDXGIHDRValue(hdrSettings.paperWhiteLuminance);
+			const auto metadataResult = swapChain->SetHDRMetaData(DXGI_HDR_METADATA_TYPE_HDR10, sizeof(metadata), &metadata);
+			if (FAILED(metadataResult)) {
+				logger::warn("[HDR] SetHDRMetaData failed: {}", FormatHRESULT(metadataResult));
+			} else {
+				logger::info("[HDR] HDR10 metadata set (peak={}, paperWhite={})", hdrSettings.peakLuminance, hdrSettings.paperWhiteLuminance);
+			}
+		}
 	}
 
 	DX::ThrowIfFailed(swapChain->GetBuffer(0, IID_PPV_ARGS(&swapChainBuffers[0])));
@@ -302,23 +487,63 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
 	const char* stage = "begin";
 	const auto trace = [&](const char* nextStage) {
 		stage = nextStage;
-		if (traceFrame) {
-			logger::debug(
-				"[DX12SwapChain] Present#{} frameIndex={} phase={} stage={} gameActive={} inMenu={} loadingMenu={} uiBlock={}",
-				presentID,
-				frameIndex,
-				GetPresentTracePhaseName(tracePhase),
-				stage,
-				gameActive,
-				inMenuMode,
-				loadingMenuOpen,
-				uiDirectionalBlock);
-		}
 	};
 
 	try {
+		if (traceFrame) {
+			logger::debug("[DX12SwapChain] Present#{} begin frameIndex={}", presentID, frameIndex);
+		}
 		trace("reflex-sleep");
 		streamline->SleepReflexFrame("present");
+
+
+		if (auto latestHDRSettings = ReloadCalibrationSettings(); latestHDRSettings.calibrationActive) {
+			hdrSettings = latestHDRSettings;
+			WaitForCommandAllocator(frameIndex);
+			trace("reset-command-list-calibration");
+			DX::ThrowIfFailed(commandAllocators[frameIndex]->Reset());
+			DX::ThrowIfFailed(commandLists[frameIndex]->Reset(commandAllocators[frameIndex].get(), nullptr));
+
+			if (!calibrationOverlay) {
+				calibrationOverlay = new HDRCalibrationOverlay();
+			}
+			if (calibrationOverlay->Render(d3d12Device.get(), commandQueue.get(), swapChain, commandLists[frameIndex].get(), swapChainBuffers[frameIndex].get(), swapChainDesc.Format, hdrSettings)) {
+				trace("close-command-list-calibration");
+				DX::ThrowIfFailed(commandLists[frameIndex]->Close());
+				ID3D12CommandList* calibrationLists[] = { commandLists[frameIndex].get() };
+				commandQueue->ExecuteCommandLists(1, calibrationLists);
+			streamline->SetPCLMarker(sl::PCLMarker::ePresentStart, "present-start");
+				const auto presentResult = swapChain->Present(SyncInterval, Flags);
+				if (FAILED(presentResult)) {
+					logger::error("[DX12SwapChain] IDXGISwapChain::Present failed during calibration: {}", FormatHRESULT(presentResult));
+					streamline->SetPCLMarker(sl::PCLMarker::ePresentEnd, "present-end"); streamline->AdvanceFrame(); return presentResult;
+				}
+				DX::ThrowIfFailed(commandQueue->Signal(d3d12Fence.get(), fenceValue));
+				commandAllocatorFenceValues[frameIndex] = fenceValue;
+				DX::ThrowIfFailed(d3d11Context->Wait(d3d11Fence.get(), fenceValue));
+				fenceValue++;
+				streamline->SetPCLMarker(sl::PCLMarker::ePresentEnd, "present-end"); streamline->AdvanceFrame();
+				frameIndex = swapChain->GetCurrentBackBufferIndex();
+				return S_OK;
+			}
+
+			DX::ThrowIfFailed(commandLists[frameIndex]->Close());
+			ID3D12CommandList* fallbackLists[] = { commandLists[frameIndex].get() };
+			commandQueue->ExecuteCommandLists(1, fallbackLists);
+			streamline->SetPCLMarker(sl::PCLMarker::ePresentStart, "present-start");
+			const auto fallbackPresentResult = swapChain->Present(SyncInterval, Flags);
+			if (FAILED(fallbackPresentResult)) {
+				logger::error("[DX12SwapChain] IDXGISwapChain::Present failed after calibration fallback: {}", FormatHRESULT(fallbackPresentResult));
+				streamline->SetPCLMarker(sl::PCLMarker::ePresentEnd, "present-end"); streamline->AdvanceFrame(); return fallbackPresentResult;
+			}
+			DX::ThrowIfFailed(commandQueue->Signal(d3d12Fence.get(), fenceValue));
+			commandAllocatorFenceValues[frameIndex] = fenceValue;
+			DX::ThrowIfFailed(d3d11Context->Wait(d3d11Fence.get(), fenceValue));
+			fenceValue++;
+			streamline->SetPCLMarker(sl::PCLMarker::ePresentEnd, "present-end"); streamline->AdvanceFrame();
+			frameIndex = swapChain->GetCurrentBackBufferIndex();
+			return S_OK;
+		}
 
 		ID3D11Texture2D* finalFrame = enbLoaded ? swapChainBufferProxyENB->resource11 : swapChainBufferProxy->resource.get();
 
@@ -338,10 +563,67 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
 		DX::ThrowIfFailed(commandAllocators[frameIndex]->Reset());
 		DX::ThrowIfFailed(commandLists[frameIndex]->Reset(commandAllocators[frameIndex].get(), nullptr));
 
-		trace("copy-shared-to-backbuffer");
-		{
-			auto fakeSwapChain = swapChainBufferWrapped[frameIndex]->resource.get();
-			auto realSwapChain = swapChainBuffers[frameIndex].get();
+		auto fakeSwapChain = swapChainBufferWrapped[frameIndex]->resource.get();
+		auto realSwapChain = swapChainBuffers[frameIndex].get();
+
+		if (hdrSettings.IsEnabled()) {
+			trace("hdr-color-space-conversion");
+			EnsureColorSpaceResources();
+
+			ColorSpaceConstants constants{};
+			constants.dimensions[0] = swapChainDesc.Width;
+			constants.dimensions[1] = swapChainDesc.Height;
+			constants.peakNits = hdrSettings.peakLuminance;
+			constants.paperWhiteNits = hdrSettings.paperWhiteLuminance;
+			constants.scRGBReferenceNits = hdrSettings.scRGBReferenceLuminance;
+			constants.hdrMode = static_cast<std::uint32_t>(hdrSettings.hdrMode);
+			std::memcpy(colorSpaceMappedConstants, &constants, sizeof(constants));
+
+			D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc{};
+			srvDesc.Format = swapChainDesc.Format;
+			srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+			srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+			srvDesc.Texture2D.MipLevels = 1;
+
+			auto srvCpu = colorSpaceSrvHeap->GetCPUDescriptorHandleForHeapStart();
+			d3d12Device->CreateShaderResourceView(fakeSwapChain, &srvDesc, srvCpu);
+
+			D3D12_RENDER_TARGET_VIEW_DESC rtvDesc{};
+			rtvDesc.Format = swapChainDesc.Format;
+			rtvDesc.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
+			auto rtvCpu = colorSpaceRtvHeap->GetCPUDescriptorHandleForHeapStart();
+			d3d12Device->CreateRenderTargetView(realSwapChain, &rtvDesc, rtvCpu);
+
+			{
+				std::vector<D3D12_RESOURCE_BARRIER> barriers;
+				barriers.push_back(CD3DX12_RESOURCE_BARRIER::Transition(fakeSwapChain, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE));
+				barriers.push_back(CD3DX12_RESOURCE_BARRIER::Transition(realSwapChain, D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET));
+				commandLists[frameIndex]->ResourceBarrier(static_cast<UINT>(barriers.size()), barriers.data());
+			}
+
+			ID3D12DescriptorHeap* heaps[] = { colorSpaceSrvHeap.get() };
+			commandLists[frameIndex]->SetDescriptorHeaps(1, heaps);
+
+			D3D12_VIEWPORT viewport{ 0.0f, 0.0f, static_cast<float>(swapChainDesc.Width), static_cast<float>(swapChainDesc.Height), 0.0f, 1.0f };
+			D3D12_RECT scissor{ 0, 0, static_cast<LONG>(swapChainDesc.Width), static_cast<LONG>(swapChainDesc.Height) };
+			commandLists[frameIndex]->RSSetViewports(1, &viewport);
+			commandLists[frameIndex]->RSSetScissorRects(1, &scissor);
+			commandLists[frameIndex]->OMSetRenderTargets(1, &rtvCpu, FALSE, nullptr);
+			commandLists[frameIndex]->SetGraphicsRootSignature(colorSpaceRootSignature.get());
+			commandLists[frameIndex]->SetPipelineState(colorSpacePipelineState.get());
+			commandLists[frameIndex]->SetGraphicsRootConstantBufferView(0, colorSpaceConstantBuffer->GetGPUVirtualAddress());
+			commandLists[frameIndex]->SetGraphicsRootDescriptorTable(1, colorSpaceSrvHeap->GetGPUDescriptorHandleForHeapStart());
+			commandLists[frameIndex]->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+			commandLists[frameIndex]->DrawInstanced(3, 1, 0, 0);
+
+			{
+				std::vector<D3D12_RESOURCE_BARRIER> barriers;
+				barriers.push_back(CD3DX12_RESOURCE_BARRIER::Transition(fakeSwapChain, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COMMON));
+				barriers.push_back(CD3DX12_RESOURCE_BARRIER::Transition(realSwapChain, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT));
+				commandLists[frameIndex]->ResourceBarrier(static_cast<UINT>(barriers.size()), barriers.data());
+			}
+		} else {
+			trace("copy-shared-to-backbuffer");
 			{
 				std::vector<D3D12_RESOURCE_BARRIER> barriers;
 				barriers.push_back(CD3DX12_RESOURCE_BARRIER::Transition(fakeSwapChain, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_SOURCE));
@@ -366,7 +648,17 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
 		const bool frameGenerationBackendAvailable = useDLSSFrameGeneration || useFSRFrameGeneration;
 		const char* frameGenerationBackend = GetFrameGenerationBackendName(useDLSSFrameGeneration, useFSRFrameGeneration);
 
-		useFrameGenerationThisFrame = frameGenerationBackendAvailable && gameActive && !inMenuMode && !loadingMenuOpen && !uiDirectionalBlock;
+		bool skipFgAfterLoading = false;
+		{
+			static bool wasLoading = false;
+			if (!loadingMenuOpen && wasLoading) {
+				skipFgAfterLoading = true;
+				upscaling->postLoadingSkipUpscale = true;
+			}
+			wasLoading = loadingMenuOpen;
+		}
+
+		useFrameGenerationThisFrame = frameGenerationBackendAvailable && gameActive && !inMenuMode && !loadingMenuOpen && !uiDirectionalBlock && !skipFgAfterLoading;
 
 		if (upscaling->pluginMode != Upscaling::PluginMode::kReflex &&
 			(presentID == 0 || lastFrameGenerationActive != useFrameGenerationThisFrame || std::string_view(lastFrameGenerationBackend) != frameGenerationBackend)) {
@@ -419,7 +711,7 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
 		const auto presentResult = swapChain->Present(SyncInterval, Flags);
 		if (FAILED(presentResult)) {
 			logger::error("[DX12SwapChain] IDXGISwapChain::Present failed: {}", FormatHRESULT(presentResult));
-			return presentResult;
+			streamline->SetPCLMarker(sl::PCLMarker::ePresentEnd, "present-end"); streamline->AdvanceFrame(); return presentResult;
 		}
 
 		streamline->SetPCLMarker(sl::PCLMarker::ePresentEnd, "present-end");
@@ -438,9 +730,6 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
 		streamline->AdvanceFrame();
 
 		trace("skip-frame-latency-wait");
-		if (traceFrame) {
-			logger::debug("[DX12SwapChain] Skipping DXGI frame latency wait for proxy swap chain");
-		}
 
 		trace("update-frame-index");
 		frameIndex = swapChain->GetCurrentBackBufferIndex();
@@ -466,12 +755,24 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
 	} catch (const winrt::hresult_error& e) {
 		const auto hr = static_cast<HRESULT>(e.code());
 		logger::error("[DX12SwapChain] Present failed at stage '{}' with HRESULT {}", stage, FormatHRESULT(hr));
+		commandLists[frameIndex]->Close();
+		commandAllocators[frameIndex]->Reset();
+		commandLists[frameIndex]->Reset(commandAllocators[frameIndex].get(), nullptr);
+		streamline->SetPCLMarker(sl::PCLMarker::ePresentEnd, "present-end"); streamline->AdvanceFrame();
 		return hr;
 	} catch (const std::exception& e) {
 		logger::error("[DX12SwapChain] Present failed at stage '{}': {}", stage, e.what());
+		commandLists[frameIndex]->Close();
+		commandAllocators[frameIndex]->Reset();
+		commandLists[frameIndex]->Reset(commandAllocators[frameIndex].get(), nullptr);
+		streamline->SetPCLMarker(sl::PCLMarker::ePresentEnd, "present-end"); streamline->AdvanceFrame();
 		return DXGI_ERROR_DEVICE_REMOVED;
 	} catch (...) {
 		logger::error("[DX12SwapChain] Present failed at stage '{}' with unknown exception", stage);
+		commandLists[frameIndex]->Close();
+		commandAllocators[frameIndex]->Reset();
+		commandLists[frameIndex]->Reset(commandAllocators[frameIndex].get(), nullptr);
+		streamline->SetPCLMarker(sl::PCLMarker::ePresentEnd, "present-end"); streamline->AdvanceFrame();
 		return DXGI_ERROR_DEVICE_REMOVED;
 	}
 }
@@ -529,6 +830,91 @@ void DX12SwapChain::ExecuteInteropCommandListAndWait()
 	commandAllocatorFenceValues[frameIndex] = fenceValue;
 	DX::ThrowIfFailed(d3d11Context->Wait(d3d11Fence.get(), fenceValue));
 	fenceValue++;
+}
+
+void DX12SwapChain::EnsureColorSpaceResources()
+{
+	if (colorSpacePipelineState && colorSpaceConstantBuffer) {
+		return;
+	}
+
+	CD3DX12_DESCRIPTOR_RANGE srvRange{};
+	srvRange.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0);
+
+	CD3DX12_ROOT_PARAMETER rootParams[2]{};
+	rootParams[0].InitAsConstantBufferView(0);
+	rootParams[1].InitAsDescriptorTable(1, &srvRange, D3D12_SHADER_VISIBILITY_PIXEL);
+
+	D3D12_STATIC_SAMPLER_DESC staticSampler{};
+	staticSampler.Filter = D3D12_FILTER_MIN_MAG_LINEAR_MIP_POINT;
+	staticSampler.AddressU = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+	staticSampler.AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+	staticSampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+	staticSampler.ShaderRegister = 0;
+	staticSampler.RegisterSpace = 0;
+	staticSampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
+	CD3DX12_ROOT_SIGNATURE_DESC rootSigDesc{};
+	rootSigDesc.Init(2, rootParams, 1, &staticSampler, D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
+
+	winrt::com_ptr<ID3DBlob> signatureBlob;
+	winrt::com_ptr<ID3DBlob> errorBlob;
+	DX::ThrowIfFailed(D3D12SerializeRootSignature(&rootSigDesc, D3D_ROOT_SIGNATURE_VERSION_1, signatureBlob.put(), errorBlob.put()));
+	DX::ThrowIfFailed(d3d12Device->CreateRootSignature(0, signatureBlob->GetBufferPointer(), signatureBlob->GetBufferSize(), IID_PPV_ARGS(colorSpaceRootSignature.put())));
+
+	const auto vertexShader = CompileColorSpaceShader("VSMain", "vs_5_0");
+	const auto pixelShader = CompileColorSpaceShader("PSMain", "ps_5_0");
+
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC psoDesc{};
+	psoDesc.pRootSignature = colorSpaceRootSignature.get();
+	psoDesc.VS = { vertexShader->GetBufferPointer(), vertexShader->GetBufferSize() };
+	psoDesc.PS = { pixelShader->GetBufferPointer(), pixelShader->GetBufferSize() };
+	psoDesc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
+	psoDesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
+	psoDesc.DepthStencilState.DepthEnable = FALSE;
+	psoDesc.DepthStencilState.StencilEnable = FALSE;
+	psoDesc.SampleMask = UINT_MAX;
+	psoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+	psoDesc.NumRenderTargets = 1;
+	psoDesc.RTVFormats[0] = swapChainDesc.Format;
+	psoDesc.SampleDesc.Count = 1;
+	DX::ThrowIfFailed(d3d12Device->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(colorSpacePipelineState.put())));
+
+	const auto constantBufferSize = static_cast<UINT64>((sizeof(ColorSpaceConstants) + 255) & ~255);
+	const auto heapProperties = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
+	const auto bufferDesc = CD3DX12_RESOURCE_DESC::Buffer(constantBufferSize);
+	DX::ThrowIfFailed(d3d12Device->CreateCommittedResource(
+		&heapProperties,
+		D3D12_HEAP_FLAG_NONE,
+		&bufferDesc,
+		D3D12_RESOURCE_STATE_GENERIC_READ,
+		nullptr,
+		IID_PPV_ARGS(colorSpaceConstantBuffer.put())));
+	DX::ThrowIfFailed(colorSpaceConstantBuffer->Map(0, nullptr, reinterpret_cast<void**>(&colorSpaceMappedConstants)));
+
+	D3D12_DESCRIPTOR_HEAP_DESC srvHeapDesc{};
+	srvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+	srvHeapDesc.NumDescriptors = 1;
+	srvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+	DX::ThrowIfFailed(d3d12Device->CreateDescriptorHeap(&srvHeapDesc, IID_PPV_ARGS(colorSpaceSrvHeap.put())));
+
+	D3D12_DESCRIPTOR_HEAP_DESC rtvHeapDesc{};
+	rtvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
+	rtvHeapDesc.NumDescriptors = 1;
+	rtvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
+	DX::ThrowIfFailed(d3d12Device->CreateDescriptorHeap(&rtvHeapDesc, IID_PPV_ARGS(colorSpaceRtvHeap.put())));
+
+	logger::info("[HDR] Color space conversion resources created for fmt={}", static_cast<std::uint32_t>(swapChainDesc.Format));
+}
+
+void DX12SwapChain::DestroyColorSpaceResources()
+{
+	colorSpaceMappedConstants = nullptr;
+	colorSpaceConstantBuffer = nullptr;
+	colorSpacePipelineState = nullptr;
+	colorSpaceRootSignature = nullptr;
+	colorSpaceSrvHeap = nullptr;
+	colorSpaceRtvHeap = nullptr;
 }
 
 WrappedResource::WrappedResource(D3D11_TEXTURE2D_DESC a_texDesc, ID3D11Device5* a_d3d11Device, ID3D12Device* a_d3d12Device)
@@ -663,9 +1049,13 @@ HRESULT STDMETHODCALLTYPE DXGISwapChainProxy::GetDesc(_Out_ DXGI_SWAP_CHAIN_DESC
 	return swapChain->GetDesc(pDesc);
 }
 
-HRESULT STDMETHODCALLTYPE DXGISwapChainProxy::ResizeBuffers(UINT , UINT , UINT , DXGI_FORMAT , UINT )
+HRESULT STDMETHODCALLTYPE DXGISwapChainProxy::ResizeBuffers(UINT BufferCount, UINT Width, UINT Height, DXGI_FORMAT NewFormat, UINT SwapChainFlags)
 {
-	return S_OK;
+	auto dx12SwapChain = DX12SwapChain::GetSingleton();
+	if (dx12SwapChain->hdrSettings.IsEnabled()) {
+		NewFormat = dx12SwapChain->swapChainDesc.Format;
+	}
+	return swapChain->ResizeBuffers(BufferCount, Width, Height, NewFormat, SwapChainFlags);
 }
 
 HRESULT STDMETHODCALLTYPE DXGISwapChainProxy::ResizeTarget(_In_ const DXGI_MODE_DESC*)

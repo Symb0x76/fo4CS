@@ -1040,12 +1040,22 @@ bool Streamline::Upscale(
 	dlssOptions.mode = dlssMode;
 	dlssOptions.outputWidth = std::max(1u, static_cast<uint32_t>(a_displaySize.x));
 	dlssOptions.outputHeight = std::max(1u, static_cast<uint32_t>(a_displaySize.y));
-	dlssOptions.colorBuffersHDR = sl::Boolean::eFalse;
+	auto upscaling = Upscaling::GetSingleton();
+	const bool hdrEnabled = upscaling->settings.hdrMode > 0;
+	dlssOptions.colorBuffersHDR = hdrEnabled ? sl::Boolean::eTrue : sl::Boolean::eFalse;
 	dlssOptions.useAutoExposure = sl::Boolean::eTrue;
+
+	static bool loggedDLSSHDRState = false;
+	static bool lastLoggedDLSSHDRState = false;
+	if (!loggedDLSSHDRState || lastLoggedDLSSHDRState != hdrEnabled) {
+		logger::info("[Streamline] DLSS colorBuffersHDR={} hdrMode={}", hdrEnabled, upscaling->settings.hdrMode);
+		loggedDLSSHDRState = true;
+		lastLoggedDLSSHDRState = hdrEnabled;
+	}
 
 	// Apply DLSS preset per-quality-mode.
 	// 0 = Auto (eDefault — DLSS auto-selects), 10 = J, 11 = K, 12 = L, 13 = M.
-	const auto presetSetting = Upscaling::GetSingleton()->settings.dlssPreset;
+	const auto presetSetting = upscaling->settings.dlssPreset;
 	const auto resolvePreset = [](int presetValue) -> sl::DLSSPreset {
 		if (presetValue >= 10 && presetValue <= 15)
 			return static_cast<sl::DLSSPreset>(presetValue);

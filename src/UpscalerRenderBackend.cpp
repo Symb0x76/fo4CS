@@ -143,8 +143,8 @@ namespace
 		if (width == 0 || height == 0)
 			return;
 
-		constexpr UINT kBorderPixels = 4;
-		const auto border = std::min({ kBorderPixels, width / 2, height / 2 });
+		constexpr UINT kBorderPixels = 12;
+		const auto border = std::min({ kBorderPixels, width / 3, height / 3 });
 		if (border == 0)
 			return;
 
@@ -850,6 +850,11 @@ void Upscaling::UpdateUpscaling()
 
 void Upscaling::Upscale()
 {
+	if (postLoadingSkipUpscale) {
+		postLoadingSkipUpscale = false;
+		return;
+	}
+
 	if (upscaleMethod == UpscaleMethod::kDisabled || !upscalingTexture)
 		return;
 

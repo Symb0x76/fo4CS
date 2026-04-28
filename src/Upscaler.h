@@ -24,6 +24,11 @@ public:
 		int frameGenerationBackend = 0;
 		int reflexMode = 1;
 		bool reflexSleepMode = true;
+		int hdrMode = 0;
+		float peakLuminance = 1000.0f;
+		float paperWhiteLuminance = 200.0f;
+		float scRGBReferenceLuminance = 80.0f;
+		bool hdrCalibrationActive = false;
 		int upscaleMethodPreference = 2;
 		int qualityMode = 1;
 		int dlssPreset = 0;
@@ -78,10 +83,12 @@ public:
 	ID3D11ComputeShader* patchHUDLessReticleCS;
 
 	bool setupBuffers = false;
+	bool postLoadingSkipUpscale = false;
 
 	void LoadSettings();
 	void LoadFrameGenerationSettings();
 	void LoadReflexSettings();
+	void LoadHDRSettings();
 
 	void PostPostLoad();
 	void OnD3D11DeviceCreated(ID3D11Device* a_device, IDXGIAdapter* a_adapter);

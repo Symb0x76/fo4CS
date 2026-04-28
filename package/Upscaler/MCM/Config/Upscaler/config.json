@@ -22,6 +22,38 @@
 			"type": "text"
 		},
 		{
+			"text": "For DLSS Preset, use Auto if you're unsure. And for each present:",
+			"type": "text"
+		},
+		{
+			"text": "J: Less ghosting, more flickering",
+			"type": "text"
+		},
+		{
+			"text": "K: Transformer, best quality (default for Quality/Balanced)",
+			"type": "text"
+		},
+		{
+			"text": "L: Sharper, more stable, less ghosting (default for UltraPerf)",
+			"type": "text"
+		},
+		{
+			"text": "M: Quality of L, speed close to J/K (default for Performance)",
+			"type": "text"
+		},
+		{
+			"text": "",
+			"type": "text"
+		},
+		{
+			"text": "AMD FSR is the default method. It is recommended to use the Quality mode for best results.",
+			"type": "text"
+		},
+		{
+			"text": "",
+			"type": "text"
+		},
+		{
 			"text": "When ENBSeries is active, only DLAA is available.",
 			"type": "text"
 		},
@@ -76,10 +108,10 @@
 				"sourceType": "ModSettingInt",
 				"options": [
 					"Auto (default)",
-					"Preset J — less ghosting, more flickering",
-					"Preset K — transformer, best quality (default for Quality/Balanced)",
-					"Preset L — sharper, more stable, less ghosting (default for UltraPerf)",
-					"Preset M — quality of L, speed close to J/K (default for Performance)"
+					"Preset J",
+					"Preset K",
+					"Preset L",
+					"Preset M"
 				],
 				"values": [0, 10, 11, 12, 13]
 			}
