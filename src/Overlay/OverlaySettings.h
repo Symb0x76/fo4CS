@@ -116,6 +116,16 @@ namespace OverlaySettings
 					s.scRGBReferenceLuminance = std::pow(10.0f, refLog);
 				}
 				ImGui::Text("%.0f nits", s.scRGBReferenceLuminance);
+
+				ImGui::Separator();
+				if (ImGui::Button("Start HDR Calibration")) {
+					s.hdrCalibrationActive = true;
+					if (s.peakLuminance < 80.0f) s.peakLuminance = 1000.0f;
+					if (s.paperWhiteLuminance < 20.0f) s.paperWhiteLuminance = 200.0f;
+					SaveToINI();
+				}
+				ImGui::SameLine();
+				ImGui::TextDisabled("(fullscreen test pattern)");
 			}
 		}
 
