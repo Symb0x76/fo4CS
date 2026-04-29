@@ -265,8 +265,7 @@ ID3D11DeviceChild* CompileFrameGenerationShader(const wchar_t* fileName, const c
 void Upscaling::LoadFrameGenerationSettings()
 {
 	const std::vector<IniSource> iniSources{
-		{ std::filesystem::path("Data\\MCM\\Config\\FrameGen\\settings.ini"), "MCM default" },
-		{ std::filesystem::path("Data\\MCM\\Settings\\FrameGen.ini"), "MCM user override" }
+		{ std::filesystem::path("Data\\F4SE\\Plugins\\FrameGen\\FrameGen.ini"), "default" }
 	};
 
 	CSimpleIniA ini;
@@ -292,8 +291,7 @@ void Upscaling::LoadFrameGenerationSettings()
 void Upscaling::LoadReflexSettings()
 {
 	const std::vector<IniSource> iniSources{
-		{ std::filesystem::path("Data\\MCM\\Config\\Reflex\\settings.ini"), "MCM default" },
-		{ std::filesystem::path("Data\\MCM\\Settings\\Reflex.ini"), "MCM user override" }
+		{ std::filesystem::path("Data\\F4SE\\Plugins\\Reflex\\Reflex.ini"), "default" }
 	};
 
 	CSimpleIniA ini;
@@ -349,8 +347,7 @@ void Upscaling::LoadSettings()
 	}
 
 	const std::vector<IniSource> upscalerIniSources{
-		{ std::filesystem::path("Data\\MCM\\Config\\Upscaler\\settings.ini"), "MCM default" },
-		{ std::filesystem::path("Data\\MCM\\Settings\\Upscaler.ini"), "MCM user override" }
+		{ std::filesystem::path("Data\\F4SE\\Plugins\\Upscaler\\Upscaler.ini"), "default" }
 	};
 
 	CSimpleIniA upscalerIni;

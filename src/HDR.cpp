@@ -16,8 +16,8 @@ namespace
 	};
 
 	constexpr const char* kSettingsSection = "Settings";
-	const std::filesystem::path kDefaultSettingsPath{ "Data\\MCM\\Config\\HDR\\settings.ini" };
-	const std::filesystem::path kUserSettingsPath{ "Data\\MCM\\Settings\\HDR.ini" };
+	const std::filesystem::path kDefaultSettingsPath{ "Data\\F4SE\\Plugins\\HDR\\HDR.ini" };
+	const std::filesystem::path kUserSettingsPath{ "Data\\F4SE\\Plugins\\HDR\\HDR.ini" };
 
 	bool LoadIniIfExists(CSimpleIniA& ini, const IniSource& source)
 	{

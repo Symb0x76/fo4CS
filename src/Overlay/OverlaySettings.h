@@ -29,8 +29,8 @@ namespace OverlaySettings
 			ini.SetValue("Settings", "iDebugFrameLogCount", std::to_string(s.debugFrameLogCount).c_str());
 
 			std::error_code ec;
-			std::filesystem::create_directories("Data\\MCM\\Settings", ec);
-			if (!ec && ini.SaveFile("Data\\MCM\\Settings\\FrameGen.ini") < 0) {
+			std::filesystem::create_directories("Data\\F4SE\\Plugins\\FrameGen", ec);
+			if (!ec && ini.SaveFile("Data\\F4SE\\Plugins\\FrameGen\\FrameGen.ini") < 0) {
 				logger::warn("[Overlay] Failed to save FrameGen.ini");
 			}
 		}
@@ -41,7 +41,7 @@ namespace OverlaySettings
 			ini.SetValue("Settings", "iReflexMode", std::to_string(s.reflexMode).c_str());
 			ini.SetValue("Settings", "bReflexSleepMode", s.reflexSleepMode ? "true" : "false");
 
-			if (ini.SaveFile("Data\\MCM\\Settings\\Reflex.ini") < 0) {
+			if (ini.SaveFile("Data\\F4SE\\Plugins\\Reflex\\Reflex.ini") < 0) {
 				logger::warn("[Overlay] Failed to save Reflex.ini");
 			}
 		}
@@ -53,7 +53,7 @@ namespace OverlaySettings
 			ini.SetValue("Settings", "iQualityMode", std::to_string(s.qualityMode).c_str());
 			ini.SetValue("Settings", "iDLSSPreset", std::to_string(s.dlssPreset).c_str());
 
-			if (ini.SaveFile("Data\\MCM\\Settings\\Upscaler.ini") < 0) {
+			if (ini.SaveFile("Data\\F4SE\\Plugins\\Upscaler\\Upscaler.ini") < 0) {
 				logger::warn("[Overlay] Failed to save Upscaler.ini");
 			}
 		}
