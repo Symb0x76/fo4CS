@@ -13,6 +13,7 @@
 #include "HDR.h"
 
 class HDRCalibrationOverlay;
+class Overlay;
 
 class WrappedResource
 {
@@ -79,6 +80,7 @@ public:
 	DXGI_SWAP_CHAIN_DESC1 swapChainDesc;
 	HDRSettings hdrSettings;
 	HDRCalibrationOverlay* calibrationOverlay = nullptr;
+	Overlay* settingsOverlay = nullptr;
 
 	Texture2D* swapChainBufferProxy;
 	WrappedResource* swapChainBufferProxyENB;

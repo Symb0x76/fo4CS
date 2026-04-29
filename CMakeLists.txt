@@ -65,6 +65,11 @@ add_library(Core OBJECT
     src/HDRCalibration.h
     src/HDRCalibration.hlsl
     src/HDR.h
+    src/Overlay/Overlay.cpp
+    src/Overlay/Overlay.h
+    src/Overlay/OverlaySettings.h
+    src/Overlay/OverlayShaderDump.h
+    src/Overlay/OverlayWndProc.h
     src/Streamline.cpp
     src/Streamline.h
     src/Upscaler.cpp
@@ -81,7 +86,8 @@ target_compile_features(Core PRIVATE cxx_std_23)
 target_include_directories(Core
     PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/extern/Streamline/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/extern/FidelityFX-SDK/Kits/OpenSource/imgui
+    ${CMAKE_CURRENT_SOURCE_DIR}/extern/imgui
+    ${CMAKE_CURRENT_SOURCE_DIR}/extern/imgui/backends
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -122,21 +128,23 @@ target_precompile_headers(Core PRIVATE include/PCH.h)
 target_link_libraries(Core PUBLIC ${FO4CS_COMMON_DEPENDENCIES})
 
 target_sources(Core PRIVATE
-    extern/FidelityFX-SDK/Kits/OpenSource/imgui/imgui.cpp
-    extern/FidelityFX-SDK/Kits/OpenSource/imgui/imgui_draw.cpp
-    extern/FidelityFX-SDK/Kits/OpenSource/imgui/imgui_tables.cpp
-    extern/FidelityFX-SDK/Kits/OpenSource/imgui/imgui_widgets.cpp
-    extern/FidelityFX-SDK/Kits/OpenSource/imgui/backends/imgui_impl_dx12.cpp
-    extern/FidelityFX-SDK/Kits/OpenSource/imgui/backends/imgui_impl_win32.cpp
+    extern/imgui/imgui.cpp
+    extern/imgui/imgui_draw.cpp
+    extern/imgui/imgui_tables.cpp
+    extern/imgui/imgui_widgets.cpp
+    extern/imgui/backends/imgui_impl_dx12.cpp
+    extern/imgui/backends/imgui_impl_win32.cpp
+    extern/imgui/backends/imgui_impl_dx11.cpp
 )
 
 set(FO4CS_IMGUI_SOURCES
-    extern/FidelityFX-SDK/Kits/OpenSource/imgui/imgui.cpp
-    extern/FidelityFX-SDK/Kits/OpenSource/imgui/imgui_draw.cpp
-    extern/FidelityFX-SDK/Kits/OpenSource/imgui/imgui_tables.cpp
-    extern/FidelityFX-SDK/Kits/OpenSource/imgui/imgui_widgets.cpp
-    extern/FidelityFX-SDK/Kits/OpenSource/imgui/backends/imgui_impl_dx12.cpp
-    extern/FidelityFX-SDK/Kits/OpenSource/imgui/backends/imgui_impl_win32.cpp
+    extern/imgui/imgui.cpp
+    extern/imgui/imgui_draw.cpp
+    extern/imgui/imgui_tables.cpp
+    extern/imgui/imgui_widgets.cpp
+    extern/imgui/backends/imgui_impl_dx12.cpp
+    extern/imgui/backends/imgui_impl_win32.cpp
+    extern/imgui/backends/imgui_impl_dx11.cpp
 )
 set_source_files_properties(${FO4CS_IMGUI_SOURCES} PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
 set_source_files_properties(src/HDRCalibration.hlsl PROPERTIES HEADER_FILE_ONLY ON)

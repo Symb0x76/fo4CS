@@ -14,6 +14,7 @@
 
 #include "FidelityFX.h"
 #include "HDRCalibration.h"
+#include "Overlay/Overlay.h"
 #include "Streamline.h"
 #include "Upscaler.h"
 
@@ -398,6 +399,14 @@ void DX12SwapChain::CreateSwapChain(IDXGIFactory4* a_dxgiFactory, DXGI_SWAP_CHAI
 		fidelityFX->SetupFrameGeneration();
 
 	swapChainProxy = new DXGISwapChainProxy(swapChain);
+
+	if (!settingsOverlay) {
+		settingsOverlay = Overlay::GetSingleton();
+		settingsOverlay->Initialize(d3d12Device.get(), commandQueue.get(), swapChain, swapChainDesc.Format, a_swapChainDesc.OutputWindow);
+		if (Streamline::GetSingleton()->initialized) {
+		}
+	}
+
 }
 
 void DX12SwapChain::CreateInterop()
@@ -694,6 +703,17 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
 		if (useFSRFrameGeneration) {
 			fidelityFX->Present(useFrameGenerationThisFrame);
 		}
+
+
+	trace("overlay");
+	if (settingsOverlay && settingsOverlay->IsVisible()) {
+		auto* backBuffer = swapChainBuffers[frameIndex].get();
+		CD3DX12_RESOURCE_BARRIER toRT = CD3DX12_RESOURCE_BARRIER::Transition(backBuffer, D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET);
+		commandLists[frameIndex]->ResourceBarrier(1, &toRT);
+		settingsOverlay->Render(commandLists[frameIndex].get(), backBuffer, swapChainDesc.Format);
+		CD3DX12_RESOURCE_BARRIER toPresent = CD3DX12_RESOURCE_BARRIER::Transition(backBuffer, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
+		commandLists[frameIndex]->ResourceBarrier(1, &toPresent);
+	}
 
 		trace("close-command-list");
 		DX::ThrowIfFailed(commandLists[frameIndex]->Close());

@@ -1,4 +1,5 @@
 #include "HDRCalibration.h"
+#include "Overlay/Overlay.h"
 #include "Upscaler.h"
 
 #include <algorithm>
@@ -18,7 +19,7 @@ extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hwnd, UINT mes
 
 namespace
 {
-	HDRCalibrationOverlay* g_overlay = nullptr;
+	HDRCalibrationOverlay* g_calibrationOverlay = nullptr;
 
 	constexpr const char* kCalibrationShader = R"(
 cbuffer HDRCalibrationCB : register(b0)
@@ -231,6 +232,7 @@ bool HDRCalibrationOverlay::Render(
 
 bool HDRCalibrationOverlay::Initialize(ID3D12Device* device, ID3D12CommandQueue* commandQueue, IDXGISwapChain4* swapChain, DXGI_FORMAT swapChainFormat, const HDRSettings& settings)
 {
+	(void)settings;
 	if (initialized && initializedFormat == swapChainFormat) {
 		return true;
 	}
@@ -260,37 +262,47 @@ bool HDRCalibrationOverlay::Initialize(ID3D12Device* device, ID3D12CommandQueue*
 	rtvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
 	DX::ThrowIfFailed(device->CreateDescriptorHeap(&rtvHeapDesc, IID_PPV_ARGS(rtvHeap.put())));
 
-	ImGui::CreateContext();
-	imguiContextCreated = true;
-	ImGui::StyleColorsDark();
-	ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+		auto* overlay = Overlay::GetSingleton();
+		sharedContext = overlay && overlay->IsInitialized();
 
-	win32Initialized = ImGui_ImplWin32_Init(hwnd);
-	if (!win32Initialized) {
-		logger::warn("[HDR] ImGui Win32 backend initialization failed");
-		return false;
-	}
+		if (sharedContext) {
+			ImGui::SetCurrentContext(overlay->GetImGuiContext());
+			win32Initialized = true;
+			dx12Initialized = true;
+			imguiContextCreated = false;
+			logger::debug("[HDR] Calibration overlay using shared ImGui context from Overlay");
+		} else {
+			ImGui::CreateContext();
+			imguiContextCreated = true;
+			ImGui::StyleColorsDark();
+			ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
 
-	ImGui_ImplDX12_InitInfo initInfo{};
-	initInfo.Device = device;
-	initInfo.CommandQueue = commandQueue;
-	initInfo.NumFramesInFlight = 2;
-	initInfo.RTVFormat = swapChainFormat;
-	initInfo.DSVFormat = DXGI_FORMAT_UNKNOWN;
-	initInfo.SrvDescriptorHeap = srvHeap.get();
-	initInfo.SrvDescriptorAllocFn = AllocateImGuiDescriptor;
-	initInfo.SrvDescriptorFreeFn = FreeImGuiDescriptor;
-	dx12Initialized = ImGui_ImplDX12_Init(&initInfo);
-	if (!dx12Initialized) {
-		logger::warn("[HDR] ImGui D3D12 backend initialization failed");
-		return false;
-	}
+			win32Initialized = ImGui_ImplWin32_Init(hwnd);
+			if (!win32Initialized) {
+				logger::warn("[HDR] ImGui Win32 backend initialization failed");
+				return false;
+			}
 
-	EnsurePatternResources(device, swapChainFormat);
+			ImGui_ImplDX12_InitInfo initInfo{};
+			initInfo.Device = device;
+			initInfo.CommandQueue = commandQueue;
+			initInfo.NumFramesInFlight = 2;
+			initInfo.RTVFormat = swapChainFormat;
+			initInfo.DSVFormat = DXGI_FORMAT_UNKNOWN;
+			initInfo.SrvDescriptorHeap = srvHeap.get();
+			initInfo.SrvDescriptorAllocFn = AllocateImGuiDescriptor;
+			initInfo.SrvDescriptorFreeFn = FreeImGuiDescriptor;
+			dx12Initialized = ImGui_ImplDX12_Init(&initInfo);
+			if (!dx12Initialized) {
+				logger::warn("[HDR] ImGui D3D12 backend initialization failed");
+				return false;
+			}
 
-	g_overlay = this;
-	previousWndProc = reinterpret_cast<WNDPROC>(SetWindowLongPtrW(hwnd, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(WndProc)));
-	editableSettings = settings;
+			g_calibrationOverlay = this;
+			previousWndProc = reinterpret_cast<WNDPROC>(SetWindowLongPtrW(hwnd, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(WndProc)));
+		}
+
+		EnsurePatternResources(device, swapChainFormat);
 	initializedFormat = swapChainFormat;
 	initialized = true;
 	logger::info("[HDR] Calibration overlay initialized");
@@ -299,22 +311,24 @@ bool HDRCalibrationOverlay::Initialize(ID3D12Device* device, ID3D12CommandQueue*
 
 void HDRCalibrationOverlay::Shutdown()
 {
-	if (hwnd && previousWndProc) {
-		SetWindowLongPtrW(hwnd, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(previousWndProc));
-	}
-	previousWndProc = nullptr;
-	if (g_overlay == this) {
-		g_overlay = nullptr;
-	}
+	if (!sharedContext) {
+		if (hwnd && previousWndProc) {
+			SetWindowLongPtrW(hwnd, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(previousWndProc));
+		}
+		previousWndProc = nullptr;
+		if (g_calibrationOverlay == this) {
+			g_calibrationOverlay = nullptr;
+		}
 
-	if (dx12Initialized) {
-		ImGui_ImplDX12_Shutdown();
-	}
-	if (win32Initialized) {
-		ImGui_ImplWin32_Shutdown();
-	}
-	if (imguiContextCreated) {
-		ImGui::DestroyContext();
+		if (dx12Initialized) {
+			ImGui_ImplDX12_Shutdown();
+		}
+		if (win32Initialized) {
+			ImGui_ImplWin32_Shutdown();
+		}
+		if (imguiContextCreated) {
+			ImGui::DestroyContext();
+		}
 	}
 
 	initialized = false;
@@ -544,8 +558,8 @@ void HDRCalibrationOverlay::ApplyHDRMetadata(IDXGISwapChain4* swapChain, const H
 
 LRESULT CALLBACK HDRCalibrationOverlay::WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
-	if (g_overlay && g_overlay->active && ImGui_ImplWin32_WndProcHandler(hwnd, message, wParam, lParam)) {
+	if (g_calibrationOverlay && g_calibrationOverlay->active && ImGui_ImplWin32_WndProcHandler(hwnd, message, wParam, lParam)) {
 		return true;
 	}
-	return g_overlay && g_overlay->previousWndProc ? CallWindowProcW(g_overlay->previousWndProc, hwnd, message, wParam, lParam) : DefWindowProcW(hwnd, message, wParam, lParam);
+	return g_calibrationOverlay && g_calibrationOverlay->previousWndProc ? CallWindowProcW(g_calibrationOverlay->previousWndProc, hwnd, message, wParam, lParam) : DefWindowProcW(hwnd, message, wParam, lParam);
 }
