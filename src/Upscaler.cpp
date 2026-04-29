@@ -143,7 +143,7 @@ namespace
 	bool IsFrameGenPluginVisible()
 	{
 		std::error_code ec;
-		if (std::filesystem::exists("Data\\F4SE\\Plugins\\FrameGen.dll", ec))
+		if (std::filesystem::exists("Data\\F4SE\\Plugins\\FrameGen\\FrameGen.dll", ec))
 			return true;
 		if (GetModuleHandleW(L"aioGraphics.dll") != nullptr)
 			return true;

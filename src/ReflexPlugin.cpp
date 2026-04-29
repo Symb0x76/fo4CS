@@ -56,7 +56,10 @@ namespace
 		}
 
 		std::error_code ec;
-		return std::filesystem::exists(pluginDir / dllName, ec);
+		std::wstring subDir(dllName);
+			auto dot = subDir.rfind(L'.');
+			if (dot != std::wstring::npos) subDir.resize(dot);
+			return std::filesystem::exists(pluginDir.parent_path() / subDir / dllName, ec);
 	}
 
 	bool HasExternalProxyOwner(const F4SE::LoadInterface* a_f4se)
