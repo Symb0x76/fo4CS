@@ -7,6 +7,7 @@
 #include "DX12SwapChain.h"
 #include "FidelityFX.h"
 #include "Streamline.h"
+#include "Core/CommunityShaders.h"
 
 #include "ENB/ENBSeriesAPI.h"
 
@@ -15,6 +16,8 @@ bool enbLoaded = false;
 decltype(&D3D11CreateDeviceAndSwapChain) ptrD3D11CreateDeviceAndSwapChain;
 using CreateSwapChainFn = HRESULT(WINAPI*)(IDXGIFactory*, IUnknown*, DXGI_SWAP_CHAIN_DESC*, IDXGISwapChain**);
 CreateSwapChainFn ptrCreateSwapChain;
+using PresentFn = HRESULT(STDMETHODCALLTYPE*)(IDXGISwapChain*, UINT, UINT);
+PresentFn ptrPresent;
 
 namespace
 {
@@ -37,6 +40,22 @@ namespace
 			(*a_value)->Release();
 			*a_value = nullptr;
 		}
+	}
+
+	HRESULT STDMETHODCALLTYPE hk_IDXGISwapChain_Present(IDXGISwapChain* a_swapChain, UINT a_syncInterval, UINT a_flags)
+	{
+		CommunityShaders::Runtime::GetSingleton()->OnFrame();
+		return ptrPresent(a_swapChain, a_syncInterval, a_flags);
+	}
+
+	void InstallSwapChainPresentHook(IDXGISwapChain* a_swapChain)
+	{
+		if (!a_swapChain || ptrPresent) {
+			return;
+		}
+
+		*(uintptr_t*)&ptrPresent = Detours::X64::DetourClassVTable(*(uintptr_t*)a_swapChain, &hk_IDXGISwapChain_Present, 8);
+		logger::info("[CommunityShaders] D3D11 Present hook installed");
 	}
 }
 
@@ -66,6 +85,7 @@ HRESULT WINAPI hk_IDXGIFactory_CreateSwapChain(IDXGIFactory2* This, _In_ ID3D11D
 		proxy->CreateInterop();
 
 		Upscaling::GetSingleton()->OnD3D11DeviceCreated(a_device, adapter);
+		DX11Hooks::NotifyD3D11DeviceCreated(a_device);
 
 		*ppSwapChain = proxy->GetSwapChainProxy();
 
@@ -79,7 +99,11 @@ HRESULT WINAPI hk_IDXGIFactory_CreateSwapChain(IDXGIFactory2* This, _In_ ID3D11D
 	} catch (const std::exception& e) {
 		logger::error("[FrameGen] D3D12 proxy swap chain creation failed: {}; falling back to D3D11", e.what());
 		Upscaling::GetSingleton()->d3d12Interop = false;
-		return ptrCreateSwapChain(reinterpret_cast<IDXGIFactory*>(This), a_device, pDesc, ppSwapChain);
+		const auto result = ptrCreateSwapChain(reinterpret_cast<IDXGIFactory*>(This), a_device, pDesc, ppSwapChain);
+		if (SUCCEEDED(result) && ppSwapChain && *ppSwapChain) {
+			InstallSwapChainPresentHook(*ppSwapChain);
+		}
+		return result;
 	}
 }
 
@@ -153,6 +177,7 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 				proxy->CreateInterop();
 
 				upscaling->OnD3D11DeviceCreated(*ppDevice, adapter);
+				DX11Hooks::NotifyD3D11DeviceCreated(*ppDevice);
 
 				*ppSwapChain = proxy->GetSwapChainProxy();
 
@@ -196,10 +221,14 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 			IDXGIAdapter* adapter = nullptr;
 			if (SUCCEEDED(dxgiDevice->GetAdapter(&adapter))) {
 				upscaling->OnD3D11DeviceCreated(*ppDevice, adapter);
+				DX11Hooks::NotifyD3D11DeviceCreated(*ppDevice);
 				adapter->Release();
 			}
 			dxgiDevice->Release();
 		}
+	}
+	if (SUCCEEDED(ret) && ppSwapChain && *ppSwapChain) {
+		InstallSwapChainPresentHook(*ppSwapChain);
 	}
 
 	return ret;
@@ -228,4 +257,9 @@ void DX11Hooks::Install()
 	uintptr_t moduleBase = (uintptr_t)GetModuleHandle(nullptr);
 
 	(uintptr_t&)ptrD3D11CreateDeviceAndSwapChain = Detours::IATHook(moduleBase, "d3d11.dll", "D3D11CreateDeviceAndSwapChain", (uintptr_t)hk_D3D11CreateDeviceAndSwapChain);
+}
+
+void DX11Hooks::NotifyD3D11DeviceCreated(ID3D11Device* a_device)
+{
+	CommunityShaders::Runtime::GetSingleton()->OnD3D11DeviceCreated(a_device);
 }

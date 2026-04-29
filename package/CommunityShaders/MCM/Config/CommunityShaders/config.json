@@ -1,0 +1,34 @@
+{
+	"modName": "CommunityShaders",
+	"displayName": "Community Shaders",
+	"minMcmVersion": 2,
+	"pluginRequirements": [],
+	"content": [
+		{
+			"text": "<font size='30'><p align='center'>COMMUNITY SHADERS</p></font>",
+			"html": true,
+			"type": "text"
+		},
+		{
+			"text": "SHADERDB",
+			"type": "section"
+		},
+		{
+			"text": "ShaderDB dump mode captures original D3D11 shader bytecode for the current runtime. Use PreNG for now; PostNG/PostAE ShaderDBs are not available yet.",
+			"type": "text"
+		},
+		{
+			"text": "Dumps are written to Data/F4SE/Plugins/fo4CS/ShaderDump/<Runtime>. Changes take effect after restarting the game.",
+			"type": "text"
+		},
+		{
+			"id": "bDumpAllShaders:Settings",
+			"text": "Dump All Shaders",
+			"type": "switcher",
+			"help": "Development option for generating ShaderDB source data. Leave disabled during normal gameplay.",
+			"valueOptions": {
+				"sourceType": "ModSettingBool"
+			}
+		}
+	]
+}

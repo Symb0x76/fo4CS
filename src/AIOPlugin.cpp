@@ -2,6 +2,7 @@
 
 #include "DX11Hooks.h"
 #include "Upscaler.h"
+#include "Core/CommunityShaders.h"
 
 namespace
 {
@@ -9,6 +10,7 @@ namespace
 	{
 		if (message->type == F4SE::MessagingInterface::kPostPostLoad) {
 			Upscaling::GetSingleton()->PostPostLoad();
+			CommunityShaders::Runtime::GetSingleton()->PostPostLoad();
 		}
 	}
 }
@@ -47,6 +49,8 @@ extern "C" DLLEXPORT bool F4SEAPI F4SEPlugin_Load(const F4SE::LoadInterface* a_f
 		static_cast<int>(upscaling->settings.frameGenerationMode),
 		upscaling->settings.reflexMode,
 		upscaling->settings.hdrMode);
+
+	CommunityShaders::Runtime::GetSingleton()->Load();
 
 	DX11Hooks::Install();
 

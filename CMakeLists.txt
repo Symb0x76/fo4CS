@@ -46,6 +46,17 @@ set(FO4CS_COMMON_DEPENDENCIES
     d3dcompiler.lib
 )
 
+set(FEATURE_VERSIONS
+    "\t\t{\"ShaderDump\"sv, {0,1,0}}"
+)
+string(REPLACE ";" ",\n" FEATURE_VERSIONS "${FEATURE_VERSIONS}")
+set(FO4CS_GENERATED_INCLUDE_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
+configure_file(
+    ${CMAKE_CURRENT_SOURCE_DIR}/cmake/FeatureVersions.h.in
+    ${FO4CS_GENERATED_INCLUDE_DIR}/Core/FeatureVersions.h
+    @ONLY
+)
+
 # ------------------------------------------------------------------
 # Core: 共享实现的 OBJECT 库
 #   - 源文件只编译一次（同一版本构建内）
@@ -53,8 +64,29 @@ set(FO4CS_COMMON_DEPENDENCIES
 #   - 插件目标通过 $<TARGET_OBJECTS:Core> 引入编译产物
 # ------------------------------------------------------------------
 add_library(Core OBJECT
-    src/Buffer.h # header-only，列出便于 IDE 识别
-    src/DX11Hooks.cpp
+	src/Buffer.h # header-only，列出便于 IDE 识别
+	src/Core/CommunityShaders.cpp
+	src/Core/CommunityShaders.h
+	src/Core/Deferred.cpp
+	src/Core/Deferred.h
+	src/Core/Feature.cpp
+	src/Core/Feature.h
+	src/Core/FeatureCategories.h
+	src/Core/FeatureConstraints.cpp
+	src/Core/FeatureConstraints.h
+	src/Core/Globals.cpp
+	src/Core/Globals.h
+	src/Core/Hooks.cpp
+	src/Core/Hooks.h
+	src/Core/Menu.cpp
+	src/Core/Menu.h
+	src/Core/ShaderCache.cpp
+	src/Core/ShaderCache.h
+	src/Core/State.cpp
+	src/Core/State.h
+	src/Features/ShaderDumpFeature.cpp
+	src/Features/ShaderDumpFeature.h
+	src/DX11Hooks.cpp
     src/DX11Hooks.h
     src/DX12SwapChain.cpp
     src/DX12SwapChain.h
@@ -84,6 +116,7 @@ target_include_directories(Core
     ${CMAKE_CURRENT_SOURCE_DIR}/extern/FidelityFX-SDK/Kits/OpenSource/imgui
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     PRIVATE
+    ${FO4CS_GENERATED_INCLUDE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 

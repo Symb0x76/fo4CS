@@ -92,6 +92,7 @@ function(fo4cs_apply_plugin_defaults target)
         PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         PRIVATE
+        ${FO4CS_GENERATED_INCLUDE_DIR}
         ${CMAKE_CURRENT_BINARY_DIR}/cmake/${target}
         ${CMAKE_CURRENT_SOURCE_DIR}/src
     )

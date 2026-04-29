@@ -45,6 +45,7 @@ if /I "%UPSCALER%"=="ON" xcopy "%BUILD_OUTPUT%\Upscaler.dll" "dist\F4SE\Plugins\
 
 if exist "package\Common" xcopy "package\Common" "dist" /I /Y /E
 if /I "%AIO%"=="ON" (
+    xcopy "package\CommunityShaders" "dist" /I /Y /E
     xcopy "package\FrameGen" "dist" /I /Y /E
     xcopy "package\HDR" "dist" /I /Y /E
     xcopy "package\Reflex" "dist" /I /Y /E
