@@ -14,9 +14,16 @@ inline LRESULT CALLBACK WndProc(HWND a_hwnd, UINT a_msg, WPARAM a_wParam, LPARAM
 	if (g_overlay && g_overlay->IsInitialized()) {
 		ImGui_ImplWin32_WndProcHandler(a_hwnd, a_msg, a_wParam, a_lParam);
 
-		if (a_msg == WM_KEYDOWN && a_wParam == VK_END && !(a_lParam & (1 << 30))) {
-			g_overlay->ToggleVisible();
-			return true;
+		if (a_msg == WM_KEYDOWN && !(a_lParam & (1 << 30))) {
+			const auto key = static_cast<int>(a_wParam);
+			if (g_overlay->IsCapturingHotkey()) {
+				g_overlay->SetHotkey(key);
+				return true;
+			}
+			if (key == g_overlay->GetHotkey()) {
+				g_overlay->ToggleVisible();
+				return true;
+			}
 		}
 	}
 

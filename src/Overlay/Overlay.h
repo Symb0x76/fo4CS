@@ -40,6 +40,14 @@ public:
 
 	void SetShaderDumpStats(const ShaderDumpStats& a_stats) { shaderDumpStats = a_stats; }
 
+	[[nodiscard]] int GetHotkey() const noexcept { return hotkey; }
+	void StartCapturingHotkey() noexcept { capturingHotkey = true; }
+	[[nodiscard]] bool IsCapturingHotkey() const noexcept { return capturingHotkey; }
+	void SetHotkey(int a_key) noexcept { hotkey = a_key; capturingHotkey = false; }
+
+	int hotkey = VK_END;
+	bool capturingHotkey = false;
+
 	HWND hwnd = nullptr;
 	WNDPROC previousWndProc = nullptr;
 

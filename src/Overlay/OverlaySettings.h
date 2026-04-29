@@ -142,6 +142,28 @@ namespace OverlaySettings
 			ImGui::SliderInt("Debug Frame Count", &s.debugFrameLogCount, 0, 600);
 		}
 
+		if (ImGui::CollapsingHeader("Overlay")) {
+			auto* overlay = Overlay::GetSingleton();
+			int currentHotkey = overlay->GetHotkey();
+			char hotkeyName[32];
+			if (overlay->IsCapturingHotkey()) {
+				snprintf(hotkeyName, sizeof(hotkeyName), "Press any key...");
+			} else {
+				const auto scanCode = static_cast<UINT>(MapVirtualKeyW(static_cast<UINT>(currentHotkey), MAPVK_VK_TO_VSC));
+				GetKeyNameTextA(scanCode << 16, hotkeyName, sizeof(hotkeyName));
+				if (hotkeyName[0] == 0) {
+					snprintf(hotkeyName, sizeof(hotkeyName), "VK_0x%02X", currentHotkey);
+				}
+			}
+			ImGui::Text("Toggle Hotkey:");
+			ImGui::SameLine();
+			if (ImGui::Button(hotkeyName)) {
+				overlay->StartCapturingHotkey();
+			}
+			ImGui::SameLine();
+			ImGui::TextDisabled("(click then press key)");
+		}
+
 		ImGui::Separator();
 		if (ImGui::Button("Save Settings to INI")) {
 			SaveToINI();
