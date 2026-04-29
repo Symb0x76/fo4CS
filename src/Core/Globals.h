@@ -6,10 +6,18 @@
 #include <span>
 #include <vector>
 
+struct ShaderDump;
+
+// Global Feature instances — each Feature is declared and defined here (Skyrim CS pattern)
+namespace globals::features
+{
+	extern ::ShaderDump shaderDump;
+}
+
+// Lifecycle iterators (called from Runtime)
 namespace CommunityShaders
 {
-	std::vector<std::unique_ptr<Feature>>& GetFeatureList();
-	std::span<std::unique_ptr<Feature>> GetFeatures();
+	std::vector<Feature*>& GetFeatureList();
 	void LoadFeatures();
 	void DataLoaded();
 	void PostPostLoad();

@@ -2,7 +2,7 @@
 
 #include <string_view>
 
-namespace CommunityShaders::FeatureCategories
+namespace FeatureCategories
 {
 	inline constexpr std::string_view kCore = "Core";
 	inline constexpr std::string_view kLighting = "Lighting";

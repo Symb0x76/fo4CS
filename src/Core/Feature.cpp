@@ -1,21 +1,24 @@
 #include "Core/Feature.h"
+#include "Core/MenuRegistry.h"
 
-namespace CommunityShaders
+Feature::Feature()
 {
-	void Feature::DrawUnloadedUI()
-	{
-		if (!failedLoadedMessage.empty()) {
-			logger::warn("[CommunityShaders] {} unloaded: {}", GetName(), failedLoadedMessage);
-		}
-	}
+	MenuRegistry::Register(this);
+}
 
-	bool Feature::ToggleAtBootSetting()
-	{
-		return false;
+void Feature::DrawUnloadedUI()
+{
+	if (!failedLoadedMessage.empty()) {
+		logger::warn("[CommunityShaders] {} unloaded: {}", GetName(), failedLoadedMessage);
 	}
+}
 
-	bool Feature::ReapplyOverrideSettings()
-	{
-		return false;
-	}
+bool Feature::ToggleAtBootSetting()
+{
+	return false;
+}
+
+bool Feature::ReapplyOverrideSettings()
+{
+	return false;
 }

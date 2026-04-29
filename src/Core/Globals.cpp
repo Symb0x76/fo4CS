@@ -1,26 +1,25 @@
 #include "Core/Globals.h"
 
-#include "Features/ShaderDumpFeature.h"
+#include "Features/ShaderDump.h"
+
+namespace globals::features
+{
+	ShaderDump shaderDump;
+}
 
 namespace CommunityShaders
 {
-	std::vector<std::unique_ptr<Feature>>& GetFeatureList()
+	std::vector<Feature*>& GetFeatureList()
 	{
-		static std::vector<std::unique_ptr<Feature>> features;
-		if (features.empty()) {
-			features.push_back(std::make_unique<Features::ShaderDumpFeature>());
-		}
+		static std::vector<Feature*> features = {
+			&globals::features::shaderDump,
+		};
 		return features;
-	}
-
-	std::span<std::unique_ptr<Feature>> GetFeatures()
-	{
-		return GetFeatureList();
 	}
 
 	void LoadFeatures()
 	{
-		for (auto& feature : GetFeatureList()) {
+		for (auto* feature : GetFeatureList()) {
 			try {
 				feature->LoadSettings();
 				feature->Load();
@@ -36,7 +35,7 @@ namespace CommunityShaders
 
 	void DataLoaded()
 	{
-		for (auto& feature : GetFeatureList()) {
+		for (auto* feature : GetFeatureList()) {
 			if (feature->loaded) {
 				feature->DataLoaded();
 			}
@@ -45,7 +44,7 @@ namespace CommunityShaders
 
 	void PostPostLoad()
 	{
-		for (auto& feature : GetFeatureList()) {
+		for (auto* feature : GetFeatureList()) {
 			if (feature->loaded) {
 				feature->PostPostLoad();
 			}
@@ -54,7 +53,7 @@ namespace CommunityShaders
 
 	void SetupResources()
 	{
-		for (auto& feature : GetFeatureList()) {
+		for (auto* feature : GetFeatureList()) {
 			if (feature->loaded) {
 				feature->SetupResources();
 			}
@@ -63,7 +62,7 @@ namespace CommunityShaders
 
 	void ResetFeatures()
 	{
-		for (auto& feature : GetFeatureList()) {
+		for (auto* feature : GetFeatureList()) {
 			if (feature->loaded) {
 				feature->Reset();
 			}
@@ -72,7 +71,7 @@ namespace CommunityShaders
 
 	void DrawFeatureSettings()
 	{
-		for (auto& feature : GetFeatureList()) {
+		for (auto* feature : GetFeatureList()) {
 			if (feature->loaded) {
 				feature->DrawSettings();
 			} else if (feature->DrawFailLoadMessage()) {

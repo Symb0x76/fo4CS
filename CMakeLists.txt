@@ -74,18 +74,21 @@ add_library(Core OBJECT
 	src/Core/FeatureCategories.h
 	src/Core/FeatureConstraints.cpp
 	src/Core/FeatureConstraints.h
+	src/Core/FeatureIssues.h
 	src/Core/Globals.cpp
 	src/Core/Globals.h
 	src/Core/Hooks.cpp
 	src/Core/Hooks.h
+	src/Core/IMenuItem.h
 	src/Core/Menu.cpp
 	src/Core/Menu.h
+	src/Core/MenuRegistry.h
 	src/Core/ShaderCache.cpp
 	src/Core/ShaderCache.h
 	src/Core/State.cpp
 	src/Core/State.h
-	src/Features/ShaderDumpFeature.cpp
-	src/Features/ShaderDumpFeature.h
+	src/Features/ShaderDump.cpp
+	src/Features/ShaderDump.h
 	src/DX11Hooks.cpp
     src/DX11Hooks.h
     src/DX12SwapChain.cpp
