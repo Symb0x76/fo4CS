@@ -213,10 +213,10 @@ if(UPSCALER)
 endif()
 
 if(AIO)
-    fo4cs_create_plugin(AIO AIO "aioGraphics" ${FO4CS_COMMON_DEPENDENCIES})
-    target_sources(AIO PRIVATE
+    fo4cs_create_plugin(NuclearGFX NuclearGFX "NuclearGFX" ${FO4CS_COMMON_DEPENDENCIES})
+    target_sources(NuclearGFX PRIVATE
         src/AIOPlugin.cpp
     )
-    set_target_properties(AIO PROPERTIES OUTPUT_NAME "aioGraphics")
-    target_link_libraries(AIO PRIVATE Core)
+    set_target_properties(NuclearGFX PROPERTIES OUTPUT_NAME "NuclearGFX")
+    target_link_libraries(NuclearGFX PRIVATE Core)
 endif()

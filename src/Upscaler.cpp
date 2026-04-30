@@ -145,7 +145,7 @@ namespace
 		std::error_code ec;
 		if (std::filesystem::exists("Data\\F4SE\\Plugins\\FrameGen\\FrameGen.dll", ec))
 			return true;
-		if (GetModuleHandleW(L"aioGraphics.dll") != nullptr)
+		if (GetModuleHandleW(L"NuclearGFX.dll") != nullptr)
 			return true;
 		return false;
 	}
