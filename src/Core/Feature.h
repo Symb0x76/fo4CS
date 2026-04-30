@@ -1,10 +1,10 @@
 #pragma once
 
 #include "Core/FeatureCategories.h"
-#include "Core/FeatureConstraints.h"
 #include "Core/FeatureVersions.h"
 #include "Core/IMenuItem.h"
 
+#include <filesystem>
 #include <functional>
 #include <string>
 #include <string_view>
@@ -50,6 +50,12 @@ struct Feature : IMenuItem
 	[[nodiscard]] virtual bool IsInMenu() const { return true; }
 	[[nodiscard]] virtual bool DrawFailLoadMessage() const { return true; }
 	[[nodiscard]] virtual std::pair<std::string, std::vector<std::string>> GetFeatureSummary() { return {}; }
+
+	// Settings persistence: Data/F4SE/Plugins/aioGraphics/{ShortName}.ini
+	[[nodiscard]] virtual std::filesystem::path GetSettingsPath()
+	{
+		return std::filesystem::path("Data\\F4SE\\Plugins\\aioGraphics") / (GetShortName() + ".ini");
+	}
 
 	virtual void SetupResources() {}
 	virtual void Reset() {}
