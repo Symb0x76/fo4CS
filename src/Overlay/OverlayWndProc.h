@@ -16,12 +16,15 @@ inline LRESULT CALLBACK WndProc(HWND a_hwnd, UINT a_msg, WPARAM a_wParam, LPARAM
 
 		if (a_msg == WM_KEYDOWN && !(a_lParam & (1 << 30))) {
 			const auto key = static_cast<int>(a_wParam);
-			if (g_overlay->IsCapturingHotkey()) {
-				g_overlay->SetHotkey(key);
-				return true;
+
+			// Log first few key events to confirm WndProc is receiving input
+			static int loggedKeyCount = 0;
+			if (loggedKeyCount < 5) {
+				++loggedKeyCount;
+				logger::debug("[Overlay] WndProc received key 0x{:X} (msg #{})", static_cast<unsigned>(key), loggedKeyCount);
 			}
-			if (key == g_overlay->GetHotkey()) {
-				g_overlay->ToggleVisible();
+
+			if (g_overlay->HandleKeyDown(key)) {
 				return true;
 			}
 		}

@@ -1,36 +1,41 @@
-Texture2D<float4> ReticleColor : register(t0);
+Texture2D<float4> ReticleColor    : register(t0);
 Texture2D<float4> PreReticleColor : register(t1);
 
 RWTexture2D<float4> OutputUIColorAndAlpha : register(u0);
 
-// Between PreAlpha and PostAlpha only the reticle is drawn, so the per-pixel
-// difference IS the reticle.  Smooth detection catches thin anti-aliased
-// lines (bracket corners) that a binary threshold would miss.
-static const float kUILo = 3.0 / 255.0;
-static const float kUIHi = 12.0 / 255.0;
+// FO4's reticle draws as wireframe anti-aliased lines.  The per-pixel
+// colour delta on bracket arms can be as low as 2/255 due to AA blending.
+// Use a lower floor than the main UI shader because reticle-only frames
+// have zero scene motion noise (the game is paused during reticle draw).
+static const float kReticleLo = 1.5 / 255.0;
+static const float kReticleHi = 8.0 / 255.0;
 
 [numthreads(8, 8, 1)] void main(uint3 DTid : SV_DispatchThreadID)
 {
-	int2 pixel = int2(DTid.xy);
 	uint width, height;
 	ReticleColor.GetDimensions(width, height);
 	if (DTid.x >= width || DTid.y >= height) {
 		return;
 	}
 
-	float3 diff = abs(ReticleColor[pixel].rgb - PreReticleColor[pixel].rgb);
-	float maxDiff = max(diff.r, max(diff.g, diff.b));
+	int2 pixel = int2(DTid.xy);
 
-	// The crosshair transitions between a compact dot and a wide bracket
-	// (corners up to ~350 px from centre at 1080p).  Use a generous mask
-	// so the bracket arms are never clipped during the morph animation.
+	float3 diff = abs(ReticleColor[pixel].rgb - PreReticleColor[pixel].rgb);
+	float l1Diff = dot(diff, float3(1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0));
+	float alpha = smoothstep(kReticleLo, kReticleHi, l1Diff);
+
+	// Crosshair elements are limited to the central region of the screen.
+	// The bracket arms extend to ~35% of screen size in either dimension.
+	// Use an elliptical mask instead of a box mask for smoother falloff at
+	// the bracket arm tips — avoids sharp rectangular cutoff.
 	float2 center = (float2(width, height) - 1.0) * 0.5;
 	float2 centerDist = abs(float2(pixel) - center);
-	float centerHalf = max(384.0, min((float)width, (float)height) * 0.35);
-	float centerMask = (centerDist.x <= centerHalf && centerDist.y <= centerHalf) ? 1.0 : 0.0;
+	float radius = min(float(width), float(height)) * 0.38;
+	float distNorm = length(centerDist / radius);
+	float centerMask = 1.0 - smoothstep(0.85, 1.0, distNorm);
 
-	float alpha = smoothstep(kUILo, kUIHi, maxDiff) * centerMask;
+	alpha *= centerMask;
 
-	// RGB = 0 — the main UI shader computes PM colour from Final / HUDLess.
+	// RGB = 0 — main UI shader computes PM colour from Final / HUDLess.
 	OutputUIColorAndAlpha[DTid.xy] = float4(0.0, 0.0, 0.0, alpha);
 }

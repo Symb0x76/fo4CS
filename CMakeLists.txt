@@ -42,6 +42,7 @@ set(FO4CS_COMMON_DEPENDENCIES
     Microsoft::DirectXTex
     Microsoft::DirectX-Headers
     d3d12.lib
+    dxgi.lib
     magic_enum::magic_enum
     d3dcompiler.lib
 )

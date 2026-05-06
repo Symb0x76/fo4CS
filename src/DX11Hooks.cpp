@@ -42,6 +42,7 @@ namespace
 
 HRESULT WINAPI hk_IDXGIFactory_CreateSwapChain(IDXGIFactory2* This, _In_ ID3D11Device* a_device, _In_ DXGI_SWAP_CHAIN_DESC* pDesc, _COM_Outptr_ IDXGISwapChain** ppSwapChain)
 {
+	logger::info("[FrameGen] vtable CreateSwapChain hook fired ({}x{} fmt={})", pDesc->BufferDesc.Width, pDesc->BufferDesc.Height, static_cast<uint32_t>(pDesc->BufferDesc.Format));
 	try {
 		IDXGIDevice* dxgiDevice = nullptr;
 		DX::ThrowIfFailed(a_device->QueryInterface(__uuidof(IDXGIDevice), (void**)&dxgiDevice));
@@ -97,6 +98,7 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 	D3D_FEATURE_LEVEL* pFeatureLevel,
 	ID3D11DeviceContext** ppImmediateContext)
 {
+	logger::info("[FrameGen] D3D11CreateDeviceAndSwapChain hook fired (windowed={}, enb={})", pSwapChainDesc->Windowed, enbLoaded);
 	auto upscaling = Upscaling::GetSingleton();
 	const auto originalFeatureLevels = pFeatureLevels;
 	const auto originalFeatureLevelCount = FeatureLevels;
@@ -228,4 +230,5 @@ void DX11Hooks::Install()
 	uintptr_t moduleBase = (uintptr_t)GetModuleHandle(nullptr);
 
 	(uintptr_t&)ptrD3D11CreateDeviceAndSwapChain = Detours::IATHook(moduleBase, "d3d11.dll", "D3D11CreateDeviceAndSwapChain", (uintptr_t)hk_D3D11CreateDeviceAndSwapChain);
+	logger::info("[FrameGen] D3D11 IAT hook installed (enb={})", enbLoaded);
 }

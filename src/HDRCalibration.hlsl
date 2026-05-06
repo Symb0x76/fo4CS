@@ -34,9 +34,9 @@ VSOut VSMain(uint vertexID : SV_VertexID)
     return output;
 }
 
-float3 LinearToPQ(float3 linearNits, float peakNitsValue)
+float3 LinearToPQ(float3 linearNits)
 {
-    float3 y = saturate(linearNits / max(peakNitsValue, 1.0));
+    float3 y = saturate(linearNits / 10000.0);
     const float m1 = 0.1593017578125;
     const float m2 = 78.84375;
     const float c1 = 0.8359375;
@@ -49,7 +49,7 @@ float3 LinearToPQ(float3 linearNits, float peakNitsValue)
 float3 EncodeNits(float3 nits)
 {
     if (hdrMode == 2) {
-        return LinearToPQ(nits, peakNits);
+        return LinearToPQ(nits);
     }
     return nits / max(scRGBReferenceNits, 1.0);
 }

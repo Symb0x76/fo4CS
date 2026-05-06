@@ -48,9 +48,9 @@ static const float3x3 Rec709ToRec2020 = {
     { 0.0164, 0.0880, 0.8956 }
 };
 
-float3 LinearToPQ(float3 linearNits, float peakNitsValue)
+float3 LinearToPQ(float3 linearNits)
 {
-    float3 y = saturate(linearNits / max(peakNitsValue, 1.0));
+    float3 y = saturate(linearNits / 10000.0);
     const float m1 = 0.1593017578125;
     const float m2 = 78.84375;
     const float c1 = 0.8359375;
@@ -74,6 +74,6 @@ float4 PSMain(VSOut input) : SV_Target
     }
 
     float3 rec2020 = mul(Rec709ToRec2020, linearColor);
-    float3 pq = LinearToPQ(rec2020 * paperWhiteNits, peakNits);
+    float3 pq = LinearToPQ(rec2020 * paperWhiteNits);
     return float4(pq, source.a);
 }

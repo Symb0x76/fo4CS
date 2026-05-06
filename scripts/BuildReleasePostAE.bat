@@ -37,7 +37,7 @@ if %ERRORLEVEL% NEQ 0 exit /b 1
 cmake --build build\PostAE --config Release
 if %ERRORLEVEL% NEQ 0 exit /b 1
 
-if /I "%AIO%"=="ON" xcopy "%BUILD_OUTPUT%\NuclearGFX.dll" "dist\F4SE\Plugins\fo4CS\" /I /Y
+if /I "%AIO%"=="ON" xcopy "%BUILD_OUTPUT%\NuclearGFX.dll" "dist\F4SE\Plugins\" /I /Y
 if /I "%FRAMEGEN%"=="ON" xcopy "%BUILD_OUTPUT%\FrameGen.dll" "dist\F4SE\Plugins\FrameGen\" /I /Y
 if /I "%HDR%"=="ON" xcopy "%BUILD_OUTPUT%\HDR.dll" "dist\F4SE\Plugins\HDR\" /I /Y
 if /I "%REFLEX%"=="ON" xcopy "%BUILD_OUTPUT%\Reflex.dll" "dist\F4SE\Plugins\Reflex\" /I /Y

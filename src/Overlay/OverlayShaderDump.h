@@ -15,7 +15,8 @@ namespace OverlayShaderDump
 			return;
 		}
 
-		ImGui::SetNextWindowSize(ImVec2(360, 280), ImGuiCond_FirstUseEver);
+		const float uiScale = Overlay::GetSingleton()->GetUIScale();
+		ImGui::SetNextWindowSize(ImVec2(360.0f * uiScale, 280.0f * uiScale), ImGuiCond_FirstUseEver);
 		if (!ImGui::Begin("ShaderDB Hunter", nullptr)) {
 			ImGui::End();
 			return;

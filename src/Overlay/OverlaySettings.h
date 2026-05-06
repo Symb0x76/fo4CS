@@ -17,6 +17,7 @@ namespace OverlaySettings
 	inline void SaveToINI()
 	{
 		auto& s = Upscaling::GetSingleton()->settings;
+		auto* overlay = Overlay::GetSingleton();
 
 		{
 			CSimpleIniA ini;
@@ -52,6 +53,9 @@ namespace OverlaySettings
 			ini.SetValue("Settings", "iUpscaleMethodPreference", std::to_string(s.upscaleMethodPreference).c_str());
 			ini.SetValue("Settings", "iQualityMode", std::to_string(s.qualityMode).c_str());
 			ini.SetValue("Settings", "iDLSSPreset", std::to_string(s.dlssPreset).c_str());
+			ini.SetValue("Settings", "showIntro", overlay->IsIntroEnabled() ? "true" : "false");
+			ini.SetValue("Settings", "iOverlayHotkey", std::to_string(overlay->GetHotkey()).c_str());
+				ini.SetValue("Settings", "fUIScale", std::to_string(overlay->GetUIScaleOverride()).c_str());
 
 			if (ini.SaveFile("Data\\F4SE\\Plugins\\Upscaler\\Upscaler.ini") < 0) {
 				logger::warn("[Overlay] Failed to save Upscaler.ini");
@@ -71,7 +75,8 @@ namespace OverlaySettings
 
 	inline void RenderPanel()
 	{
-		ImGui::SetNextWindowSize(ImVec2(480, 560), ImGuiCond_FirstUseEver);
+		const float uiScale = Overlay::GetSingleton()->GetUIScale();
+		ImGui::SetNextWindowSize(ImVec2(480.0f * uiScale, 560.0f * uiScale), ImGuiCond_FirstUseEver);
 		if (!ImGui::Begin("fo4CS Settings", nullptr)) {
 			ImGui::End();
 			return;
@@ -79,7 +84,7 @@ namespace OverlaySettings
 
 		auto& s = Upscaling::GetSingleton()->settings;
 
-		if (ImGui::CollapsingHeader("Frame Generation", ImGuiTreeNodeFlags_DefaultOpen)) {
+		if (ImGui::CollapsingHeader("Frame Generation")) {
 			ImGui::Checkbox("Enabled", &s.frameGenerationMode);
 			ImGui::SameLine();
 			ImGui::Checkbox("Frame Limit", &s.frameLimitMode);
@@ -96,36 +101,49 @@ namespace OverlaySettings
 
 		if (ImGui::CollapsingHeader("HDR")) {
 			const char* hdrModes[] = { "Disabled", "scRGB (HDR)", "HDR10 (HDR)" };
-			ImGui::Combo("Mode", &s.hdrMode, hdrModes, IM_ARRAYSIZE(hdrModes));
+			if (ImGui::Combo("Mode", &s.hdrMode, hdrModes, IM_ARRAYSIZE(hdrModes))) {
+				if (s.hdrMode == 2 && s.peakLuminance < 400.0f) s.peakLuminance = 1000.0f;
+			}
+			ImGui::SameLine();
+			ImGui::TextDisabled("(?)");
+			if (ImGui::IsItemHovered()) {
+				ImGui::BeginTooltip();
+				ImGui::TextWrapped("scRGB: HDR via linear FP16 framebuffer. Recommended for monitors with native scRGB support and GPU hardware calibration.");
+				ImGui::TextWrapped("HDR10: Standard PQ (ST 2084) pipeline. Recommended for most HDR TVs and monitors.");
+				ImGui::EndTooltip();
+			}
 
 			if (s.hdrMode > 0) {
-				float peakLog = std::log10(s.peakLuminance);
-				if (ImGui::SliderFloat("Peak Luminance (nits)", &peakLog, std::log10(80.0f), std::log10(10000.0f), "%.0f")) {
-					s.peakLuminance = std::pow(10.0f, peakLog);
-				}
-				ImGui::Text("%.0f nits", s.peakLuminance);
-
-				float paperLog = std::log10(s.paperWhiteLuminance);
-				if (ImGui::SliderFloat("Paper White (nits)", &paperLog, std::log10(20.0f), std::log10(1000.0f), "%.0f")) {
-					s.paperWhiteLuminance = std::pow(10.0f, paperLog);
-				}
-				ImGui::Text("%.0f nits", s.paperWhiteLuminance);
-
-				float refLog = std::log10(s.scRGBReferenceLuminance);
-				if (ImGui::SliderFloat("scRGB Reference (nits)", &refLog, std::log10(20.0f), std::log10(1000.0f), "%.0f")) {
-					s.scRGBReferenceLuminance = std::pow(10.0f, refLog);
-				}
-				ImGui::Text("%.0f nits", s.scRGBReferenceLuminance);
-
 				ImGui::Separator();
-				if (ImGui::Button("Start HDR Calibration")) {
-					s.hdrCalibrationActive = true;
-					if (s.peakLuminance < 80.0f) s.peakLuminance = 1000.0f;
-					if (s.paperWhiteLuminance < 20.0f) s.paperWhiteLuminance = 200.0f;
-					SaveToINI();
+				if (s.hdrCalibrationActive) {
+					ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.4f, 1.0f), "Calibration active - adjust in the fullscreen overlay");
+				} else {
+					ImGui::TextWrapped(
+						"HDR luminance values are adjusted using the fullscreen calibration test pattern."
+					);
+					ImGui::Spacing();
+					ImGui::BulletText("The test pattern shows 4 regions: black ramp, luminance ramp, color bars, and a clipping zone");
+					ImGui::BulletText("Adjust Peak Luminance until the luminance ramp shows smooth steps without hard clipping at the right edge");
+					ImGui::BulletText("Adjust Paper White until the center white patch is comfortably visible against the gradient background");
+					ImGui::BulletText("The calibration numbers are what matter - not your monitor's advertised specs");
+
+					ImGui::Spacing();
+					ImGui::Separator();
+					ImGui::Text("Current:  Peak=%.0f nits  |  Paper White=%.0f nits", s.peakLuminance, s.paperWhiteLuminance);
+					if (s.hdrMode == 1) {
+						ImGui::Text("scRGB Reference=%.0f nits", s.scRGBReferenceLuminance);
+					}
+					ImGui::Spacing();
+
+					if (ImGui::Button("Start HDR Calibration")) {
+						s.hdrCalibrationActive = true;
+						if (s.peakLuminance < 80.0f) s.peakLuminance = 1000.0f;
+						if (s.paperWhiteLuminance < 20.0f) s.paperWhiteLuminance = 200.0f;
+						SaveToINI();
+					}
+					ImGui::SameLine();
+					ImGui::TextDisabled("(opens fullscreen test pattern)");
 				}
-				ImGui::SameLine();
-				ImGui::TextDisabled("(fullscreen test pattern)");
 			}
 		}
 
@@ -136,8 +154,28 @@ namespace OverlaySettings
 			const char* qualityModes[] = { "Ultra Quality", "Quality", "Balanced", "Performance", "Ultra Performance" };
 			ImGui::Combo("Quality", &s.qualityMode, qualityModes, IM_ARRAYSIZE(qualityModes));
 
-			const char* dlssPresets[] = { "Default", "Preset A", "Preset B", "Preset C", "Preset D", "Preset E", "Preset F", "Preset G" };
-			ImGui::Combo("DLSS Preset", &s.dlssPreset, dlssPresets, IM_ARRAYSIZE(dlssPresets));
+			// Only show non-deprecated presets. Presets A-D (1-4) removed, E-F (5-6) deprecated,
+			// G-I (7-9) and N-O (14-15) revert to default — all excluded.
+			const int validPresetValues[] = { 0, 10, 11, 12, 13 };
+			const char* validPresetNames[] = { "Default", "Preset J", "Preset K", "Preset L", "Preset M" };
+			const char* validPresetDescs[] = {
+				"Default behavior, may change after an OTA update.",
+				"Similar to Preset K. Might exhibit slightly less ghosting at the cost of extra flickering. Preset K is generally recommended over Preset J.",
+				"Default preset for DLAA / Balanced / Quality modes. Transformer-based, best image quality at a higher performance cost.",
+				"Default preset for Ultra Performance mode. Delivers a sharper, more stable image with less ghosting than Preset J / K, but is more expensive performance-wise.",
+				"Default preset for Performance mode. Delivers similar image quality improvements as Preset L, but closer in speed to Presets J / K."
+			};
+
+			int presetComboIdx = 0;
+			for (int i = 0; i < IM_ARRAYSIZE(validPresetValues); ++i) {
+				if (s.dlssPreset == validPresetValues[i]) { presetComboIdx = i; break; }
+			}
+			if (ImGui::Combo("DLSS Preset", &presetComboIdx, validPresetNames, IM_ARRAYSIZE(validPresetNames))) {
+				s.dlssPreset = validPresetValues[presetComboIdx];
+			}
+			if (ImGui::IsItemHovered()) {
+				ImGui::SetTooltip("%s", validPresetDescs[presetComboIdx]);
+			}
 		}
 
 		if (ImGui::CollapsingHeader("Debug")) {
@@ -159,9 +197,14 @@ namespace OverlaySettings
 			if (overlay->IsCapturingHotkey()) {
 				snprintf(hotkeyName, sizeof(hotkeyName), "Press any key...");
 			} else {
-				const auto scanCode = static_cast<UINT>(MapVirtualKeyW(static_cast<UINT>(currentHotkey), MAPVK_VK_TO_VSC));
-				GetKeyNameTextA(scanCode << 16, hotkeyName, sizeof(hotkeyName));
-				if (hotkeyName[0] == 0) {
+				const UINT scEx = MapVirtualKeyW(static_cast<UINT>(currentHotkey), MAPVK_VK_TO_VSC_EX);
+				if (scEx != 0) {
+					LONG lParam = static_cast<LONG>(scEx & 0xFF) << 16;
+					if (scEx & 0x100) lParam |= 0x01000000;
+					if (GetKeyNameTextA(lParam, hotkeyName, sizeof(hotkeyName)) == 0 || hotkeyName[0] == 0) {
+						snprintf(hotkeyName, sizeof(hotkeyName), "VK_0x%02X", currentHotkey);
+					}
+				} else {
 					snprintf(hotkeyName, sizeof(hotkeyName), "VK_0x%02X", currentHotkey);
 				}
 			}
@@ -172,14 +215,47 @@ namespace OverlaySettings
 			}
 			ImGui::SameLine();
 			ImGui::TextDisabled("(click then press key)");
-		}
+
+				bool showIntro = overlay->IsIntroEnabled();
+				if (ImGui::Checkbox("Show Intro Hint", &showIntro)) {
+					overlay->SetIntroEnabled(showIntro);
+				}
+
+				static const float kUIScales[] = { 0.75f, 1.0f, 1.25f, 1.5f, 1.75f, 2.0f, 2.5f, 3.0f, 4.0f };
+				static const char* kUIScaleNames[] = { "0.75x", "1.0x (auto)", "1.25x", "1.5x", "1.75x", "2.0x", "2.5x", "3.0x", "4.0x" };
+				float curScale = overlay->GetUIScaleOverride();
+				int scaleIdx = 1;
+				float best = 999.0f;
+				for (int i = 0; i < IM_ARRAYSIZE(kUIScales); ++i) {
+					float d = (curScale - kUIScales[i]) * (curScale - kUIScales[i]);
+					if (d < best) { best = d; scaleIdx = i; }
+				}
+				if (ImGui::Combo("UI Scale", &scaleIdx, kUIScaleNames, IM_ARRAYSIZE(kUIScaleNames)))
+					overlay->SetUIScaleOverride(kUIScales[scaleIdx]);
+				if (ImGui::IsItemHovered())
+					ImGui::SetTooltip("Overlay UI size relative to automatic DPI scaling.");
+			}
 
 		ImGui::Separator();
 		if (ImGui::Button("Save Settings to INI")) {
 			SaveToINI();
 		}
 		ImGui::SameLine();
-		ImGui::TextDisabled("Press END to toggle overlay");
+		{
+			auto* overlay = Overlay::GetSingleton();
+			char hotkeyName[32];
+			const int currentHotkey = overlay->GetHotkey();
+			const UINT scEx = MapVirtualKeyW(static_cast<UINT>(currentHotkey), MAPVK_VK_TO_VSC_EX);
+			if (scEx != 0) {
+				LONG lParam = static_cast<LONG>(scEx & 0xFF) << 16;
+				if (scEx & 0x100) lParam |= 0x01000000;
+				if (GetKeyNameTextA(lParam, hotkeyName, sizeof(hotkeyName)) == 0 || hotkeyName[0] == 0)
+					snprintf(hotkeyName, sizeof(hotkeyName), "VK_0x%02X", currentHotkey);
+			} else {
+				snprintf(hotkeyName, sizeof(hotkeyName), "VK_0x%02X", currentHotkey);
+			}
+			ImGui::TextDisabled("Press %s to toggle overlay", hotkeyName);
+		}
 
 		ImGui::End();
 	}

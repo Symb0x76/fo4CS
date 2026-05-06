@@ -85,7 +85,7 @@ namespace
 		settings.paperWhiteLuminance = ClampFloatSetting(
 			static_cast<float>(ini.GetDoubleValue(kSettingsSection, "fPaperWhiteLuminance", settings.paperWhiteLuminance)),
 			20.0f,
-			1000.0f,
+			2000.0f,
 			"fPaperWhiteLuminance");
 		settings.scRGBReferenceLuminance = ClampFloatSetting(
 			static_cast<float>(ini.GetDoubleValue(kSettingsSection, "fScRGBReferenceLuminance", settings.scRGBReferenceLuminance)),

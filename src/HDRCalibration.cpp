@@ -58,9 +58,9 @@ VSOut VSMain(uint vertexID : SV_VertexID)
     return output;
 }
 
-float3 LinearToPQ(float3 linearNits, float peakNitsValue)
+float3 LinearToPQ(float3 linearNits)
 {
-    float3 y = saturate(linearNits / max(peakNitsValue, 1.0));
+    float3 y = saturate(linearNits / 10000.0);
     const float m1 = 0.1593017578125;
     const float m2 = 78.84375;
     const float c1 = 0.8359375;
@@ -73,7 +73,7 @@ float3 LinearToPQ(float3 linearNits, float peakNitsValue)
 float3 EncodeNits(float3 nits)
 {
     if (hdrMode == 2) {
-        return LinearToPQ(nits, peakNits);
+        return LinearToPQ(nits);
     }
     return nits / max(scRGBReferenceNits, 1.0);
 }
@@ -275,7 +275,11 @@ bool HDRCalibrationOverlay::Initialize(ID3D12Device* device, ID3D12CommandQueue*
 			ImGui::CreateContext();
 			imguiContextCreated = true;
 			ImGui::StyleColorsDark();
-			ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+			auto& io = ImGui::GetIO();
+			io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_NoMouseCursorChange;
+			float uiScale = static_cast<float>(GetDpiForWindow(hwnd)) / 96.0f;
+			if (uiScale < 1.0f) uiScale = 1.0f;
+			io.FontGlobalScale = uiScale;
 
 			win32Initialized = ImGui_ImplWin32_Init(hwnd);
 			if (!win32Initialized) {
@@ -436,14 +440,74 @@ void HDRCalibrationOverlay::RenderUI(HDRSettings& settings)
 {
 	ImGui_ImplDX12_NewFrame();
 	ImGui_ImplWin32_NewFrame();
+	ImGui::GetIO().MouseDrawCursor = true;
 	ImGui::NewFrame();
 
-	ImGui::SetNextWindowSize(ImVec2(520.0f, 380.0f), ImGuiCond_FirstUseEver);
+	const float uiScale = ImGui::GetIO().FontGlobalScale;
+	ImGui::SetNextWindowSize(ImVec2(620.0f * uiScale, 580.0f * uiScale), ImGuiCond_FirstUseEver);
 	ImGui::Begin("HDR Calibration Preview", nullptr, ImGuiWindowFlags_NoCollapse);
-	ImGui::TextWrapped("Adjust peak luminance and paper white against the HDR test pattern. Save writes Data/MCM/Settings/HDR.ini and applies metadata immediately.");
+
+	ImGui::TextWrapped(
+		"Use the test pattern behind this window to find the right values for YOUR display. "
+		"Do NOT just copy your monitor's advertised specs - the test pattern tells you what "
+		"actually works with the game's rendering pipeline.");
+	ImGui::Spacing();
+	ImGui::TextWrapped("The test pattern has four horizontal bands (top to bottom):");
+	ImGui::BulletText("Band 1 - Black ramp (0 to 5 nits): all steps should be distinguishable from true black");
+	ImGui::BulletText("Band 2 - Luminance ramp (0 to peak nits): the key calibration tool");
+	ImGui::BulletText("Band 3 - Rec.2020 color bars at paper-white level: check saturation");
+	ImGui::BulletText("Band 4 - Clipping zone: white patch on a gradient; the patch should be clearly visible");
+
 	ImGui::Separator();
-	ImGui::SliderFloat("Peak Luminance", &editableSettings.peakLuminance, 80.0f, 10000.0f, "%.0f nits", ImGuiSliderFlags_Logarithmic);
-	ImGui::SliderFloat("Paper White", &editableSettings.paperWhiteLuminance, 20.0f, 1000.0f, "%.0f nits", ImGuiSliderFlags_Logarithmic);
+	ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.2f, 1.0f), "How to find Peak Luminance:");
+	ImGui::TextWrapped(
+		"Look at Band 2 (the luminance ramp). Start at a low value (~400 nits) and increase "
+		"until the rightmost ~10%% of the ramp stops getting brighter (hard clipping into flat white). "
+		"Then back down 50-100 nits. The correct value is just below where clipping begins."
+	);
+	ImGui::TextWrapped(
+		"DO NOT use your monitor's spec sheet number directly - the effective peak depends on "
+		"how Windows HDR composition and your GPU's tone mapper interact."
+	);
+
+	float peakNits = editableSettings.peakLuminance;
+	if (ImGui::SliderFloat("Peak Luminance##PeakSlider", &peakNits, 80.0f, 10000.0f, "%.0f nits", ImGuiSliderFlags_Logarithmic)) {
+		editableSettings.peakLuminance = std::round(peakNits / 50.0f) * 50.0f;
+	}
+	ImGui::SameLine();
+	ImGui::SetNextItemWidth(80.0f * uiScale);
+	if (ImGui::InputFloat("##PeakExact", &editableSettings.peakLuminance, 50.0f, 500.0f, "%.0f")) {
+		editableSettings.peakLuminance = std::clamp(std::round(editableSettings.peakLuminance / 50.0f) * 50.0f, 80.0f, 10000.0f);
+	}
+
+	ImGui::Spacing();
+	ImGui::TextColored(ImVec4(0.7f, 0.85f, 1.0f, 1.0f), "How to find Paper White:");
+	ImGui::TextWrapped(
+		"Look at Band 4 (clipping zone). Find the center white patch. "
+		"Adjust so it looks like a readable white surface - not painfully bright, not dim gray. "
+		"Typical values: 150-250 nits for dark rooms, 250-400 nits for bright rooms."
+	);
+	ImGui::TextWrapped(
+		"Also check the game's HUD/menus after saving: UI text should be comfortably readable."
+	);
+
+	float paperNits = editableSettings.paperWhiteLuminance;
+	if (ImGui::SliderFloat("Paper White##PaperSlider", &paperNits, 20.0f, 2000.0f, "%.0f nits", ImGuiSliderFlags_Logarithmic)) {
+		editableSettings.paperWhiteLuminance = std::round(paperNits / 5.0f) * 5.0f;
+	}
+	ImGui::SameLine();
+	ImGui::SetNextItemWidth(80.0f * uiScale);
+	if (ImGui::InputFloat("##PaperExact", &editableSettings.paperWhiteLuminance, 5.0f, 25.0f, "%.0f")) {
+		editableSettings.paperWhiteLuminance = std::clamp(std::round(editableSettings.paperWhiteLuminance / 5.0f) * 5.0f, 20.0f, 2000.0f);
+	}
+
+	ImGui::Separator();
+	ImGui::TextWrapped(
+		"Quick check: the luminance ramp (Band 2) should transition smoothly from left to right. "
+		"If the right edge looks identical to the next step left, peak is too low. "
+		"If the center white patch in Band 4 is hard to see against the background, paper white needs adjustment."
+	);
+
 	ImGui::Separator();
 	{
 		const char* hdrModeNames[] = { "Disabled", "scRGB (HDR)", "HDR10 (HDR)" };
