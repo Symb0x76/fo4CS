@@ -44,6 +44,7 @@ private:
 	bool imguiContextCreated = false;
 	bool win32Initialized = false;
 	bool dx12Initialized = false;
+	bool sharedContext = false;
 	bool applyMetadataOnClose = false;
 	HWND hwnd = nullptr;
 	WNDPROC previousWndProc = nullptr;

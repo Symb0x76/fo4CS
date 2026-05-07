@@ -42,6 +42,7 @@ set(FO4CS_COMMON_DEPENDENCIES
     Microsoft::DirectXTex
     Microsoft::DirectX-Headers
     d3d12.lib
+    dxgi.lib
     magic_enum::magic_enum
     d3dcompiler.lib
 )
@@ -96,6 +97,11 @@ add_library(Core OBJECT
     src/HDRCalibration.h
     src/HDRCalibration.hlsl
     src/HDR.h
+    src/Overlay/Overlay.cpp
+    src/Overlay/Overlay.h
+    src/Overlay/OverlaySettings.h
+    src/Overlay/OverlayShaderDump.h
+    src/Overlay/OverlayWndProc.h
     src/Streamline.cpp
     src/Streamline.h
     src/Upscaler.cpp
@@ -240,10 +246,10 @@ if(UPSCALER)
 endif()
 
 if(AIO)
-    fo4cs_create_plugin(AIO AIO "aioGraphics" ${FO4CS_COMMON_DEPENDENCIES})
-    target_sources(AIO PRIVATE
+    fo4cs_create_plugin(NuclearGFX NuclearGFX "NuclearGFX" ${FO4CS_COMMON_DEPENDENCIES})
+    target_sources(NuclearGFX PRIVATE
         src/AIOPlugin.cpp
     )
-    set_target_properties(AIO PROPERTIES OUTPUT_NAME "aioGraphics")
-    target_link_libraries(AIO PRIVATE Core)
+    set_target_properties(NuclearGFX PROPERTIES OUTPUT_NAME "NuclearGFX")
+    target_link_libraries(NuclearGFX PRIVATE Core)
 endif()

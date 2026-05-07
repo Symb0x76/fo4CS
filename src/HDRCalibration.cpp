@@ -1,4 +1,5 @@
 #include "HDRCalibration.h"
+#include "Overlay/Overlay.h"
 #include "Upscaler.h"
 
 #include <algorithm>
@@ -18,7 +19,7 @@ extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hwnd, UINT mes
 
 namespace
 {
-	HDRCalibrationOverlay* g_overlay = nullptr;
+	HDRCalibrationOverlay* g_calibrationOverlay = nullptr;
 
 	constexpr const char* kCalibrationShader = R"(
 cbuffer HDRCalibrationCB : register(b0)
@@ -57,9 +58,9 @@ VSOut VSMain(uint vertexID : SV_VertexID)
     return output;
 }
 
-float3 LinearToPQ(float3 linearNits, float peakNitsValue)
+float3 LinearToPQ(float3 linearNits)
 {
-    float3 y = saturate(linearNits / max(peakNitsValue, 1.0));
+    float3 y = saturate(linearNits / 10000.0);
     const float m1 = 0.1593017578125;
     const float m2 = 78.84375;
     const float c1 = 0.8359375;
@@ -72,7 +73,7 @@ float3 LinearToPQ(float3 linearNits, float peakNitsValue)
 float3 EncodeNits(float3 nits)
 {
     if (hdrMode == 2) {
-        return LinearToPQ(nits, peakNits);
+        return LinearToPQ(nits);
     }
     return nits / max(scRGBReferenceNits, 1.0);
 }
@@ -231,6 +232,7 @@ bool HDRCalibrationOverlay::Render(
 
 bool HDRCalibrationOverlay::Initialize(ID3D12Device* device, ID3D12CommandQueue* commandQueue, IDXGISwapChain4* swapChain, DXGI_FORMAT swapChainFormat, const HDRSettings& settings)
 {
+	(void)settings;
 	if (initialized && initializedFormat == swapChainFormat) {
 		return true;
 	}
@@ -260,37 +262,51 @@ bool HDRCalibrationOverlay::Initialize(ID3D12Device* device, ID3D12CommandQueue*
 	rtvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
 	DX::ThrowIfFailed(device->CreateDescriptorHeap(&rtvHeapDesc, IID_PPV_ARGS(rtvHeap.put())));
 
-	ImGui::CreateContext();
-	imguiContextCreated = true;
-	ImGui::StyleColorsDark();
-	ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+		auto* overlay = Overlay::GetSingleton();
+		sharedContext = overlay && overlay->IsInitialized();
 
-	win32Initialized = ImGui_ImplWin32_Init(hwnd);
-	if (!win32Initialized) {
-		logger::warn("[HDR] ImGui Win32 backend initialization failed");
-		return false;
-	}
+		if (sharedContext) {
+			ImGui::SetCurrentContext(overlay->GetImGuiContext());
+			win32Initialized = true;
+			dx12Initialized = true;
+			imguiContextCreated = false;
+			logger::debug("[HDR] Calibration overlay using shared ImGui context from Overlay");
+		} else {
+			ImGui::CreateContext();
+			imguiContextCreated = true;
+			ImGui::StyleColorsDark();
+			auto& io = ImGui::GetIO();
+			io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_NoMouseCursorChange;
+			float uiScale = static_cast<float>(GetDpiForWindow(hwnd)) / 96.0f;
+			if (uiScale < 1.0f) uiScale = 1.0f;
+			io.FontGlobalScale = uiScale;
 
-	ImGui_ImplDX12_InitInfo initInfo{};
-	initInfo.Device = device;
-	initInfo.CommandQueue = commandQueue;
-	initInfo.NumFramesInFlight = 2;
-	initInfo.RTVFormat = swapChainFormat;
-	initInfo.DSVFormat = DXGI_FORMAT_UNKNOWN;
-	initInfo.SrvDescriptorHeap = srvHeap.get();
-	initInfo.SrvDescriptorAllocFn = AllocateImGuiDescriptor;
-	initInfo.SrvDescriptorFreeFn = FreeImGuiDescriptor;
-	dx12Initialized = ImGui_ImplDX12_Init(&initInfo);
-	if (!dx12Initialized) {
-		logger::warn("[HDR] ImGui D3D12 backend initialization failed");
-		return false;
-	}
+			win32Initialized = ImGui_ImplWin32_Init(hwnd);
+			if (!win32Initialized) {
+				logger::warn("[HDR] ImGui Win32 backend initialization failed");
+				return false;
+			}
 
-	EnsurePatternResources(device, swapChainFormat);
+			ImGui_ImplDX12_InitInfo initInfo{};
+			initInfo.Device = device;
+			initInfo.CommandQueue = commandQueue;
+			initInfo.NumFramesInFlight = 2;
+			initInfo.RTVFormat = swapChainFormat;
+			initInfo.DSVFormat = DXGI_FORMAT_UNKNOWN;
+			initInfo.SrvDescriptorHeap = srvHeap.get();
+			initInfo.SrvDescriptorAllocFn = AllocateImGuiDescriptor;
+			initInfo.SrvDescriptorFreeFn = FreeImGuiDescriptor;
+			dx12Initialized = ImGui_ImplDX12_Init(&initInfo);
+			if (!dx12Initialized) {
+				logger::warn("[HDR] ImGui D3D12 backend initialization failed");
+				return false;
+			}
 
-	g_overlay = this;
-	previousWndProc = reinterpret_cast<WNDPROC>(SetWindowLongPtrW(hwnd, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(WndProc)));
-	editableSettings = settings;
+			g_calibrationOverlay = this;
+			previousWndProc = reinterpret_cast<WNDPROC>(SetWindowLongPtrW(hwnd, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(WndProc)));
+		}
+
+		EnsurePatternResources(device, swapChainFormat);
 	initializedFormat = swapChainFormat;
 	initialized = true;
 	logger::info("[HDR] Calibration overlay initialized");
@@ -299,22 +315,24 @@ bool HDRCalibrationOverlay::Initialize(ID3D12Device* device, ID3D12CommandQueue*
 
 void HDRCalibrationOverlay::Shutdown()
 {
-	if (hwnd && previousWndProc) {
-		SetWindowLongPtrW(hwnd, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(previousWndProc));
-	}
-	previousWndProc = nullptr;
-	if (g_overlay == this) {
-		g_overlay = nullptr;
-	}
+	if (!sharedContext) {
+		if (hwnd && previousWndProc) {
+			SetWindowLongPtrW(hwnd, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(previousWndProc));
+		}
+		previousWndProc = nullptr;
+		if (g_calibrationOverlay == this) {
+			g_calibrationOverlay = nullptr;
+		}
 
-	if (dx12Initialized) {
-		ImGui_ImplDX12_Shutdown();
-	}
-	if (win32Initialized) {
-		ImGui_ImplWin32_Shutdown();
-	}
-	if (imguiContextCreated) {
-		ImGui::DestroyContext();
+		if (dx12Initialized) {
+			ImGui_ImplDX12_Shutdown();
+		}
+		if (win32Initialized) {
+			ImGui_ImplWin32_Shutdown();
+		}
+		if (imguiContextCreated) {
+			ImGui::DestroyContext();
+		}
 	}
 
 	initialized = false;
@@ -422,14 +440,74 @@ void HDRCalibrationOverlay::RenderUI(HDRSettings& settings)
 {
 	ImGui_ImplDX12_NewFrame();
 	ImGui_ImplWin32_NewFrame();
+	ImGui::GetIO().MouseDrawCursor = true;
 	ImGui::NewFrame();
 
-	ImGui::SetNextWindowSize(ImVec2(520.0f, 380.0f), ImGuiCond_FirstUseEver);
+	const float uiScale = ImGui::GetIO().FontGlobalScale;
+	ImGui::SetNextWindowSize(ImVec2(620.0f * uiScale, 580.0f * uiScale), ImGuiCond_FirstUseEver);
 	ImGui::Begin("HDR Calibration Preview", nullptr, ImGuiWindowFlags_NoCollapse);
-	ImGui::TextWrapped("Adjust peak luminance and paper white against the HDR test pattern. Save writes Data/MCM/Settings/HDR.ini and applies metadata immediately.");
+
+	ImGui::TextWrapped(
+		"Use the test pattern behind this window to find the right values for YOUR display. "
+		"Do NOT just copy your monitor's advertised specs - the test pattern tells you what "
+		"actually works with the game's rendering pipeline.");
+	ImGui::Spacing();
+	ImGui::TextWrapped("The test pattern has four horizontal bands (top to bottom):");
+	ImGui::BulletText("Band 1 - Black ramp (0 to 5 nits): all steps should be distinguishable from true black");
+	ImGui::BulletText("Band 2 - Luminance ramp (0 to peak nits): the key calibration tool");
+	ImGui::BulletText("Band 3 - Rec.2020 color bars at paper-white level: check saturation");
+	ImGui::BulletText("Band 4 - Clipping zone: white patch on a gradient; the patch should be clearly visible");
+
 	ImGui::Separator();
-	ImGui::SliderFloat("Peak Luminance", &editableSettings.peakLuminance, 80.0f, 10000.0f, "%.0f nits", ImGuiSliderFlags_Logarithmic);
-	ImGui::SliderFloat("Paper White", &editableSettings.paperWhiteLuminance, 20.0f, 1000.0f, "%.0f nits", ImGuiSliderFlags_Logarithmic);
+	ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.2f, 1.0f), "How to find Peak Luminance:");
+	ImGui::TextWrapped(
+		"Look at Band 2 (the luminance ramp). Start at a low value (~400 nits) and increase "
+		"until the rightmost ~10%% of the ramp stops getting brighter (hard clipping into flat white). "
+		"Then back down 50-100 nits. The correct value is just below where clipping begins."
+	);
+	ImGui::TextWrapped(
+		"DO NOT use your monitor's spec sheet number directly - the effective peak depends on "
+		"how Windows HDR composition and your GPU's tone mapper interact."
+	);
+
+	float peakNits = editableSettings.peakLuminance;
+	if (ImGui::SliderFloat("Peak Luminance##PeakSlider", &peakNits, 80.0f, 10000.0f, "%.0f nits", ImGuiSliderFlags_Logarithmic)) {
+		editableSettings.peakLuminance = std::round(peakNits / 50.0f) * 50.0f;
+	}
+	ImGui::SameLine();
+	ImGui::SetNextItemWidth(80.0f * uiScale);
+	if (ImGui::InputFloat("##PeakExact", &editableSettings.peakLuminance, 50.0f, 500.0f, "%.0f")) {
+		editableSettings.peakLuminance = std::clamp(std::round(editableSettings.peakLuminance / 50.0f) * 50.0f, 80.0f, 10000.0f);
+	}
+
+	ImGui::Spacing();
+	ImGui::TextColored(ImVec4(0.7f, 0.85f, 1.0f, 1.0f), "How to find Paper White:");
+	ImGui::TextWrapped(
+		"Look at Band 4 (clipping zone). Find the center white patch. "
+		"Adjust so it looks like a readable white surface - not painfully bright, not dim gray. "
+		"Typical values: 150-250 nits for dark rooms, 250-400 nits for bright rooms."
+	);
+	ImGui::TextWrapped(
+		"Also check the game's HUD/menus after saving: UI text should be comfortably readable."
+	);
+
+	float paperNits = editableSettings.paperWhiteLuminance;
+	if (ImGui::SliderFloat("Paper White##PaperSlider", &paperNits, 20.0f, 2000.0f, "%.0f nits", ImGuiSliderFlags_Logarithmic)) {
+		editableSettings.paperWhiteLuminance = std::round(paperNits / 5.0f) * 5.0f;
+	}
+	ImGui::SameLine();
+	ImGui::SetNextItemWidth(80.0f * uiScale);
+	if (ImGui::InputFloat("##PaperExact", &editableSettings.paperWhiteLuminance, 5.0f, 25.0f, "%.0f")) {
+		editableSettings.paperWhiteLuminance = std::clamp(std::round(editableSettings.paperWhiteLuminance / 5.0f) * 5.0f, 20.0f, 2000.0f);
+	}
+
+	ImGui::Separator();
+	ImGui::TextWrapped(
+		"Quick check: the luminance ramp (Band 2) should transition smoothly from left to right. "
+		"If the right edge looks identical to the next step left, peak is too low. "
+		"If the center white patch in Band 4 is hard to see against the background, paper white needs adjustment."
+	);
+
 	ImGui::Separator();
 	{
 		const char* hdrModeNames[] = { "Disabled", "scRGB (HDR)", "HDR10 (HDR)" };
@@ -544,8 +622,8 @@ void HDRCalibrationOverlay::ApplyHDRMetadata(IDXGISwapChain4* swapChain, const H
 
 LRESULT CALLBACK HDRCalibrationOverlay::WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
-	if (g_overlay && g_overlay->active && ImGui_ImplWin32_WndProcHandler(hwnd, message, wParam, lParam)) {
+	if (g_calibrationOverlay && g_calibrationOverlay->active && ImGui_ImplWin32_WndProcHandler(hwnd, message, wParam, lParam)) {
 		return true;
 	}
-	return g_overlay && g_overlay->previousWndProc ? CallWindowProcW(g_overlay->previousWndProc, hwnd, message, wParam, lParam) : DefWindowProcW(hwnd, message, wParam, lParam);
+	return g_calibrationOverlay && g_calibrationOverlay->previousWndProc ? CallWindowProcW(g_calibrationOverlay->previousWndProc, hwnd, message, wParam, lParam) : DefWindowProcW(hwnd, message, wParam, lParam);
 }

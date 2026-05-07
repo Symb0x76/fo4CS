@@ -81,6 +81,7 @@ public:
 	ID3D11ComputeShader* buildUIColorAndAlphaCS;
 	ID3D11ComputeShader* buildReticleUIColorAndAlphaCS;
 	ID3D11ComputeShader* patchHUDLessReticleCS;
+	ID3D11ComputeShader* denoiseUIAlphaCS;
 
 	bool setupBuffers = false;
 	bool postLoadingSkipUpscale = false;
@@ -98,6 +99,7 @@ public:
 	void PostAlpha();
 	void CopyBuffersToSharedResources();
 	bool BuildUIColorAndAlphaResource(ID3D11Texture2D* a_finalFrame);
+	void DenoiseUIAlphaResource();
 
 	static void TimerSleepQPC(int64_t targetQPC);
 

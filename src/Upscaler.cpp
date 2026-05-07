@@ -143,9 +143,9 @@ namespace
 	bool IsFrameGenPluginVisible()
 	{
 		std::error_code ec;
-		if (std::filesystem::exists("Data\\F4SE\\Plugins\\FrameGen.dll", ec))
+		if (std::filesystem::exists("Data\\F4SE\\Plugins\\FrameGen\\FrameGen.dll", ec))
 			return true;
-		if (GetModuleHandleW(L"aioGraphics.dll") != nullptr)
+		if (GetModuleHandleW(L"NuclearGFX.dll") != nullptr)
 			return true;
 		return false;
 	}
@@ -265,8 +265,7 @@ ID3D11DeviceChild* CompileFrameGenerationShader(const wchar_t* fileName, const c
 void Upscaling::LoadFrameGenerationSettings()
 {
 	const std::vector<IniSource> iniSources{
-		{ std::filesystem::path("Data\\MCM\\Config\\FrameGen\\settings.ini"), "MCM default" },
-		{ std::filesystem::path("Data\\MCM\\Settings\\FrameGen.ini"), "MCM user override" }
+		{ std::filesystem::path("Data\\F4SE\\Plugins\\FrameGen\\FrameGen.ini"), "default" }
 	};
 
 	CSimpleIniA ini;
@@ -292,8 +291,7 @@ void Upscaling::LoadFrameGenerationSettings()
 void Upscaling::LoadReflexSettings()
 {
 	const std::vector<IniSource> iniSources{
-		{ std::filesystem::path("Data\\MCM\\Config\\Reflex\\settings.ini"), "MCM default" },
-		{ std::filesystem::path("Data\\MCM\\Settings\\Reflex.ini"), "MCM user override" }
+		{ std::filesystem::path("Data\\F4SE\\Plugins\\Reflex\\Reflex.ini"), "default" }
 	};
 
 	CSimpleIniA ini;
@@ -349,8 +347,7 @@ void Upscaling::LoadSettings()
 	}
 
 	const std::vector<IniSource> upscalerIniSources{
-		{ std::filesystem::path("Data\\MCM\\Config\\Upscaler\\settings.ini"), "MCM default" },
-		{ std::filesystem::path("Data\\MCM\\Settings\\Upscaler.ini"), "MCM user override" }
+		{ std::filesystem::path("Data\\F4SE\\Plugins\\Upscaler\\Upscaler.ini"), "default" }
 	};
 
 	CSimpleIniA upscalerIni;
@@ -649,6 +646,7 @@ void Upscaling::CreateFrameGenerationResources()
 	buildUIColorAndAlphaCS = (ID3D11ComputeShader*)CompileFrameGenerationShader(L"BuildUIColorAndAlphaCS.hlsl", "cs_5_0");
 	buildReticleUIColorAndAlphaCS = (ID3D11ComputeShader*)CompileFrameGenerationShader(L"BuildReticleUIColorAndAlphaCS.hlsl", "cs_5_0");
 	patchHUDLessReticleCS = (ID3D11ComputeShader*)CompileFrameGenerationShader(L"PatchHUDLessReticleCS.hlsl", "cs_5_0");
+	denoiseUIAlphaCS = (ID3D11ComputeShader*)CompileFrameGenerationShader(L"DenoiseUIAlphaCS.hlsl", "cs_5_0");
 }
 
 void Upscaling::PreAlpha()
@@ -868,6 +866,42 @@ bool Upscaling::BuildUIColorAndAlphaResource(ID3D11Texture2D* a_finalFrame)
 	ID3D11ComputeShader* shader = nullptr;
 	context->CSSetShader(shader, nullptr, 0);
 	return true;
+}
+
+void Upscaling::DenoiseUIAlphaResource()
+{
+	if (!d3d12Interop || !denoiseUIAlphaCS)
+		return;
+
+	if (!setupBuffers)
+		CreateFrameGenerationResources();
+
+	auto dx12SwapChain = DX12SwapChain::GetSingleton();
+	const auto frameIndex = dx12SwapChain->frameIndex;
+	if (!uiColorAndAlphaBufferShared[frameIndex])
+		return;
+
+	auto rendererData = fo4cs::GetRendererData();
+	auto context = reinterpret_cast<ID3D11DeviceContext*>(rendererData->context);
+
+	D3D11_TEXTURE2D_DESC desc{};
+	uiColorAndAlphaBufferShared[frameIndex]->resource->GetDesc(&desc);
+	if (desc.Width == 0 || desc.Height == 0)
+		return;
+
+	const uint32_t dispatchX = static_cast<uint32_t>(std::ceil(static_cast<float>(desc.Width) / 8.0f));
+	const uint32_t dispatchY = static_cast<uint32_t>(std::ceil(static_cast<float>(desc.Height) / 8.0f));
+
+	ID3D11UnorderedAccessView* uavs[1] = { uiColorAndAlphaBufferShared[frameIndex]->uav.get() };
+	context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
+	context->CSSetShader(denoiseUIAlphaCS, nullptr, 0);
+	context->Dispatch(dispatchX, dispatchY, 1);
+
+	ID3D11UnorderedAccessView* nullUAVs[1] = { nullptr };
+	context->CSSetUnorderedAccessViews(0, ARRAYSIZE(nullUAVs), nullUAVs, nullptr);
+
+	ID3D11ComputeShader* nullShader = nullptr;
+	context->CSSetShader(nullShader, nullptr, 0);
 }
 
 void Upscaling::TimerSleepQPC(int64_t targetQPC)

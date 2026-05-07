@@ -1,10 +1,10 @@
-set(AIO ON CACHE BOOL "Build the unified aioGraphics.dll (all-in-one)")
+set(AIO ON CACHE BOOL "Build the unified NuclearGFX.dll (all-in-one)")
 set(FRAMEGEN ON CACHE BOOL "Build the FrameGen plugin target")
 set(REFLEX ON CACHE BOOL "Build the Reflex plugin target")
 set(UPSCALER ON CACHE BOOL "Build the Upscaler plugin target")
 set(HDR ON CACHE BOOL "Build the HDR plugin target")
 
-set(FO4CS_BUILD_AIO ${AIO} CACHE BOOL "Build the unified aioGraphics.dll" FORCE)
+set(FO4CS_BUILD_AIO ${AIO} CACHE BOOL "Build the unified NuclearGFX.dll" FORCE)
 set(FO4CS_BUILD_FRAMEGEN ${FRAMEGEN} CACHE BOOL "Build the FrameGen plugin target" FORCE)
 set(FO4CS_BUILD_REFLEX ${REFLEX} CACHE BOOL "Build the Reflex plugin target" FORCE)
 set(FO4CS_BUILD_UPSCALER ${UPSCALER} CACHE BOOL "Build the Upscaler plugin target" FORCE)

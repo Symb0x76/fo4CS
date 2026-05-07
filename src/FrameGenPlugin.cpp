@@ -54,7 +54,7 @@ namespace
 			return false;
 
 		std::error_code ec;
-		return std::filesystem::exists(pluginDir / L"Upscaler.dll", ec);
+		return std::filesystem::exists(pluginDir.parent_path() / L"Upscaler" / L"Upscaler.dll", ec);
 	}
 }
 

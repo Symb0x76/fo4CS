@@ -15,6 +15,7 @@
 #include "Core/CommunityShaders.h"
 #include "FidelityFX.h"
 #include "HDRCalibration.h"
+#include "Overlay/Overlay.h"
 #include "Streamline.h"
 #include "Upscaler.h"
 
@@ -74,9 +75,9 @@ static const float3x3 Rec709ToRec2020 = {
     { 0.0164, 0.0880, 0.8956 }
 };
 
-float3 LinearToPQ(float3 linearNits, float peakNitsValue)
+float3 LinearToPQ(float3 linearNits)
 {
-    float3 y = saturate(linearNits / max(peakNitsValue, 1.0));
+    float3 y = saturate(linearNits / 10000.0);
     const float m1 = 0.1593017578125;
     const float m2 = 78.84375;
     const float c1 = 0.8359375;
@@ -98,7 +99,7 @@ float4 PSMain(VSOut input) : SV_Target
     }
 
     float3 rec2020 = mul(Rec709ToRec2020, linearColor);
-    float3 pq = LinearToPQ(rec2020 * paperWhiteNits, peakNits);
+    float3 pq = LinearToPQ(rec2020 * paperWhiteNits);
     return float4(pq, source.a);
 }
 )";
@@ -399,6 +400,15 @@ void DX12SwapChain::CreateSwapChain(IDXGIFactory4* a_dxgiFactory, DXGI_SWAP_CHAI
 		fidelityFX->SetupFrameGeneration();
 
 	swapChainProxy = new DXGISwapChainProxy(swapChain);
+
+	if (!settingsOverlay) {
+		settingsOverlay = Overlay::GetSingleton();
+		if (!settingsOverlay->Initialize(d3d12Device.get(), commandQueue.get(), swapChain, swapChainDesc.Format, a_swapChainDesc.OutputWindow)) {
+			logger::warn("[DX12SwapChain] Overlay initialization failed; menu overlay will be unavailable");
+			settingsOverlay = nullptr;
+		}
+	}
+
 }
 
 void DX12SwapChain::CreateInterop()
@@ -695,6 +705,22 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
 
 		if (useFSRFrameGeneration) {
 			fidelityFX->Present(useFrameGenerationThisFrame);
+		}
+
+
+		// Fallback hotkey polling. Works even if WndProc hook is displaced
+		if (settingsOverlay) {
+			settingsOverlay->PollHotkeyState();
+		}
+
+		trace("overlay");
+		if (settingsOverlay && settingsOverlay->ShouldRender()) {
+			auto* backBuffer = swapChainBuffers[frameIndex].get();
+			CD3DX12_RESOURCE_BARRIER toRT = CD3DX12_RESOURCE_BARRIER::Transition(backBuffer, D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET);
+			commandLists[frameIndex]->ResourceBarrier(1, &toRT);
+			settingsOverlay->Render(commandLists[frameIndex].get(), backBuffer, swapChainDesc.Format);
+			CD3DX12_RESOURCE_BARRIER toPresent = CD3DX12_RESOURCE_BARRIER::Transition(backBuffer, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
+			commandLists[frameIndex]->ResourceBarrier(1, &toPresent);
 		}
 
 		trace("close-command-list");
