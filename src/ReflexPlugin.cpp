@@ -3,6 +3,10 @@
 #include "DX11Hooks.h"
 #include "Upscaler.h"
 
+#include <OverlayAPI.h>
+#include <SimpleIni.h>
+#include <imgui.h>
+
 #include <array>
 #include <filesystem>
 
@@ -69,6 +73,49 @@ namespace
 	}
 }
 
+// Panel callbacks for Overlay.dll registration
+namespace ReflexOverlay
+{
+	int RenderPanel(void* userData)
+	{
+		auto& s = *static_cast<Upscaling::Settings*>(userData);
+		int changed = 0;
+
+		if (ImGui::CollapsingHeader("Reflex")) {
+			const char* reflexModes[] = { "Off", "Low Latency", "Low Latency + Boost" };
+			changed |= ImGui::Combo("Mode", &s.reflexMode, reflexModes, IM_ARRAYSIZE(reflexModes)) ? 1 : 0;
+			changed |= ImGui::Checkbox("Reflex Sleep Mode", &s.reflexSleepMode) ? 1 : 0;
+		}
+		return changed;
+	}
+
+	void SavePanel(void* userData)
+	{
+		auto& s = *static_cast<Upscaling::Settings*>(userData);
+		CSimpleIniA ini;
+		ini.SetUnicode();
+		ini.SetValue("Settings", "iReflexMode", std::to_string(s.reflexMode).c_str());
+		ini.SetValue("Settings", "bReflexSleepMode", s.reflexSleepMode ? "true" : "false");
+		ini.SaveFile("Data\\F4SE\\Plugins\\Reflex\\Reflex.ini");
+	}
+
+	void TryRegister()
+	{
+		HMODULE overlay = GetModuleHandleW(L"Overlay.dll");
+		if (!overlay) return;
+
+		auto registerFn = reinterpret_cast<decltype(&Overlay_RegisterPanel)>(
+			GetProcAddress(overlay, "Overlay_RegisterPanel"));
+		if (!registerFn) return;
+
+		static OverlayPanelCallbacks cbs;
+		cbs.render = RenderPanel;
+		cbs.save = SavePanel;
+		cbs.userData = &Upscaling::GetSingleton()->settings;
+		registerFn("Reflex", kOverlayCategory_Latency, &cbs);
+	}
+}
+
 #if defined(FALLOUT_POST_NG)
 extern "C" DLLEXPORT constinit F4SE::PluginVersionData F4SEPlugin_Version = []() consteval {
 	F4SE::PluginVersionData data{};
@@ -95,15 +142,19 @@ extern "C" DLLEXPORT bool F4SEAPI F4SEPlugin_Load(const F4SE::LoadInterface* a_f
 
 	if (!upscaling->UsesReflex()) {
 		logger::info("[Reflex] Disabled by settings; D3D12 proxy hooks not installed");
+		ReflexOverlay::TryRegister();
 		return true;
 	}
 
 	if (HasExternalProxyOwner(a_f4se)) {
 		logger::info("[Reflex] Upscaler/FrameGen plugin detected, leaving D3D12 proxy ownership to that plugin");
+		ReflexOverlay::TryRegister();
 		return true;
 	}
 
 	logger::info("[Reflex] Installing D3D12 proxy hooks");
 	DX11Hooks::Install();
+
+	ReflexOverlay::TryRegister();
 	return true;
 }

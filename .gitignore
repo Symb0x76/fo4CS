@@ -8,6 +8,9 @@
 # AI
 /.claude
 
+# local history
+/.history
+
 #IDE
 /.idea
 /.vscode

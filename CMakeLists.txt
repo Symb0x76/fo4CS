@@ -49,12 +49,9 @@ set(FO4CS_COMMON_DEPENDENCIES
 
 # ------------------------------------------------------------------
 # Core: 共享实现的 OBJECT 库
-#   - 源文件只编译一次（同一版本构建内）
-#   - 不引入行为差异，不拆 FrameGen/Upscaler 逻辑
-#   - 插件目标通过 $<TARGET_OBJECTS:Core> 引入编译产物
 # ------------------------------------------------------------------
 add_library(Core OBJECT
-    src/Buffer.h # header-only，列出便于 IDE 识别
+    src/Buffer.h
     src/DX11Hooks.cpp
     src/DX11Hooks.h
     src/DX12SwapChain.cpp
@@ -66,11 +63,6 @@ add_library(Core OBJECT
     src/HDRCalibration.h
     src/HDRCalibration.hlsl
     src/HDR.h
-    src/Overlay/Overlay.cpp
-    src/Overlay/Overlay.h
-    src/Overlay/OverlaySettings.h
-    src/Overlay/OverlayShaderDump.h
-    src/Overlay/OverlayWndProc.h
     src/Streamline.cpp
     src/Streamline.h
     src/Upscaler.cpp
@@ -78,10 +70,6 @@ add_library(Core OBJECT
     src/UpscalerRenderBackend.cpp
 )
 
-# Core 不是插件目标，不调用 fo4cs_apply_plugin_defaults()，
-# 因为该函数会设置 ${CMAKE_CURRENT_BINARY_DIR}/cmake/${target} include 路径，
-# 该目录下的 Plugin.h 仅由 fo4cs_configure_plugin_metadata() 生成（插件专用）。
-# 下面手动设置与插件相同的编译特性和选项，但不含 Plugin.h 所在路径。
 target_compile_features(Core PRIVATE cxx_std_23)
 
 target_include_directories(Core
@@ -121,36 +109,27 @@ if(CMAKE_GENERATOR MATCHES "Visual Studio")
     )
 endif()
 
-# Core 需要 PCH：核心源文件依赖 PCH.h 中定义的类型（fo4cs::、DX::、logger 等）。
-# Plugin.h 是插件专用元数据头，改由插件层显式包含。
 target_precompile_headers(Core PRIVATE include/PCH.h)
-
-# 链接共享依赖（OBJECT 库本身不链接，但 target_link_libraries 可传播 INTERFACE 属性给消费者）
 target_link_libraries(Core PUBLIC ${FO4CS_COMMON_DEPENDENCIES})
 
+# ImGui core sources in Core — shared by all consumers for panel rendering.
+# Feature DLLs call ImGui functions in their registered panel callbacks.
+# Overlay.dll owns the D3D12 backend + context.
 target_sources(Core PRIVATE
     extern/imgui/imgui.cpp
     extern/imgui/imgui_draw.cpp
     extern/imgui/imgui_tables.cpp
     extern/imgui/imgui_widgets.cpp
-    extern/imgui/backends/imgui_impl_dx12.cpp
-    extern/imgui/backends/imgui_impl_win32.cpp
-    extern/imgui/backends/imgui_impl_dx11.cpp
 )
-
-set(FO4CS_IMGUI_SOURCES
+set(FO4CS_IMGUI_CORE_SOURCES
     extern/imgui/imgui.cpp
     extern/imgui/imgui_draw.cpp
     extern/imgui/imgui_tables.cpp
     extern/imgui/imgui_widgets.cpp
-    extern/imgui/backends/imgui_impl_dx12.cpp
-    extern/imgui/backends/imgui_impl_win32.cpp
-    extern/imgui/backends/imgui_impl_dx11.cpp
 )
-set_source_files_properties(${FO4CS_IMGUI_SOURCES} PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
-set_source_files_properties(src/HDRCalibration.hlsl PROPERTIES HEADER_FILE_ONLY ON)
+set_source_files_properties(${FO4CS_IMGUI_CORE_SOURCES} PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
 if(CMAKE_GENERATOR MATCHES "Visual Studio")
-    set_source_files_properties(${FO4CS_IMGUI_SOURCES} PROPERTIES COMPILE_OPTIONS "/W0")
+    set_source_files_properties(${FO4CS_IMGUI_CORE_SOURCES} PROPERTIES COMPILE_OPTIONS "/W0")
 endif()
 
 if(BUILD_PRE_NG)
@@ -179,7 +158,6 @@ if(FRAMEGEN)
         src/FrameGenPlugin.cpp
     )
     target_compile_definitions(FrameGen PRIVATE FRAMEGEN=1)
-    # 通过链接 Core 复用共享对象与 include 目录
     target_link_libraries(FrameGen PRIVATE Core)
 endif()
 
@@ -220,4 +198,37 @@ if(AIO)
     )
     set_target_properties(NuclearGFX PROPERTIES OUTPUT_NAME "NuclearGFX")
     target_link_libraries(NuclearGFX PRIVATE Core)
+endif()
+
+if(OVERLAY)
+    fo4cs_create_plugin(Overlay Overlay "Overlay" ${FO4CS_COMMON_DEPENDENCIES})
+    target_sources(Overlay PRIVATE
+        src/OverlayPlugin.cpp
+        src/Overlay/Overlay.cpp
+        src/Overlay/Overlay.h
+        src/Overlay/OverlayWndProc.h
+    )
+    target_include_directories(Overlay PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/extern/imgui
+        ${CMAKE_CURRENT_SOURCE_DIR}/extern/imgui/backends
+    )
+    target_link_libraries(Overlay PRIVATE Core)
+
+    # D3D12/Win32 ImGui backends — only Overlay.dll needs these
+    target_sources(Overlay PRIVATE
+        extern/imgui/backends/imgui_impl_dx12.cpp
+        extern/imgui/backends/imgui_impl_win32.cpp
+    )
+    set_source_files_properties(
+        extern/imgui/backends/imgui_impl_dx12.cpp
+        extern/imgui/backends/imgui_impl_win32.cpp
+        PROPERTIES SKIP_PRECOMPILE_HEADERS ON
+    )
+    if(CMAKE_GENERATOR MATCHES "Visual Studio")
+        set_source_files_properties(
+            extern/imgui/backends/imgui_impl_dx12.cpp
+            extern/imgui/backends/imgui_impl_win32.cpp
+            PROPERTIES COMPILE_OPTIONS "/W0"
+        )
+    endif()
 endif()
