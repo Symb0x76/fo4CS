@@ -378,6 +378,19 @@ void Upscaling::LoadSettings()
 		15,
 		"iDLSSPreset");
 
+#if defined(FALLOUT_PRE_NG)
+	if (settings.upscaleMethodPreference == static_cast<int>(UpscaleMethod::kDLSS)) {
+		settings.upscaleMethodPreference = static_cast<int>(UpscaleMethod::kFSR);
+		logger::info("[Upscaler] PreNG: defaulting upscale method to FSR (DLSS unavailable)");
+	}
+	if (settings.frameGenerationBackend == 0) {
+		settings.frameGenerationBackend = 2;
+		logger::info("[FrameGen] PreNG: defaulting frame generation backend to FSR FG (DLSS-G unavailable)");
+	}
+	settings.reflexMode = 0;
+	logger::info("[Reflex] PreNG: disabling Reflex (unavailable)");
+#endif
+
 	logger::info(
 		"[Settings] FrameGen(enabled={}, limiter={}, backend={}), Upscaler(method={}, quality={}, dlssPreset={}), Reflex(mode={}), Debug(enabled={}, streamlineLogLevel={}, frames={})",
 		settings.frameGenerationMode,

@@ -12,7 +12,6 @@
 #include <d3dcompiler.h>
 #include <directx/d3dx12.h>
 
-#include "Core/CommunityShaders.h"
 #include "FidelityFX.h"
 #include "HDRCalibration.h"
 #include "Overlay/Overlay.h"
@@ -504,7 +503,6 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
 		if (traceFrame) {
 			logger::debug("[DX12SwapChain] Present#{} begin frameIndex={}", presentID, frameIndex);
 		}
-		CommunityShaders::Runtime::GetSingleton()->OnFrame();
 		trace("reflex-sleep");
 		streamline->SleepReflexFrame("present");
 

@@ -1,6 +1,9 @@
 #pragma once
 
 #include <d3d11.h>
+#include <atomic>
+#include <cstdint>
+#include <optional>
 #include <winrt/base.h>
 
 #include <array>
@@ -10,6 +13,7 @@
 #include <string>
 #include <vector>
 #include <unordered_set>
+#include <unordered_map>
 
 namespace CommunityShaders
 {
@@ -33,8 +37,16 @@ namespace CommunityShaders
 
 		void ObserveShader(ShaderStage a_stage, const void* a_bytecode, SIZE_T a_bytecodeLength);
 		[[nodiscard]] std::string HashShaderBytecode(const void* a_bytecode, SIZE_T a_bytecodeLength) const;
+		[[nodiscard]] std::optional<std::uint32_t> GetAsmHashForBytecode(const void* a_bytecode, SIZE_T a_bytecodeLength);
 
-	private:
+		void SetTracePipeline(bool a_enabled) noexcept { tracePipeline = a_enabled; }
+		[[nodiscard]] bool ShouldTracePipeline() const noexcept { return tracePipeline; }
+
+		// Shader 创建计数器 — 用于验证 Deferred hook 触发时序
+		// 每创建新 shader 递增（去重前），由 hook 日志读取
+		[[nodiscard]] uint32_t GetShaderCreationCount() const noexcept { return m_hookVerifyCounter.load(); }
+
+	public:
 		struct ShaderMetadata
 		{
 			std::string uid;
@@ -53,7 +65,7 @@ namespace CommunityShaders
 			std::uint32_t outputMask = 0;
 		};
 
-		ShaderCache() = default;
+	private:
 
 		void DumpShader(ShaderStage a_stage, std::span<const std::byte> a_bytecode, std::string_view a_hash);
 		[[nodiscard]] ShaderMetadata BuildMetadata(ShaderStage a_stage, std::span<const std::byte> a_bytecode, std::string_view a_disassembly) const;
@@ -67,5 +79,10 @@ namespace CommunityShaders
 		bool dumpAllShaders = false;
 		std::unordered_set<std::string> observedHashes;
 		std::mutex observedLock;
+		std::unordered_map<std::string, std::uint32_t> bytecodeToAsmHash;
+		bool tracePipeline = false;
+		std::unordered_set<std::string> traceStackHashes;
+		void TraceShaderCreation(ShaderStage a_stage, SIZE_T a_len, std::string_view a_hash);
+		std::atomic<uint32_t> m_hookVerifyCounter{ 0 };
 	};
 }

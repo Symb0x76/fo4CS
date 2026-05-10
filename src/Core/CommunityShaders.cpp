@@ -1,5 +1,6 @@
 #include "Core/CommunityShaders.h"
 
+#include "Core/Deferred.h"
 #include "Core/Globals.h"
 #include "Core/Hooks.h"
 #include "Core/Menu.h"
@@ -24,6 +25,7 @@ namespace CommunityShaders
 
 		State::GetSingleton()->Refresh();
 		Hooks::Install();
+		Deferred::Hooks::Install();
 		LoadFeatures();
 
 		loaded = true;
@@ -37,6 +39,7 @@ namespace CommunityShaders
 
 	void Runtime::OnD3D11DeviceCreated(ID3D11Device* a_device)
 	{
+		d3d11Device = a_device;
 		Hooks::OnD3D11DeviceCreated(a_device);
 		SetupResources();
 	}

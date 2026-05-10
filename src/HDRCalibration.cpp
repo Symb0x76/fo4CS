@@ -277,7 +277,10 @@ bool HDRCalibrationOverlay::Initialize(ID3D12Device* device, ID3D12CommandQueue*
 			ImGui::StyleColorsDark();
 			auto& io = ImGui::GetIO();
 			io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_NoMouseCursorChange;
-			float uiScale = static_cast<float>(GetDpiForWindow(hwnd)) / 96.0f;
+			HDC hdcTmp = GetDC(hwnd);
+			float uiDpi = static_cast<float>(GetDeviceCaps(hdcTmp, LOGPIXELSX));
+			ReleaseDC(hwnd, hdcTmp);
+			float uiScale = uiDpi / 96.0f;
 			if (uiScale < 1.0f) uiScale = 1.0f;
 			io.FontGlobalScale = uiScale;
 

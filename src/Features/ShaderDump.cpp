@@ -38,7 +38,7 @@ std::pair<std::string, std::vector<std::string>> ShaderDump::GetFeatureSummary()
 		"Captures original D3D11 shader bytecode for building runtime-specific ShaderDB data.",
 		{
 			"Hooks D3D11 shader creation through the Phase 0 foundation",
-			"Writes PreNG dumps under Data/F4SE/Plugins/fo4CS/ShaderDump/PreNG",
+			"Writes PreNG dumps under Data/F4SE/Plugins/CommunityShaders/ShaderDump/PreNG",
 			"Can be enabled with MCM ini or FO4CS_DUMP_SHADERS"
 		}
 	};
@@ -80,4 +80,10 @@ void ShaderDump::Load()
 {
 	CommunityShaders::ShaderCache::GetSingleton()->SetDumpAllShaders(dumpAllShaders);
 	logger::info("[CommunityShaders] ShaderDB dump mode {}", dumpAllShaders ? "enabled" : "disabled");
+
+	if (GetEnvironmentVariableW(L"FO4CS_TRACE_PIPELINE", nullptr, 0) > 0) {
+		CommunityShaders::ShaderCache::GetSingleton()->SetTracePipeline(true);
+		logger::info("[CommunityShaders] Pipeline tracer enabled (FO4CS_TRACE_PIPELINE=1)");
+		logger::info("[CommunityShaders] Traces written to Data/F4SE/Plugins/CommunityShaders/PipelineTrace/");
+	}
 }

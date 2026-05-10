@@ -59,34 +59,14 @@ configure_file(
 )
 
 # ------------------------------------------------------------------
-# Core: 共享实现的 OBJECT 库
-#   - 源文件只编译一次（同一版本构建内）
-#   - 不引入行为差异，不拆 FrameGen/Upscaler 逻辑
+# Core: D3D12 upscaling interop 共享 OBJECT 库
+#   - Upscaler / FrameGen / Reflex / HDR / NuclearGFX 共享
+#   - 不含 CommunityShaders Feature 框架
 #   - 插件目标通过 $<TARGET_OBJECTS:Core> 引入编译产物
 # ------------------------------------------------------------------
 add_library(Core OBJECT
-	src/Buffer.h
-	src/Core/CommunityShaders.cpp
-	src/Core/CommunityShaders.h
-	src/Core/Feature.cpp
-	src/Core/Feature.h
-	src/Core/FeatureCategories.h
-	src/Core/FeatureIssues.h
-	src/Core/Globals.cpp
-	src/Core/Globals.h
-	src/Core/Hooks.cpp
-	src/Core/Hooks.h
-	src/Core/IMenuItem.h
-	src/Core/Menu.cpp
-	src/Core/Menu.h
-	src/Core/MenuRegistry.h
-	src/Core/ShaderCache.cpp
-	src/Core/ShaderCache.h
-	src/Core/State.cpp
-	src/Core/State.h
-	src/Features/ShaderDump.cpp
-	src/Features/ShaderDump.h
-	src/DX11Hooks.cpp
+    src/Buffer.h
+    src/DX11Hooks.cpp
     src/DX11Hooks.h
     src/DX12SwapChain.cpp
     src/DX12SwapChain.h
@@ -109,10 +89,6 @@ add_library(Core OBJECT
     src/UpscalerRenderBackend.cpp
 )
 
-# Core 不是插件目标，不调用 fo4cs_apply_plugin_defaults()，
-# 因为该函数会设置 ${CMAKE_CURRENT_BINARY_DIR}/cmake/${target} include 路径，
-# 该目录下的 Plugin.h 仅由 fo4cs_configure_plugin_metadata() 生成（插件专用）。
-# 下面手动设置与插件相同的编译特性和选项，但不含 Plugin.h 所在路径。
 target_compile_features(Core PRIVATE cxx_std_23)
 
 target_include_directories(Core
@@ -122,7 +98,6 @@ target_include_directories(Core
     ${CMAKE_CURRENT_SOURCE_DIR}/extern/imgui/backends
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     PRIVATE
-    ${FO4CS_GENERATED_INCLUDE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
@@ -153,11 +128,7 @@ if(CMAKE_GENERATOR MATCHES "Visual Studio")
     )
 endif()
 
-# Core 需要 PCH：核心源文件依赖 PCH.h 中定义的类型（fo4cs::、DX::、logger 等）。
-# Plugin.h 是插件专用元数据头，改由插件层显式包含。
 target_precompile_headers(Core PRIVATE include/PCH.h)
-
-# 链接共享依赖（OBJECT 库本身不链接，但 target_link_libraries 可传播 INTERFACE 属性给消费者）
 target_link_libraries(Core PUBLIC ${FO4CS_COMMON_DEPENDENCIES})
 
 target_sources(Core PRIVATE
@@ -184,6 +155,87 @@ set_source_files_properties(src/HDRCalibration.hlsl PROPERTIES HEADER_FILE_ONLY 
 if(CMAKE_GENERATOR MATCHES "Visual Studio")
     set_source_files_properties(${FO4CS_IMGUI_SOURCES} PROPERTIES COMPILE_OPTIONS "/W0")
 endif()
+
+# ------------------------------------------------------------------
+# CoreCS: CommunityShaders Feature 框架 OBJECT 库
+#   - 仅 community-shaders.dll 链接
+#   - Feature 基类 + 生命周期 + ShaderCache + Deferred + Features
+# ------------------------------------------------------------------
+add_library(CoreCS OBJECT
+    src/Core/CommunityShaders.cpp
+    src/Core/CommunityShaders.h
+    src/Core/Deferred.cpp
+    src/Core/Deferred.h
+    src/Core/Feature.cpp
+    src/Core/Feature.h
+    src/Core/FeatureBuffer.cpp
+    src/Core/FeatureBuffer.h
+    src/Core/FeatureCategories.h
+    src/Core/FeatureConstraints.cpp
+    src/Core/FeatureConstraints.h
+    src/Core/FeatureIssues.h
+    src/Core/Globals.cpp
+    src/Core/Globals.h
+    src/Core/Hooks.cpp
+    src/Core/Hooks.h
+    src/Core/IMenuItem.h
+    src/Core/Menu.cpp
+    src/Core/Menu.h
+    src/Core/MenuRegistry.h
+    src/Core/ShaderCache.cpp
+    src/Core/ShaderCache.h
+    src/Core/ShaderDB.cpp
+    src/Core/ShaderDB.h
+    src/Core/ShaderCompiler.cpp
+    src/Core/ShaderCompiler.h
+    src/Core/State.cpp
+    src/Core/State.h
+    src/Features/ShaderDump.cpp
+    src/Features/ShaderDump.h
+    src/Features/LightLimitFix.cpp
+    src/Features/LightLimitFix.h
+)
+
+target_compile_features(CoreCS PRIVATE cxx_std_23)
+
+target_include_directories(CoreCS
+    PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/extern/imgui
+    ${CMAKE_CURRENT_SOURCE_DIR}/extern/imgui/backends
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    PRIVATE
+    ${FO4CS_GENERATED_INCLUDE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+if(WIN32)
+    target_compile_definitions(CoreCS PRIVATE _WINDOWS)
+endif()
+target_compile_definitions(CoreCS PRIVATE
+    _AMD64_
+    "$<$<OR:$<CONFIG:Debug>,$<CONFIG:RelWithDebInfo>>:FO4CS_ENABLE_DEBUG_SETTINGS=1>"
+)
+
+if(CMAKE_GENERATOR MATCHES "Visual Studio")
+    target_compile_definitions(CoreCS PRIVATE _UNICODE "$<$<CONFIG:DEBUG>:DEBUG>")
+
+    target_compile_options(CoreCS PRIVATE
+        /MP /W4 /WX /permissive-
+        /Zc:alignedNew /Zc:auto /Zc:__cplusplus /Zc:externC /Zc:externConstexpr
+        /Zc:forScope /Zc:hiddenFriend /Zc:implicitNoexcept /Zc:lambda
+        /Zc:noexceptTypes /Zc:preprocessor /Zc:referenceBinding /Zc:rvalueCast
+        /Zc:sizedDealloc /Zc:strictStrings /Zc:ternary /Zc:threadSafeInit
+        /Zc:trigraphs /Zc:wchar_t /wd4200 /arch:AVX
+    )
+    target_compile_options(CoreCS PUBLIC
+        "$<$<CONFIG:DEBUG>:/fp:strict>" "$<$<CONFIG:DEBUG>:/ZI>"
+        "$<$<CONFIG:DEBUG>:/Od>" "$<$<CONFIG:DEBUG>:/Gy>"
+        "$<$<CONFIG:RELEASE>:${_CORE_RELEASE_OPTS}>"
+    )
+endif()
+
+target_precompile_headers(CoreCS PRIVATE include/PCH.h)
+target_link_libraries(CoreCS PUBLIC ${FO4CS_COMMON_DEPENDENCIES})
 
 if(BUILD_PRE_NG)
     set(FO4CS_RUNTIME_FLAVOR "PreNG")
@@ -252,4 +304,12 @@ if(AIO)
     )
     set_target_properties(NuclearGFX PROPERTIES OUTPUT_NAME "NuclearGFX")
     target_link_libraries(NuclearGFX PRIVATE Core)
+endif()
+
+if(COMMUNITY_SHADERS)
+    fo4cs_create_plugin(CommunityShaders CommunityShaders "CommunityShaders" ${FO4CS_COMMON_DEPENDENCIES})
+    target_sources(CommunityShaders PRIVATE
+        src/CommunityShadersPlugin.cpp
+    )
+    target_link_libraries(CommunityShaders PRIVATE Core CoreCS)
 endif()

@@ -1,6 +1,9 @@
 #include "Core/Hooks.h"
 
 #include "Core/ShaderCache.h"
+#include "Core/ShaderDB.h"
+#include "Core/ShaderCompiler.h"
+#include "Core/State.h"
 
 namespace CommunityShaders::Hooks
 {
@@ -18,18 +21,54 @@ namespace CommunityShaders::Hooks
 		HRESULT STDMETHODCALLTYPE CreateVertexShaderHook(ID3D11Device* a_device, const void* a_bytecode, SIZE_T a_bytecodeLength, ID3D11ClassLinkage* a_classLinkage, ID3D11VertexShader** a_vertexShader)
 		{
 			ShaderCache::GetSingleton()->ObserveShader(ShaderStage::Vertex, a_bytecode, a_bytecodeLength);
+
+			auto* db = ShaderDB::GetSingleton();
+			if (auto asmHash = ShaderCache::GetSingleton()->GetAsmHashForBytecode(a_bytecode, a_bytecodeLength)) {
+				if (auto* def = db->FindByHash(State::GetSingleton()->GetRuntimeName(), "VS", *asmHash)) {
+					if (!def->shader.empty()) {
+						auto compiled = ShaderCompiler::GetSingleton()->CompileFromFile(def->shader);
+						if (!compiled.empty())
+							return createVertexShader(a_device, compiled.data(), compiled.size(), a_classLinkage, a_vertexShader);
+					}
+				}
+			}
+
 			return createVertexShader(a_device, a_bytecode, a_bytecodeLength, a_classLinkage, a_vertexShader);
 		}
 
 		HRESULT STDMETHODCALLTYPE CreatePixelShaderHook(ID3D11Device* a_device, const void* a_bytecode, SIZE_T a_bytecodeLength, ID3D11ClassLinkage* a_classLinkage, ID3D11PixelShader** a_pixelShader)
 		{
 			ShaderCache::GetSingleton()->ObserveShader(ShaderStage::Pixel, a_bytecode, a_bytecodeLength);
+
+			auto* db = ShaderDB::GetSingleton();
+			if (auto asmHash = ShaderCache::GetSingleton()->GetAsmHashForBytecode(a_bytecode, a_bytecodeLength)) {
+				if (auto* def = db->FindByHash(State::GetSingleton()->GetRuntimeName(), "PS", *asmHash)) {
+					if (!def->shader.empty()) {
+						auto compiled = ShaderCompiler::GetSingleton()->CompileFromFile(def->shader);
+						if (!compiled.empty())
+							return createPixelShader(a_device, compiled.data(), compiled.size(), a_classLinkage, a_pixelShader);
+					}
+				}
+			}
+
 			return createPixelShader(a_device, a_bytecode, a_bytecodeLength, a_classLinkage, a_pixelShader);
 		}
 
 		HRESULT STDMETHODCALLTYPE CreateComputeShaderHook(ID3D11Device* a_device, const void* a_bytecode, SIZE_T a_bytecodeLength, ID3D11ClassLinkage* a_classLinkage, ID3D11ComputeShader** a_computeShader)
 		{
 			ShaderCache::GetSingleton()->ObserveShader(ShaderStage::Compute, a_bytecode, a_bytecodeLength);
+
+			auto* db = ShaderDB::GetSingleton();
+			if (auto asmHash = ShaderCache::GetSingleton()->GetAsmHashForBytecode(a_bytecode, a_bytecodeLength)) {
+				if (auto* def = db->FindByHash(State::GetSingleton()->GetRuntimeName(), "CS", *asmHash)) {
+					if (!def->shader.empty()) {
+						auto compiled = ShaderCompiler::GetSingleton()->CompileFromFile(def->shader);
+						if (!compiled.empty())
+							return createComputeShader(a_device, compiled.data(), compiled.size(), a_classLinkage, a_computeShader);
+					}
+				}
+			}
+
 			return createComputeShader(a_device, a_bytecode, a_bytecodeLength, a_classLinkage, a_computeShader);
 		}
 	}

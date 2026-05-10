@@ -165,10 +165,13 @@ bool Overlay::Initialize(ID3D12Device* a_device, ID3D12CommandQueue* a_commandQu
 	io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_NoMouseCursorChange;
 	io.IniFilename = nullptr;
 
-	dpiScale = static_cast<float>(GetDpiForWindow(hwnd)) / 96.0f;
+	HDC hdc = GetDC(hwnd);
+	float dpi = static_cast<float>(GetDeviceCaps(hdc, LOGPIXELSX));
+	ReleaseDC(hwnd, hdc);
+	dpiScale = dpi / 96.0f;
 	if (dpiScale < 1.0f) dpiScale = 1.0f;
 	io.FontGlobalScale = dpiScale;
-	logger::info("[Overlay] DPI scale: {:.2f} (dpi={})", dpiScale, static_cast<int>(GetDpiForWindow(hwnd)));
+	logger::info("[Overlay] DPI scale: {:.2f} (dpi={})", dpiScale, static_cast<int>(dpi));
 
 	if (!ImGui_ImplWin32_Init(hwnd)) {
 		logger::error("[Overlay] ImGui_ImplWin32_Init failed");

@@ -56,7 +56,7 @@ namespace OverlayShaderDump
 		ImGui::Text("Total Unique: %u", a_stats.uniqueShaders);
 
 		if (ImGui::Button("Open Dump Directory")) {
-			const auto dumpPath = std::filesystem::path{ "Data" } / "F4SE" / "Plugins" / "fo4CS" / "ShaderDump" / a_stats.runtimeName;
+			const auto dumpPath = std::filesystem::path{ "Data" } / "F4SE" / "Plugins" / "CommunityShaders" / "ShaderDump" / a_stats.runtimeName;
 			std::error_code ec;
 			if (std::filesystem::exists(dumpPath, ec)) {
 				ShellExecuteW(nullptr, L"open", dumpPath.c_str(), nullptr, nullptr, SW_SHOW);

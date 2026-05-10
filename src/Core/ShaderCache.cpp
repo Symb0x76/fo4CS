@@ -26,6 +26,8 @@ namespace CommunityShaders
 			return;
 		}
 
+		m_hookVerifyCounter.fetch_add(1);
+
 		const auto hash = HashShaderBytecode(a_bytecode, a_bytecodeLength);
 		{
 			std::scoped_lock lock(observedLock);
@@ -36,13 +38,81 @@ namespace CommunityShaders
 
 		logger::trace("[CommunityShaders] Observed {} shader {} ({} bytes)", GetStageName(a_stage), hash, a_bytecodeLength);
 
-		if (!dumpAllShaders) {
+		if (tracePipeline)
+			TraceShaderCreation(a_stage, a_bytecodeLength, hash);
+
+		if (!dumpAllShaders)
 			return;
-		}
 
 		const auto bytes = std::span{ static_cast<const std::byte*>(a_bytecode), a_bytecodeLength };
 		DumpShader(a_stage, bytes, hash);
 	}
+
+	std::optional<std::uint32_t> ShaderCache::GetAsmHashForBytecode(const void* a_bytecode, SIZE_T a_bytecodeLength)
+	{
+		if (!a_bytecode || a_bytecodeLength == 0)
+			return std::nullopt;
+
+		const auto bytecodeHash = HashShaderBytecode(a_bytecode, a_bytecodeLength);
+		{
+			std::scoped_lock lock(observedLock);
+			if (auto it = bytecodeToAsmHash.find(bytecodeHash); it != bytecodeToAsmHash.end())
+				return it->second;
+		}
+
+		auto bytes = std::span{ static_cast<const std::byte*>(a_bytecode), a_bytecodeLength };
+		winrt::com_ptr<ID3DBlob> disassembly;
+		if (FAILED(D3DDisassemble(bytes.data(), bytes.size_bytes(), 0, nullptr, disassembly.put())))
+			return std::nullopt;
+
+		auto disasmText = std::string_view{
+			static_cast<const char*>(disassembly->GetBufferPointer()),
+			disassembly->GetBufferSize()
+		};
+
+		auto metadata = BuildMetadata(ShaderStage::Pixel, bytes, disasmText);
+		{
+			std::scoped_lock lock(observedLock);
+			bytecodeToAsmHash[bytecodeHash] = metadata.asmHash;
+		}
+		return metadata.asmHash;
+	}
+
+	void ShaderCache::TraceShaderCreation(ShaderStage a_stage, SIZE_T a_len, std::string_view a_hash)
+	{
+		void* stack[64];
+		USHORT frames = RtlCaptureStackBackTrace(0, 64, stack, nullptr);
+		if (frames == 0)
+			return;
+
+		uint64_t stackHash = 14695981039346656037ull;
+		for (USHORT i = 0; i < frames; i++) {
+			stackHash ^= reinterpret_cast<uint64_t>(stack[i]);
+			stackHash *= 1099511628211ull;
+		}
+		auto stackHashStr = std::format("{:016X}", stackHash);
+		{
+			std::scoped_lock lock(observedLock);
+			if (!traceStackHashes.insert(stackHashStr).second)
+				return;
+		}
+
+		auto moduleBase = reinterpret_cast<uintptr_t>(GetModuleHandleA("Fallout4.exe"));
+		auto traceDir = GetDumpDirectory().parent_path() / "PipelineTrace" / State::GetSingleton()->GetRuntimeName();
+		std::error_code ec;
+		std::filesystem::create_directories(traceDir, ec);
+
+		auto traceFile = traceDir / "pipeline_trace.txt";
+		std::ofstream out(traceFile, std::ios::app);
+		out << std::format("[{}] {} (hash={}, {} bytes)\n", GetStageName(a_stage), a_hash, a_hash, a_len);
+		out << std::format("  Frames: {}\n", frames);
+		for (USHORT i = 0; i < frames && i < 20; i++) {
+			auto offset = reinterpret_cast<uintptr_t>(stack[i]) - moduleBase;
+			out << std::format("    [{}] Fallout4.exe+0x{:X}\n", i, offset);
+		}
+		out << "\n";
+	}
+
 
 	std::string ShaderCache::HashShaderBytecode(const void* a_bytecode, SIZE_T a_bytecodeLength) const
 	{
@@ -220,7 +290,7 @@ namespace CommunityShaders
 
 	std::filesystem::path ShaderCache::GetDumpDirectory() const
 	{
-		return std::filesystem::path{ "Data" } / "F4SE" / "Plugins" / "fo4CS" / "ShaderDump" / State::GetSingleton()->GetRuntimeName();
+		return std::filesystem::path{ "Data" } / "F4SE" / "Plugins" / "CommunityShaders" / "ShaderDump" / State::GetSingleton()->GetRuntimeName();
 	}
 
 	std::string_view ShaderCache::GetStageName(ShaderStage a_stage) noexcept

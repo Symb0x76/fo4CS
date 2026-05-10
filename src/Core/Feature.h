@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Core/FeatureCategories.h"
+#include "Core/FeatureConstraints.h"
 #include "Core/FeatureVersions.h"
 #include "Core/IMenuItem.h"
 
@@ -44,6 +45,8 @@ struct Feature : IMenuItem
 	[[nodiscard]] virtual std::vector<std::pair<std::string_view, std::string_view>> GetShaderDefineOptions() { return {}; }
 	[[nodiscard]] virtual std::vector<SettingSearchEntry> GetSettingsSearchEntries() { return {}; }
 
+	static std::vector<Feature*>& GetFeatureList();
+	[[nodiscard]] virtual std::vector<FeatureConstraints::Constraint> GetActiveConstraints() { return {}; }
 	[[nodiscard]] virtual bool HasShaderDefine(std::int32_t) { return false; }
 	[[nodiscard]] virtual bool SupportsVR() { return false; }
 	[[nodiscard]] virtual bool IsCore() const { return false; }
@@ -74,4 +77,14 @@ struct Feature : IMenuItem
 	virtual void RestoreDefaultSettings() {}
 	virtual bool ToggleAtBootSetting();
 	virtual bool ReapplyOverrideSettings();
+
+	template <typename Func>
+	static inline void ForEachLoadedFeature(std::string_view /*a_methodName*/, Func&& a_callback)
+	{
+		for (auto* feature : GetFeatureList()) {
+			if (feature->loaded) {
+				a_callback(feature);
+			}
+		}
+	}
 };

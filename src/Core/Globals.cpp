@@ -1,9 +1,11 @@
 #include "Core/Globals.h"
 
+#include "Features/LightLimitFix.h"
 #include "Features/ShaderDump.h"
 
 namespace globals::features
 {
+	LightLimitFix lightLimitFix;
 	ShaderDump shaderDump;
 }
 
@@ -12,6 +14,7 @@ namespace CommunityShaders
 	std::vector<Feature*>& GetFeatureList()
 	{
 		static std::vector<Feature*> features = {
+			&globals::features::lightLimitFix,
 			&globals::features::shaderDump,
 		};
 		return features;

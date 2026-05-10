@@ -6,11 +6,13 @@
 #include <span>
 #include <vector>
 
+struct LightLimitFix;
 struct ShaderDump;
 
 // Global Feature instances — each Feature is declared and defined here (Skyrim CS pattern)
 namespace globals::features
 {
+	extern ::LightLimitFix lightLimitFix;
 	extern ::ShaderDump shaderDump;
 }
 

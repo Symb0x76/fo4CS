@@ -1,7 +1,7 @@
 Community Shaders runtime data directory.
 
 ShaderDB dump mode writes captured D3D11 shader bytecode under:
-  Data\F4SE\Plugins\fo4CS\ShaderDump\<Runtime>
+  Data\F4SE\Plugins\CommunityShaders\ShaderDump\<Runtime>
 
 Each shader dump includes:
   <ShaderUID>.bin  - original bytecode
