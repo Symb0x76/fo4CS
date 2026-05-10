@@ -8,13 +8,13 @@
 # AI
 /.claude
 
-# IDE
+# local history
 /.history
+
+#IDE
 /.idea
 /.vscode
-/.vs
 *.code-workspace
-
 
 # NVIDIA Streamline / DLSS runtime binaries must not be redistributed.
 /package/Common/F4SE/Plugins/Streamline/*.dll

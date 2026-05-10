@@ -13,7 +13,17 @@
 #include "HDR.h"
 
 class HDRCalibrationOverlay;
-class Overlay;
+
+// --- Overlay callbacks (registered by Overlay.dll at load time) ---
+using OverlayInitCallback = void (*)(ID3D12Device* device,
+                                     ID3D12CommandQueue* queue,
+                                     IDXGISwapChain4* swapChain,
+                                     DXGI_FORMAT format,
+                                     HWND hwnd);
+using OverlayPresentCallback = void (*)(ID3D12GraphicsCommandList4* cmdList,
+                                        ID3D12Resource* backBuffer,
+                                        DXGI_FORMAT format);
+using OverlayPollCallback = void (*)();
 
 class WrappedResource
 {
@@ -80,7 +90,16 @@ public:
 	DXGI_SWAP_CHAIN_DESC1 swapChainDesc;
 	HDRSettings hdrSettings;
 	HDRCalibrationOverlay* calibrationOverlay = nullptr;
-	Overlay* settingsOverlay = nullptr;
+	OverlayInitCallback overlayInitCallback = nullptr;
+	OverlayPresentCallback overlayPresentCallback = nullptr;
+	OverlayPollCallback overlayPollCallback = nullptr;
+
+	void RegisterOverlayInitCallback(OverlayInitCallback a_cb) { overlayInitCallback = a_cb; }
+	void RegisterOverlayPresentCallback(OverlayPresentCallback a_cb) { overlayPresentCallback = a_cb; }
+	void RegisterOverlayPollCallback(OverlayPollCallback a_cb) { overlayPollCallback = a_cb; }
+
+	bool HasOverlayPresentCallback() const { return overlayPresentCallback != nullptr; }
+	bool HasOverlayPollCallback() const { return overlayPollCallback != nullptr; }
 
 	Texture2D* swapChainBufferProxy;
 	WrappedResource* swapChainBufferProxyENB;

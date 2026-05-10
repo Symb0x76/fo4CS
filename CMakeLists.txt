@@ -59,6 +59,7 @@ configure_file(
 )
 
 # ------------------------------------------------------------------
+# ------------------------------------------------------------------
 # Core: D3D12 upscaling interop 共享 OBJECT 库
 #   - Upscaler / FrameGen / Reflex / HDR / NuclearGFX 共享
 #   - 不含 CommunityShaders Feature 框架
@@ -77,11 +78,6 @@ add_library(Core OBJECT
     src/HDRCalibration.h
     src/HDRCalibration.hlsl
     src/HDR.h
-    src/Overlay/Overlay.cpp
-    src/Overlay/Overlay.h
-    src/Overlay/OverlaySettings.h
-    src/Overlay/OverlayShaderDump.h
-    src/Overlay/OverlayWndProc.h
     src/Streamline.cpp
     src/Streamline.h
     src/Upscaler.cpp
@@ -131,29 +127,24 @@ endif()
 target_precompile_headers(Core PRIVATE include/PCH.h)
 target_link_libraries(Core PUBLIC ${FO4CS_COMMON_DEPENDENCIES})
 
+# ImGui core sources in Core — shared by all consumers for panel rendering.
+# Feature DLLs call ImGui functions in their registered panel callbacks.
+# Overlay.dll owns the D3D12 backend + context.
 target_sources(Core PRIVATE
     extern/imgui/imgui.cpp
     extern/imgui/imgui_draw.cpp
     extern/imgui/imgui_tables.cpp
     extern/imgui/imgui_widgets.cpp
-    extern/imgui/backends/imgui_impl_dx12.cpp
-    extern/imgui/backends/imgui_impl_win32.cpp
-    extern/imgui/backends/imgui_impl_dx11.cpp
 )
-
-set(FO4CS_IMGUI_SOURCES
+set(FO4CS_IMGUI_CORE_SOURCES
     extern/imgui/imgui.cpp
     extern/imgui/imgui_draw.cpp
     extern/imgui/imgui_tables.cpp
     extern/imgui/imgui_widgets.cpp
-    extern/imgui/backends/imgui_impl_dx12.cpp
-    extern/imgui/backends/imgui_impl_win32.cpp
-    extern/imgui/backends/imgui_impl_dx11.cpp
 )
-set_source_files_properties(${FO4CS_IMGUI_SOURCES} PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
-set_source_files_properties(src/HDRCalibration.hlsl PROPERTIES HEADER_FILE_ONLY ON)
+set_source_files_properties(${FO4CS_IMGUI_CORE_SOURCES} PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
 if(CMAKE_GENERATOR MATCHES "Visual Studio")
-    set_source_files_properties(${FO4CS_IMGUI_SOURCES} PROPERTIES COMPILE_OPTIONS "/W0")
+    set_source_files_properties(${FO4CS_IMGUI_CORE_SOURCES} PROPERTIES COMPILE_OPTIONS "/W0")
 endif()
 
 # ------------------------------------------------------------------
@@ -263,7 +254,6 @@ if(FRAMEGEN)
         src/FrameGenPlugin.cpp
     )
     target_compile_definitions(FrameGen PRIVATE FRAMEGEN=1)
-    # 通过链接 Core 复用共享对象与 include 目录
     target_link_libraries(FrameGen PRIVATE Core)
 endif()
 
@@ -308,8 +298,44 @@ endif()
 
 if(COMMUNITY_SHADERS)
     fo4cs_create_plugin(CommunityShaders CommunityShaders "CommunityShaders" ${FO4CS_COMMON_DEPENDENCIES})
+
+if(COMMUNITY_SHADERS)
+    fo4cs_create_plugin(CommunityShaders CommunityShaders "CommunityShaders" ${FO4CS_COMMON_DEPENDENCIES})
     target_sources(CommunityShaders PRIVATE
         src/CommunityShadersPlugin.cpp
     )
     target_link_libraries(CommunityShaders PRIVATE Core CoreCS)
+endif()
+
+if(OVERLAY)
+    fo4cs_create_plugin(Overlay Overlay "Overlay" ${FO4CS_COMMON_DEPENDENCIES})
+    target_sources(Overlay PRIVATE
+        src/OverlayPlugin.cpp
+        src/Overlay/Overlay.cpp
+        src/Overlay/Overlay.h
+        src/Overlay/OverlayWndProc.h
+    )
+    target_include_directories(Overlay PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/extern/imgui
+        ${CMAKE_CURRENT_SOURCE_DIR}/extern/imgui/backends
+    )
+    target_link_libraries(Overlay PRIVATE Core)
+
+    # D3D12/Win32 ImGui backends — only Overlay.dll needs these
+    target_sources(Overlay PRIVATE
+        extern/imgui/backends/imgui_impl_dx12.cpp
+        extern/imgui/backends/imgui_impl_win32.cpp
+    )
+    set_source_files_properties(
+        extern/imgui/backends/imgui_impl_dx12.cpp
+        extern/imgui/backends/imgui_impl_win32.cpp
+        PROPERTIES SKIP_PRECOMPILE_HEADERS ON
+    )
+    if(CMAKE_GENERATOR MATCHES "Visual Studio")
+        set_source_files_properties(
+            extern/imgui/backends/imgui_impl_dx12.cpp
+            extern/imgui/backends/imgui_impl_win32.cpp
+            PROPERTIES COMPILE_OPTIONS "/W0"
+        )
+    endif()
 endif()

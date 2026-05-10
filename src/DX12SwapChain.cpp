@@ -14,11 +14,42 @@
 
 #include "FidelityFX.h"
 #include "HDRCalibration.h"
-#include "Overlay/Overlay.h"
 #include "Streamline.h"
 #include "Upscaler.h"
 
 extern bool enbLoaded;
+
+// Overlay callbacks resolved from Overlay.dll at init time.
+// Using file-scope statics avoids the OBJECT-library multiple-singleton problem:
+// whichever DLL creates the DX12SwapChain resolves these once.
+namespace
+{
+	OverlayInitCallback s_overlayInitCb = nullptr;
+	OverlayPresentCallback s_overlayPresentCb = nullptr;
+	OverlayPollCallback s_overlayPollCb = nullptr;
+	bool s_overlayCallbacksResolved = false;
+
+	void ResolveOverlayCallbacks()
+	{
+		if (s_overlayCallbacksResolved) return;
+		s_overlayCallbacksResolved = true;
+
+		HMODULE overlay = GetModuleHandleW(L"Overlay.dll");
+		if (!overlay) return;
+
+		s_overlayInitCb = reinterpret_cast<OverlayInitCallback>(
+			GetProcAddress(overlay, "Overlay_OnSwapChainCreated"));
+		s_overlayPresentCb = reinterpret_cast<OverlayPresentCallback>(
+			GetProcAddress(overlay, "Overlay_OnPresent"));
+		s_overlayPollCb = reinterpret_cast<OverlayPollCallback>(
+			GetProcAddress(overlay, "Overlay_OnPollHotkey"));
+
+		logger::info("[DX12SwapChain] Overlay callbacks resolved: init={} present={} poll={}",
+			s_overlayInitCb != nullptr,
+			s_overlayPresentCb != nullptr,
+			s_overlayPollCb != nullptr);
+	}
+}
 
 namespace
 {
@@ -400,13 +431,9 @@ void DX12SwapChain::CreateSwapChain(IDXGIFactory4* a_dxgiFactory, DXGI_SWAP_CHAI
 
 	swapChainProxy = new DXGISwapChainProxy(swapChain);
 
-	if (!settingsOverlay) {
-		settingsOverlay = Overlay::GetSingleton();
-		if (!settingsOverlay->Initialize(d3d12Device.get(), commandQueue.get(), swapChain, swapChainDesc.Format, a_swapChainDesc.OutputWindow)) {
-			logger::warn("[DX12SwapChain] Overlay initialization failed; menu overlay will be unavailable");
-			settingsOverlay = nullptr;
+		if (s_overlayInitCb) {
+			s_overlayInitCb(d3d12Device.get(), commandQueue.get(), swapChain, swapChainDesc.Format, a_swapChainDesc.OutputWindow);
 		}
-	}
 
 }
 
@@ -707,16 +734,16 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
 
 
 		// Fallback hotkey polling. Works even if WndProc hook is displaced
-		if (settingsOverlay) {
-			settingsOverlay->PollHotkeyState();
+		if (s_overlayPollCb) {
+			s_overlayPollCb();
 		}
 
 		trace("overlay");
-		if (settingsOverlay && settingsOverlay->ShouldRender()) {
+		if (s_overlayPresentCb) {
 			auto* backBuffer = swapChainBuffers[frameIndex].get();
 			CD3DX12_RESOURCE_BARRIER toRT = CD3DX12_RESOURCE_BARRIER::Transition(backBuffer, D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET);
 			commandLists[frameIndex]->ResourceBarrier(1, &toRT);
-			settingsOverlay->Render(commandLists[frameIndex].get(), backBuffer, swapChainDesc.Format);
+			s_overlayPresentCb(commandLists[frameIndex].get(), backBuffer, swapChainDesc.Format);
 			CD3DX12_RESOURCE_BARRIER toPresent = CD3DX12_RESOURCE_BARRIER::Transition(backBuffer, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
 			commandLists[frameIndex]->ResourceBarrier(1, &toPresent);
 		}

@@ -1,23 +1,24 @@
 #pragma once
 
 #include <cstdint>
+#include <mutex>
 #include <string>
+#include <unordered_map>
+#include <vector>
 
 #include <d3d12.h>
 #include <dxgi1_6.h>
 #include <winrt/base.h>
 
+#include <OverlayAPI.h>
+
 struct ImGuiContext;
 
-struct ShaderDumpStats
-{
-	bool dumpingEnabled = false;
-	std::uint32_t uniqueShaders = 0;
-	std::uint32_t dumpedShaders = 0;
-	std::uint32_t vsCount = 0;
-	std::uint32_t psCount = 0;
-	std::uint32_t csCount = 0;
-	std::string runtimeName;
+struct RegisteredPanel {
+	std::string name;
+	int category;
+	OverlayPanelCallbacks callbacks;
+	int id;
 };
 
 class Overlay
@@ -27,8 +28,10 @@ public:
 
 	bool Initialize(ID3D12Device* a_device, ID3D12CommandQueue* a_commandQueue, IDXGISwapChain4* a_swapChain, DXGI_FORMAT a_swapChainFormat, HWND a_hwnd);
 	void Shutdown();
+
 	[[nodiscard]] bool IsInitialized() const noexcept { return initialized; }
 	[[nodiscard]] bool IsVisible() const noexcept { return visible; }
+	void SetVisible(bool a_visible) noexcept { visible = a_visible; }
 	void ToggleVisible() noexcept;
 	[[nodiscard]] bool ShouldRender() const noexcept { return visible || IsShowingIntroMessage(); }
 
@@ -38,26 +41,36 @@ public:
 
 	void Render(ID3D12GraphicsCommandList4* a_commandList, ID3D12Resource* a_backBuffer, DXGI_FORMAT a_swapChainFormat);
 
-	[[nodiscard]] ImGuiContext* GetImGuiContext() const noexcept { return imguiContext; }
-	[[nodiscard]] ID3D12DescriptorHeap* GetSrvHeap() const noexcept { return srvHeap.get(); }
 	[[nodiscard]] HWND GetHwnd() const noexcept { return hwnd; }
 	[[nodiscard]] WNDPROC GetPreviousWndProc() const noexcept { return previousWndProc; }
 
-	void SetShaderDumpStats(const ShaderDumpStats& a_stats) { shaderDumpStats = a_stats; }
+	// Panel registry (thread-safe, may be called before Initialize)
+	int RegisterPanel(const char* a_name, int a_category, const OverlayPanelCallbacks* a_callbacks);
+	void UnregisterPanel(int a_panelId);
 
+	// Stats (thread-safe key-value store for debug panels)
+	void UpdateStats(const char* a_key, const char* a_value);
+	[[nodiscard]] const std::unordered_map<std::string, std::string>& GetStats() const { return stats; }
+
+	// Hotkey
 	[[nodiscard]] int GetHotkey() const noexcept { return hotkey; }
 	void StartCapturingHotkey() noexcept { capturingHotkey = true; }
 	[[nodiscard]] bool IsCapturingHotkey() const noexcept { return capturingHotkey; }
 	void SetHotkey(int a_key) noexcept { hotkey = a_key; capturingHotkey = false; hotkeyWasDown = true; }
 	[[nodiscard]] bool HandleKeyDown(int a_key) noexcept;
 	void PollHotkeyState() noexcept;
+
+	// Intro notification
 	[[nodiscard]] bool IsIntroEnabled() const noexcept { return showIntroEnabled; }
 	void SetIntroEnabled(bool a_enabled) noexcept;
-
-	// Intro notification shown after plugin load until dismissed or gameplay starts
 	[[nodiscard]] bool IsShowingIntroMessage() const noexcept;
 	void DismissIntroMessage() noexcept { showIntroMessage = false; }
 	void RenderIntroMessage();
+
+	// Static callbacks for DX12SwapChain
+	static void OnSwapChainCreated(ID3D12Device* a_device, ID3D12CommandQueue* a_queue, IDXGISwapChain4* a_swapChain, DXGI_FORMAT a_format, HWND a_hwnd);
+	static void OnPresent(ID3D12GraphicsCommandList4* a_cmdList, ID3D12Resource* a_backBuffer, DXGI_FORMAT a_format);
+	static void OnPollHotkey();
 
 	int hotkey = VK_END;
 	bool capturingHotkey = false;
@@ -69,10 +82,12 @@ private:
 	Overlay() = default;
 
 	[[nodiscard]] const char* GetHotkeyName() const noexcept;
+	void RenderBuiltinPanel();
+
+	static bool SaveAllSettings();
 
 	bool initialized = false;
 	bool visible = false;
-	bool sharedContext = false;
 	float dpiScale = 1.0f;
 	float uiScaleOverride = 1.0f;
 
@@ -80,8 +95,6 @@ private:
 	winrt::com_ptr<ID3D12DescriptorHeap> rtvHeap;
 	DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN;
 	ImGuiContext* imguiContext = nullptr;
-
-	ShaderDumpStats shaderDumpStats;
 
 	uint64_t initTimestamp = 0;
 	bool showIntroEnabled = true;
@@ -92,4 +105,13 @@ private:
 	static constexpr uint64_t kDebounceMs = 200;
 
 	static constexpr uint64_t kIntroMessageDurationMs = 30000;
+
+	// Panel registry
+	std::vector<RegisteredPanel> panels;
+	int nextPanelId = 1;
+	std::mutex panelMutex;
+
+	// Stats
+	std::unordered_map<std::string, std::string> stats;
+	std::mutex statsMutex;
 };

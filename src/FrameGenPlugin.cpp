@@ -3,6 +3,10 @@
 #include "DX11Hooks.h"
 #include "Upscaler.h"
 
+#include <OverlayAPI.h>
+#include <SimpleIni.h>
+#include <imgui.h>
+
 #include <array>
 #include <filesystem>
 
@@ -58,6 +62,55 @@ namespace
 	}
 }
 
+// Panel callbacks for Overlay.dll registration
+namespace FGOverlay
+{
+	int RenderPanel(void* userData)
+	{
+		auto& s = static_cast<Upscaling::Settings*>(userData);
+		int changed = 0;
+
+		if (ImGui::CollapsingHeader("Frame Generation")) {
+			changed |= ImGui::Checkbox("Enabled", &s->frameGenerationMode) ? 1 : 0;
+			ImGui::SameLine();
+			changed |= ImGui::Checkbox("Frame Limit", &s->frameLimitMode) ? 1 : 0;
+
+			const char* fgBackends[] = { "Auto", "NVIDIA DLSS-G", "AMD FSR FG" };
+			changed |= ImGui::Combo("Backend", &s->frameGenerationBackend, fgBackends, IM_ARRAYSIZE(fgBackends)) ? 1 : 0;
+		}
+		return changed;
+	}
+
+	void SavePanel(void* userData)
+	{
+		auto& s = *static_cast<Upscaling::Settings*>(userData);
+		CSimpleIniA ini;
+		ini.SetUnicode();
+		ini.SetValue("Settings", "bFrameGenerationMode", s.frameGenerationMode ? "true" : "false");
+		ini.SetValue("Settings", "bFrameLimitMode", s.frameLimitMode ? "true" : "false");
+		ini.SetValue("Settings", "iFrameGenerationBackend", std::to_string(s.frameGenerationBackend).c_str());
+		std::error_code ec;
+		std::filesystem::create_directories("Data\\F4SE\\Plugins\\FrameGen", ec);
+		if (!ec) ini.SaveFile("Data\\F4SE\\Plugins\\FrameGen\\FrameGen.ini");
+	}
+
+	void TryRegister()
+	{
+		HMODULE overlay = GetModuleHandleW(L"Overlay.dll");
+		if (!overlay) return;
+
+		auto registerFn = reinterpret_cast<decltype(&Overlay_RegisterPanel)>(
+			GetProcAddress(overlay, "Overlay_RegisterPanel"));
+		if (!registerFn) return;
+
+		static OverlayPanelCallbacks cbs;
+		cbs.render = RenderPanel;
+		cbs.save = SavePanel;
+		cbs.userData = &Upscaling::GetSingleton()->settings;
+		registerFn("Frame Generation", kOverlayCategory_Rendering, &cbs);
+	}
+}
+
 
 #if defined(FALLOUT_POST_NG)
 extern "C" DLLEXPORT constinit F4SE::PluginVersionData F4SEPlugin_Version = []() consteval {
@@ -95,5 +148,7 @@ extern "C" DLLEXPORT bool F4SEAPI F4SEPlugin_Load(const F4SE::LoadInterface* a_f
 		logger::info("[FrameGen] Upscaler plugin not available, installing FrameGen DX hooks");
 		DX11Hooks::Install();
 	}
+
+		FGOverlay::TryRegister();
 	return true;
 }
