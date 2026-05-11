@@ -1,6 +1,11 @@
 #include "PluginCommon.h"
 
 #include "Core/CommunityShaders.h"
+
+// Overlay stub: CommunityShaders.dll does not link Overlay.dll.
+// HDRCalibration handles nullptr → creates its own ImGui context.
+class Overlay { public: static Overlay* GetSingleton(); };
+Overlay* Overlay::GetSingleton() { return nullptr; }
 #include "Core/Menu.h"
 
 #include <d3d11.h>

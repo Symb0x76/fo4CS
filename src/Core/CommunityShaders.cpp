@@ -5,6 +5,8 @@
 #include "Core/Hooks.h"
 #include "Core/Menu.h"
 #include "Core/ShaderCache.h"
+#include "Core/ShaderCompiler.h"
+#include "Core/ShaderDB.h"
 #include "Core/State.h"
 
 #include <memory>
@@ -26,10 +28,18 @@ namespace CommunityShaders
 		State::GetSingleton()->Refresh();
 		Hooks::Install();
 		Deferred::Hooks::Install();
+
+		// Shader replacement infrastructure
+		ShaderCompiler::GetSingleton()->SetSourceRoot("Data\\Shaders");
+		auto runtimeName = State::GetSingleton()->GetRuntimeName();
+		auto dbPath = std::filesystem::path("Data\\F4SE\\Plugins\\CommunityShaders\\ShaderDB") / std::string(runtimeName);
+		ShaderDB::GetSingleton()->Load(runtimeName, dbPath.string());
+		ShaderDB::GetSingleton()->Load("Common", (std::filesystem::path("Data\\F4SE\\Plugins\\CommunityShaders\\ShaderDB") / "Common").string());
+
 		LoadFeatures();
 
 		loaded = true;
-		logger::info("[CommunityShaders] Foundation loaded for {}", State::GetSingleton()->GetRuntimeName());
+		logger::info("[CommunityShaders] Foundation loaded for {}", runtimeName);
 	}
 
 	void Runtime::PostPostLoad()

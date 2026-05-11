@@ -101,7 +101,8 @@ namespace ReflexOverlay
 
 	void TryRegister()
 	{
-		HMODULE overlay = GetModuleHandleW(L"Overlay.dll");
+		HMODULE overlay = GetModuleHandleW(nullptr);
+		if (!overlay) overlay = GetModuleHandleW(L"Overlay.dll");
 		if (!overlay) return;
 
 		auto registerFn = reinterpret_cast<decltype(&Overlay_RegisterPanel)>(

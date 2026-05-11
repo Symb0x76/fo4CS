@@ -116,7 +116,7 @@ void Deferred::PrepassPasses()
 void Deferred::StartDeferred()
 {
 	deferredPass = true;
-	OverrideBlendStates();
+	// OverrideBlendStates();  // disabled: crashes Godrays
 	PrepassPasses();
 }
 
@@ -150,27 +150,86 @@ void Deferred::DeferredPasses()
 	//   dynamicCubemaps.PostDeferred()
 }
 
-void Deferred::OverrideBlendStates()
-{
-	// Blend state override for MRT: the engine's forward rendering uses
-	// single-RT blend states. Deferred rendering writes to 4+ RTs simultaneously
-	// so we extend each blend state to cover RTs [1..7] with the same mode as RT[0].
-	//
-	// Implementation pattern (matches Skyrim CS):
-	//   1. Locate the engine's BlendStates table in BSGraphics
-	//   2. For each [7][2][13][2] slot, clone the RT[0] blend settings to RT[1..7]
-	//   3. For normal/motion vector RTs (indices 1-2), force alpha blending
-	//   4. Swap the engine's table with the extended version
-	//   5. Trigger DIRTY_ALPHA_BLEND flag
-	//
-	// TODO: Resolve BSGraphics blend state table address per runtime flavor.
-}
+	ID3D11BlendState* Deferred::GetOrCreateMRTBlendState(ID3D11BlendState* a_original)
+	{
+		if (!a_original) return nullptr;
 
-void Deferred::ResetBlendStates()
-{
-	// Restore the original blend states when deferred pass ends.
-	// TODO: Implement when OverrideBlendStates is complete.
-}
+		auto it = blendStateCache.find(a_original);
+		if (it != blendStateCache.end())
+			return it->second ? it->second.get() : a_original;
+
+		D3D11_BLEND_DESC desc;
+		a_original->GetDesc(&desc);
+
+		if (desc.IndependentBlendEnable) {
+			blendStateCache[a_original].attach(nullptr);  // mark as already MRT
+			return a_original;
+		}
+
+		// Extend: copy RT[0] blend settings to RTs [1..7]
+		desc.IndependentBlendEnable = TRUE;
+		for (int i = 1; i < 8; i++) {
+			desc.RenderTarget[i] = desc.RenderTarget[0];
+		}
+
+		auto* device = reinterpret_cast<ID3D11Device*>(fo4cs::GetRendererData()->device);
+		if (!device) return a_original;
+
+		winrt::com_ptr<ID3D11BlendState> extended;
+		if (FAILED(device->CreateBlendState(&desc, extended.put()))) {
+			logger::warn("[Deferred] Failed to create MRT-extended blend state");
+			return a_original;
+		}
+
+		blendStateCache[a_original] = extended;
+		logger::info("[Deferred] Created MRT blend state for 0x{:X} → 0x{:X}",
+		             reinterpret_cast<std::uintptr_t>(a_original),
+		             reinterpret_cast<std::uintptr_t>(extended.get()));
+		return extended.get();
+	}
+
+	// --- OMSetBlendState hook — extends single-RT blend states to MRT during deferred pass ---
+	namespace
+	{
+		using OMSetBlendStateFn = void(STDMETHODCALLTYPE*)(
+			ID3D11DeviceContext*, ID3D11BlendState*, const FLOAT[4], UINT);
+		OMSetBlendStateFn originalOMSetBlendState = nullptr;
+		bool blendHookInstalled = false;
+
+		void STDMETHODCALLTYPE OMSetBlendStateHook(
+			ID3D11DeviceContext* a_context,
+			ID3D11BlendState* a_blendState,
+			const FLOAT a_blendFactor[4],
+			UINT a_sampleMask)
+		{
+			auto* deferred = Deferred::GetSingleton();
+			if (deferred->IsBlendOverridden() && a_blendState) {
+				a_blendState = deferred->GetOrCreateMRTBlendState(a_blendState);
+			}
+			originalOMSetBlendState(a_context, a_blendState, a_blendFactor, a_sampleMask);
+		}
+	}
+
+	void Deferred::OverrideBlendStates()
+	{
+		blendStatesOverridden = true;
+
+		// Lazy-install OMSetBlendState vtable hook (ID3D11DeviceContext vfunc 26)
+		if (!blendHookInstalled) {
+			auto* ctx = reinterpret_cast<ID3D11DeviceContext*>(fo4cs::GetRendererData()->context);
+			if (ctx) {
+				*(uintptr_t*)&originalOMSetBlendState =
+					Detours::X64::DetourClassVTable(*(uintptr_t*)ctx, &OMSetBlendStateHook, 26);
+				blendHookInstalled = true;
+				logger::info("[Deferred] OMSetBlendState hook installed (vfunc 26)");
+			}
+		}
+	}
+
+	void Deferred::ResetBlendStates()
+	{
+		blendStatesOverridden = false;
+	}
 
 void Deferred::ClearShaderCache()
 {

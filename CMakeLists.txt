@@ -76,7 +76,6 @@ add_library(Core OBJECT
     src/HDR.cpp
     src/HDRCalibration.cpp
     src/HDRCalibration.h
-    src/HDRCalibration.hlsl
     src/HDR.h
     src/Streamline.cpp
     src/Streamline.h
@@ -291,19 +290,53 @@ if(AIO)
     fo4cs_create_plugin(NuclearGFX NuclearGFX "NuclearGFX" ${FO4CS_COMMON_DEPENDENCIES})
     target_sources(NuclearGFX PRIVATE
         src/AIOPlugin.cpp
+        src/Overlay/Overlay.cpp
+        extern/imgui/backends/imgui_impl_dx12.cpp
+        extern/imgui/backends/imgui_impl_win32.cpp
     )
+    target_include_directories(NuclearGFX PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/extern/imgui
+        ${CMAKE_CURRENT_SOURCE_DIR}/extern/imgui/backends
+    )
+    set_source_files_properties(
+        extern/imgui/backends/imgui_impl_dx12.cpp
+        extern/imgui/backends/imgui_impl_win32.cpp
+        PROPERTIES SKIP_PRECOMPILE_HEADERS ON
+    )
+    if(CMAKE_GENERATOR MATCHES "Visual Studio")
+        set_source_files_properties(
+            extern/imgui/backends/imgui_impl_dx12.cpp
+            extern/imgui/backends/imgui_impl_win32.cpp
+            PROPERTIES COMPILE_OPTIONS "/W0"
+        )
+    endif()
     set_target_properties(NuclearGFX PROPERTIES OUTPUT_NAME "NuclearGFX")
     target_link_libraries(NuclearGFX PRIVATE Core)
 endif()
 
 if(COMMUNITY_SHADERS)
     fo4cs_create_plugin(CommunityShaders CommunityShaders "CommunityShaders" ${FO4CS_COMMON_DEPENDENCIES})
-
-if(COMMUNITY_SHADERS)
-    fo4cs_create_plugin(CommunityShaders CommunityShaders "CommunityShaders" ${FO4CS_COMMON_DEPENDENCIES})
     target_sources(CommunityShaders PRIVATE
         src/CommunityShadersPlugin.cpp
+        extern/imgui/backends/imgui_impl_dx11.cpp
+        extern/imgui/backends/imgui_impl_win32.cpp
+        extern/imgui/backends/imgui_impl_dx12.cpp
     )
+    set_source_files_properties(
+        extern/imgui/backends/imgui_impl_dx11.cpp
+        extern/imgui/backends/imgui_impl_dx12.cpp
+        extern/imgui/backends/imgui_impl_win32.cpp
+        PROPERTIES SKIP_PRECOMPILE_HEADERS ON
+    )
+    if(CMAKE_GENERATOR MATCHES "Visual Studio")
+        set_source_files_properties(
+        extern/imgui/backends/imgui_impl_dx12.cpp
+            extern/imgui/backends/imgui_impl_dx11.cpp
+            extern/imgui/backends/imgui_impl_win32.cpp
+            PROPERTIES COMPILE_OPTIONS "/W0"
+        )
+    endif()
+    target_compile_definitions(CommunityShaders PRIVATE COMMUNITY_SHADERS)
     target_link_libraries(CommunityShaders PRIVATE Core CoreCS)
 endif()
 

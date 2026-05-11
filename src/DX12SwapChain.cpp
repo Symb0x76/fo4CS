@@ -28,26 +28,59 @@ namespace
 	OverlayPresentCallback s_overlayPresentCb = nullptr;
 	OverlayPollCallback s_overlayPollCb = nullptr;
 	bool s_overlayCallbacksResolved = false;
+	bool s_overlayCallbacksMissingLogged = false;
 
-	void ResolveOverlayCallbacks()
+	bool ResolveOverlayCallbacks()
 	{
-		if (s_overlayCallbacksResolved) return;
-		s_overlayCallbacksResolved = true;
+		if (s_overlayCallbacksResolved) {
+			return true;
+		}
 
-		HMODULE overlay = GetModuleHandleW(L"Overlay.dll");
-		if (!overlay) return;
+		auto tryResolve = [](HMODULE a_module, const char* a_source) -> bool {
+			if (!a_module) {
+				return false;
+			}
 
-		s_overlayInitCb = reinterpret_cast<OverlayInitCallback>(
-			GetProcAddress(overlay, "Overlay_OnSwapChainCreated"));
-		s_overlayPresentCb = reinterpret_cast<OverlayPresentCallback>(
-			GetProcAddress(overlay, "Overlay_OnPresent"));
-		s_overlayPollCb = reinterpret_cast<OverlayPollCallback>(
-			GetProcAddress(overlay, "Overlay_OnPollHotkey"));
+			auto initCb = reinterpret_cast<OverlayInitCallback>(
+				GetProcAddress(a_module, "Overlay_OnSwapChainCreated"));
+			auto presentCb = reinterpret_cast<OverlayPresentCallback>(
+				GetProcAddress(a_module, "Overlay_OnPresent"));
+			auto pollCb = reinterpret_cast<OverlayPollCallback>(
+				GetProcAddress(a_module, "Overlay_OnPollHotkey"));
+			if (!initCb || !presentCb || !pollCb) {
+				return false;
+			}
 
-		logger::info("[DX12SwapChain] Overlay callbacks resolved: init={} present={} poll={}",
-			s_overlayInitCb != nullptr,
-			s_overlayPresentCb != nullptr,
-			s_overlayPollCb != nullptr);
+			s_overlayInitCb = initCb;
+			s_overlayPresentCb = presentCb;
+			s_overlayPollCb = pollCb;
+			s_overlayCallbacksResolved = true;
+			logger::info("[DX12SwapChain] Overlay callbacks resolved from {}", a_source);
+			return true;
+		};
+
+		HMODULE currentModule = nullptr;
+		if (GetModuleHandleExW(
+				GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+				reinterpret_cast<LPCWSTR>(&s_overlayCallbacksResolved),
+				&currentModule) &&
+			tryResolve(currentModule, "current module")) {
+			return true;
+		}
+
+		if (tryResolve(GetModuleHandleW(L"NuclearGFX.dll"), "NuclearGFX.dll")) {
+			return true;
+		}
+
+		if (tryResolve(GetModuleHandleW(L"Overlay.dll"), "Overlay.dll")) {
+			return true;
+		}
+
+		if (!s_overlayCallbacksMissingLogged) {
+			s_overlayCallbacksMissingLogged = true;
+			logger::info("[DX12SwapChain] Overlay callbacks not found; retrying until Overlay is loaded");
+		}
+		return false;
 	}
 }
 
@@ -431,9 +464,10 @@ void DX12SwapChain::CreateSwapChain(IDXGIFactory4* a_dxgiFactory, DXGI_SWAP_CHAI
 
 	swapChainProxy = new DXGISwapChainProxy(swapChain);
 
-		if (s_overlayInitCb) {
-			s_overlayInitCb(d3d12Device.get(), commandQueue.get(), swapChain, swapChainDesc.Format, a_swapChainDesc.OutputWindow);
-		}
+	ResolveOverlayCallbacks();
+	if (auto initCb = s_overlayInitCb ? s_overlayInitCb : overlayInitCallback) {
+		initCb(d3d12Device.get(), commandQueue.get(), swapChain, swapChainDesc.Format, a_swapChainDesc.OutputWindow);
+	}
 
 }
 
@@ -734,16 +768,17 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
 
 
 		// Fallback hotkey polling. Works even if WndProc hook is displaced
-		if (s_overlayPollCb) {
-			s_overlayPollCb();
+		ResolveOverlayCallbacks();
+		if (auto pollCb = s_overlayPollCb ? s_overlayPollCb : overlayPollCallback) {
+			pollCb();
 		}
 
 		trace("overlay");
-		if (s_overlayPresentCb) {
+		if (auto presentCb = s_overlayPresentCb ? s_overlayPresentCb : overlayPresentCallback) {
 			auto* backBuffer = swapChainBuffers[frameIndex].get();
 			CD3DX12_RESOURCE_BARRIER toRT = CD3DX12_RESOURCE_BARRIER::Transition(backBuffer, D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET);
 			commandLists[frameIndex]->ResourceBarrier(1, &toRT);
-			s_overlayPresentCb(commandLists[frameIndex].get(), backBuffer, swapChainDesc.Format);
+			presentCb(commandLists[frameIndex].get(), backBuffer, swapChainDesc.Format);
 			CD3DX12_RESOURCE_BARRIER toPresent = CD3DX12_RESOURCE_BARRIER::Transition(backBuffer, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
 			commandLists[frameIndex]->ResourceBarrier(1, &toPresent);
 		}

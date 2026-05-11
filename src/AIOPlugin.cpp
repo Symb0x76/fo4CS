@@ -1,7 +1,10 @@
 #include "PluginCommon.h"
 
 #include "DX11Hooks.h"
+#include "DX12SwapChain.h"
+#include "HDR.h"
 #include "Upscaler.h"
+#include "Overlay/Overlay.h"
 
 #include <OverlayAPI.h>
 #include <SimpleIni.h>
@@ -20,6 +23,39 @@ namespace
 // Panel callbacks — all four feature panels registered when running in AIO mode
 namespace AIOOverlay
 {
+	HDRSettings MakeHDRSettings(const Upscaling::Settings& settings)
+	{
+		HDRSettings hdr;
+		hdr.hdrMode = settings.hdrMode;
+		hdr.peakLuminance = settings.peakLuminance;
+		hdr.paperWhiteLuminance = settings.paperWhiteLuminance;
+		hdr.scRGBReferenceLuminance = settings.scRGBReferenceLuminance;
+		hdr.calibrationActive = settings.hdrCalibrationActive;
+		return hdr;
+	}
+
+	void SaveHDRPanelSettings(const Upscaling::Settings& settings)
+	{
+		auto hdr = MakeHDRSettings(settings);
+		SaveHDRSettingsToINI(hdr);
+		DX12SwapChain::GetSingleton()->hdrSettings = hdr;
+	}
+
+	void StartHDRCalibration(Upscaling::Settings& settings)
+	{
+		if (settings.hdrMode == 0) {
+			settings.hdrMode = 2;
+		}
+		if (settings.peakLuminance < 400.0f) {
+			settings.peakLuminance = 1000.0f;
+		}
+		if (settings.paperWhiteLuminance < 20.0f) {
+			settings.paperWhiteLuminance = 200.0f;
+		}
+		settings.hdrCalibrationActive = true;
+		SaveHDRPanelSettings(settings);
+		logger::info("[HDR] Calibration requested from AIO overlay");
+	}
 	template <int PanelId>
 	int RenderPanel(void* userData)
 	{
@@ -50,6 +86,13 @@ namespace AIOOverlay
 				if (s.hdrMode > 0) {
 					changed |= ImGui::SliderFloat("Peak Luminance (nits)", &s.peakLuminance, 80.0f, 10000.0f, "%.0f") ? 1 : 0;
 					changed |= ImGui::SliderFloat("Paper White (nits)", &s.paperWhiteLuminance, 20.0f, 1000.0f, "%.0f") ? 1 : 0;
+					if (s.hdrMode == 1) {
+						changed |= ImGui::SliderFloat("scRGB Reference (nits)", &s.scRGBReferenceLuminance, 10.0f, 500.0f, "%.0f") ? 1 : 0;
+					}
+				}
+				if (ImGui::Button("Start Calibration")) {
+					StartHDRCalibration(s);
+					changed = 1;
 				}
 			}
 		} else if constexpr (PanelId == 3) { // Upscaler
@@ -80,11 +123,7 @@ namespace AIOOverlay
 			ini.SetValue("Settings", "bReflexSleepMode", s.reflexSleepMode ? "true" : "false");
 			ini.SaveFile("Data\\F4SE\\Plugins\\Reflex\\Reflex.ini");
 		} else if constexpr (PanelId == 2) {
-			HDRSettings hdr;
-			hdr.hdrMode = s.hdrMode;
-			hdr.peakLuminance = s.peakLuminance;
-			hdr.paperWhiteLuminance = s.paperWhiteLuminance;
-			SaveHDRSettingsToINI(hdr);
+			SaveHDRPanelSettings(s);
 		} else if constexpr (PanelId == 3) {
 			ini.SetValue("Settings", "iUpscaleMethodPreference", std::to_string(s.upscaleMethodPreference).c_str());
 			ini.SetValue("Settings", "iQualityMode", std::to_string(s.qualityMode).c_str());
@@ -96,18 +135,12 @@ namespace AIOOverlay
 	template <int PanelId>
 	void TryRegister(const char* name, int category)
 	{
-		HMODULE overlay = GetModuleHandleW(L"Overlay.dll");
-		if (!overlay) return;
-
-		auto registerFn = reinterpret_cast<decltype(&Overlay_RegisterPanel)>(
-			GetProcAddress(overlay, "Overlay_RegisterPanel"));
-		if (!registerFn) return;
-
 		static OverlayPanelCallbacks cbs;
 		cbs.render = RenderPanel<PanelId>;
 		cbs.save = SavePanel<PanelId>;
 		cbs.userData = &Upscaling::GetSingleton()->settings;
-		registerFn(name, category, &cbs);
+
+		Overlay::GetSingleton()->RegisterPanel(name, category, &cbs);
 	}
 
 	void RegisterAll()
@@ -116,6 +149,15 @@ namespace AIOOverlay
 		TryRegister<1>("Reflex", kOverlayCategory_Latency);
 		TryRegister<2>("HDR", kOverlayCategory_Rendering);
 		TryRegister<3>("Upscaler", kOverlayCategory_Rendering);
+	}
+
+	void RegisterHostCallbacks()
+	{
+		auto* dx12 = DX12SwapChain::GetSingleton();
+		dx12->RegisterOverlayInitCallback(Overlay::OnSwapChainCreated);
+		dx12->RegisterOverlayPresentCallback(Overlay::OnPresent);
+		dx12->RegisterOverlayPollCallback(Overlay::OnPollHotkey);
+		logger::info("[AIO] Overlay callbacks registered directly");
 	}
 }
 
@@ -154,6 +196,7 @@ extern "C" DLLEXPORT bool F4SEAPI F4SEPlugin_Load(const F4SE::LoadInterface* a_f
 		upscaling->settings.reflexMode,
 		upscaling->settings.hdrMode);
 
+	AIOOverlay::RegisterHostCallbacks();
 	DX11Hooks::Install();
 
 	auto messaging = F4SE::GetMessagingInterface();

@@ -11,6 +11,12 @@
 //
 // All functions are thread-safe and may be called from any F4SE load phase.
 
+#if defined(_WIN32) && defined(FO4CS_OVERLAY_API_EXPORTS)
+#	define FO4CS_OVERLAY_API __declspec(dllexport)
+#else
+#	define FO4CS_OVERLAY_API
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -46,26 +52,26 @@ struct OverlayPanelCallbacks {
 
 // --- Registration ---
 // Returns panel ID >= 0 on success, -1 on failure (duplicate name).
-int Overlay_RegisterPanel(const char* name,
+FO4CS_OVERLAY_API int Overlay_RegisterPanel(const char* name,
                           int category,
                           const struct OverlayPanelCallbacks* callbacks);
 
-void Overlay_UnregisterPanel(int panelId);
+FO4CS_OVERLAY_API void Overlay_UnregisterPanel(int panelId);
 
 // --- Hotkey ---
-int  Overlay_GetHotkey(void);
-void Overlay_SetHotkey(int vkCode);
+FO4CS_OVERLAY_API int  Overlay_GetHotkey(void);
+FO4CS_OVERLAY_API void Overlay_SetHotkey(int vkCode);
 
 // --- UI scale ---
-float Overlay_GetUIScale(void);
-void Overlay_SetUIScale(float scale);
+FO4CS_OVERLAY_API float Overlay_GetUIScale(void);
+FO4CS_OVERLAY_API void Overlay_SetUIScale(float scale);
 
 // --- Visibility ---
-int  Overlay_GetVisible(void);
-void Overlay_SetVisible(int visible);
+FO4CS_OVERLAY_API int  Overlay_GetVisible(void);
+FO4CS_OVERLAY_API void Overlay_SetVisible(int visible);
 
 // --- Stats update (key=value string pairs for debug panels) ---
-void Overlay_UpdateStats(const char* statKey, const char* statValue);
+FO4CS_OVERLAY_API void Overlay_UpdateStats(const char* statKey, const char* statValue);
 
 #ifdef __cplusplus
 }

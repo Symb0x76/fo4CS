@@ -2,6 +2,10 @@
 
 #include <cstdint>
 #include <memory>
+#include <unordered_map>
+
+#include <d3d11.h>
+#include <winrt/base.h>
 
 namespace RE
 {
@@ -29,6 +33,11 @@ public:
 
 	void OverrideBlendStates();
 	void ResetBlendStates();
+	[[nodiscard]] bool IsBlendOverridden() const noexcept { return blendStatesOverridden; }
+
+	// Blend state extension for MRT: intercepts OMSetBlendState during deferred pass,
+	// cloning single-RT blend states to cover RTs [0..7] with identical settings.
+	[[nodiscard]] ID3D11BlendState* GetOrCreateMRTBlendState(ID3D11BlendState* a_original);
 
 	void ClearShaderCache();
 
@@ -79,4 +88,6 @@ private:
 	Deferred() = default;
 
 	bool deferredPass = false;
+	bool blendStatesOverridden = false;
+	std::unordered_map<ID3D11BlendState*, winrt::com_ptr<ID3D11BlendState>> blendStateCache;
 };

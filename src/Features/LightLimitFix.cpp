@@ -312,10 +312,12 @@ void LightLimitFix::PostPostLoad()
 
 void LightLimitFix::Prepass()
 {
-	auto* rendererData = fo4cs::GetRendererData();
-	auto* context = reinterpret_cast<ID3D11DeviceContext*>(rendererData->context);
-
 	if (!resourcesCreated) return;
+
+	auto* rendererData = fo4cs::GetRendererData();
+	if (!rendererData) return;
+	auto* context = reinterpret_cast<ID3D11DeviceContext*>(rendererData->context);
+	if (!context) return;
 
 	// --- Read camera matrices from game state ---
 	const auto& gState = RE::BSGraphics::State::GetSingleton();
@@ -435,18 +437,26 @@ void LightLimitFix::Prepass()
 	}
 
 	// --- Bind output SRVs for pixel shader consumption ---
+	// Disabled: slots 35-37 may conflict with Godrays / other effects.
+	// Enable after verifying slot availability and deploying PS replacements.
+#if 0
 	ID3D11ShaderResourceView* views[3]{
 		lightsSRV,
 		lightIndexListSRV,
 		lightGridSRV
 	};
 	context->PSSetShaderResources(35, ARRAYSIZE(views), views);
+#endif
 }
 
 void LightLimitFix::Reset()
 {
+	if (!resourcesCreated) return;
+
 	auto* rendererData = fo4cs::GetRendererData();
+	if (!rendererData) return;
 	auto* context = reinterpret_cast<ID3D11DeviceContext*>(rendererData->context);
+	if (!context) return;
 
 	ID3D11ShaderResourceView* nullViews[3]{};
 	context->PSSetShaderResources(35, 3, nullViews);

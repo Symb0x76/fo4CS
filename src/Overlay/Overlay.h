@@ -30,6 +30,7 @@ public:
 	void Shutdown();
 
 	[[nodiscard]] bool IsInitialized() const noexcept { return initialized; }
+	[[nodiscard]] ImGuiContext* GetImGuiContext() const noexcept { return imguiContext; }
 	[[nodiscard]] bool IsVisible() const noexcept { return visible; }
 	void SetVisible(bool a_visible) noexcept { visible = a_visible; }
 	void ToggleVisible() noexcept;

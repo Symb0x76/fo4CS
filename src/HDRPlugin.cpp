@@ -1,7 +1,9 @@
 #include "PluginCommon.h"
 
 #include "DX11Hooks.h"
+#include "DX12SwapChain.h"
 #include "HDR.h"
+#include "Upscaler.h"
 
 #include <OverlayAPI.h>
 #include <SimpleIni.h>
@@ -9,6 +11,11 @@
 
 #include <array>
 #include <filesystem>
+
+// Overlay stub: standalone HDR.dll does not link Overlay.cpp.
+// HDRCalibration falls back to its own ImGui context when this returns nullptr.
+class Overlay { public: static Overlay* GetSingleton(); };
+Overlay* Overlay::GetSingleton() { return nullptr; }
 
 namespace
 {
@@ -77,6 +84,34 @@ namespace
 // Panel callbacks for Overlay.dll registration
 namespace HDROverlay
 {
+	void PushHDRSettingsToRuntime(const HDRSettings& settings)
+	{
+		DX12SwapChain::GetSingleton()->hdrSettings = settings;
+
+		auto* upscaling = Upscaling::GetSingleton();
+		upscaling->settings.hdrMode = settings.hdrMode;
+		upscaling->settings.peakLuminance = settings.peakLuminance;
+		upscaling->settings.paperWhiteLuminance = settings.paperWhiteLuminance;
+		upscaling->settings.scRGBReferenceLuminance = settings.scRGBReferenceLuminance;
+		upscaling->settings.hdrCalibrationActive = settings.calibrationActive;
+	}
+
+	void StartHDRCalibration(HDRSettings& settings)
+	{
+		if (settings.hdrMode == 0) {
+			settings.hdrMode = 2;
+		}
+		if (settings.peakLuminance < 400.0f) {
+			settings.peakLuminance = 1000.0f;
+		}
+		if (settings.paperWhiteLuminance < 20.0f) {
+			settings.paperWhiteLuminance = 200.0f;
+		}
+		settings.calibrationActive = true;
+		SaveHDRSettingsToINI(settings);
+		PushHDRSettingsToRuntime(settings);
+		logger::info("[HDR] Calibration requested from HDR overlay");
+	}
 	int RenderPanel(void* userData)
 	{
 		auto* hdr = static_cast<HDRSettings*>(userData);
@@ -104,6 +139,10 @@ namespace HDROverlay
 					changed |= ImGui::SliderFloat("scRGB Reference (nits)", &hdr->scRGBReferenceLuminance, 10.0f, 500.0f, "%.0f") ? 1 : 0;
 				}
 			}
+			if (ImGui::Button("Start Calibration")) {
+				StartHDRCalibration(*hdr);
+				changed = 1;
+			}
 		}
 		return changed;
 	}
@@ -112,11 +151,13 @@ namespace HDROverlay
 	{
 		auto* hdr = static_cast<HDRSettings*>(userData);
 		SaveHDRSettingsToINI(*hdr);
+		PushHDRSettingsToRuntime(*hdr);
 	}
 
 	void TryRegister()
 	{
-		HMODULE overlay = GetModuleHandleW(L"Overlay.dll");
+		HMODULE overlay = GetModuleHandleW(nullptr);
+		if (!overlay) overlay = GetModuleHandleW(L"Overlay.dll");
 		if (!overlay) return;
 
 		auto registerFn = reinterpret_cast<decltype(&Overlay_RegisterPanel)>(

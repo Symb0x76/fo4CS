@@ -1,0 +1,15 @@
+[pixelHunt]
+type=PS
+; asmHash=0x00000000  ← replace with actual hash from pipeline trace
+; shader=;Data\Shaders\LightLimitFix\LightingPS.hlsl  ← uncomment when hash is known
+active=false
+priority=0
+
+; Instructions:
+; 1. Run game with bTracePipeline=true
+; 2. Find pixel shaders using CB slot 2 (light buffer) in ShaderDump output
+; 3. Copy the {uid}.txt here, rename directory to match uid
+; 4. Set asmHash, uncomment shader=, set active=true
+;
+; For LightLimitFix: only PS using the per-draw light CB (slot 2) need replacement.
+; The replacement reads from t35 (lights), t36 (indexList), t37 (lightGrid) instead.

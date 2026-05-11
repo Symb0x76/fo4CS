@@ -223,7 +223,9 @@ bool HDRCalibrationOverlay::Render(
 
 	ID3D12DescriptorHeap* heaps[] = { srvHeap.get() };
 	commandList->SetDescriptorHeaps(1, heaps);
+	#if !defined(COMMUNITY_SHADERS)
 	ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), commandList);
+#endif
 
 	auto barrierToPresent = CD3DX12_RESOURCE_BARRIER::Transition(backBuffer, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
 	commandList->ResourceBarrier(1, &barrierToPresent);
@@ -262,6 +264,8 @@ bool HDRCalibrationOverlay::Initialize(ID3D12Device* device, ID3D12CommandQueue*
 	rtvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
 	DX::ThrowIfFailed(device->CreateDescriptorHeap(&rtvHeapDesc, IID_PPV_ARGS(rtvHeap.put())));
 
+		sharedContext = false;
+#if !defined(COMMUNITY_SHADERS)
 		auto* overlay = Overlay::GetSingleton();
 		sharedContext = overlay && overlay->IsInitialized();
 
@@ -271,7 +275,9 @@ bool HDRCalibrationOverlay::Initialize(ID3D12Device* device, ID3D12CommandQueue*
 			dx12Initialized = true;
 			imguiContextCreated = false;
 			logger::debug("[HDR] Calibration overlay using shared ImGui context from Overlay");
-		} else {
+		}
+#endif
+		if (!sharedContext) {
 			ImGui::CreateContext();
 			imguiContextCreated = true;
 			ImGui::StyleColorsDark();
@@ -299,7 +305,9 @@ bool HDRCalibrationOverlay::Initialize(ID3D12Device* device, ID3D12CommandQueue*
 			initInfo.SrvDescriptorHeap = srvHeap.get();
 			initInfo.SrvDescriptorAllocFn = AllocateImGuiDescriptor;
 			initInfo.SrvDescriptorFreeFn = FreeImGuiDescriptor;
+			#if !defined(COMMUNITY_SHADERS)
 			dx12Initialized = ImGui_ImplDX12_Init(&initInfo);
+#endif
 			if (!dx12Initialized) {
 				logger::warn("[HDR] ImGui D3D12 backend initialization failed");
 				return false;
@@ -328,7 +336,9 @@ void HDRCalibrationOverlay::Shutdown()
 		}
 
 		if (dx12Initialized) {
+			#if !defined(COMMUNITY_SHADERS)
 			ImGui_ImplDX12_Shutdown();
+#endif
 		}
 		if (win32Initialized) {
 			ImGui_ImplWin32_Shutdown();
@@ -441,7 +451,9 @@ void HDRCalibrationOverlay::RenderPattern(ID3D12GraphicsCommandList4* commandLis
 
 void HDRCalibrationOverlay::RenderUI(HDRSettings& settings)
 {
+	#if !defined(COMMUNITY_SHADERS)
 	ImGui_ImplDX12_NewFrame();
+#endif
 	ImGui_ImplWin32_NewFrame();
 	ImGui::GetIO().MouseDrawCursor = true;
 	ImGui::NewFrame();
