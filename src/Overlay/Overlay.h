@@ -30,6 +30,7 @@ public:
 	void Shutdown();
 
 	[[nodiscard]] bool IsInitialized() const noexcept { return initialized; }
+	[[nodiscard]] ImGuiContext* GetImGuiContext() const noexcept { return imguiContext; }
 	[[nodiscard]] bool IsVisible() const noexcept { return visible; }
 	void SetVisible(bool a_visible) noexcept { visible = a_visible; }
 	void ToggleVisible() noexcept;
@@ -43,6 +44,10 @@ public:
 
 	[[nodiscard]] HWND GetHwnd() const noexcept { return hwnd; }
 	[[nodiscard]] WNDPROC GetPreviousWndProc() const noexcept { return previousWndProc; }
+
+	// Merged overlay self-settings (rendered inline in the unified panel)
+	void DrawOverlaySettings();
+	void SaveOverlaySelfSettings();
 
 	// Panel registry (thread-safe, may be called before Initialize)
 	int RegisterPanel(const char* a_name, int a_category, const OverlayPanelCallbacks* a_callbacks);
@@ -82,9 +87,6 @@ private:
 	Overlay() = default;
 
 	[[nodiscard]] const char* GetHotkeyName() const noexcept;
-	void RenderBuiltinPanel();
-
-	static bool SaveAllSettings();
 
 	bool initialized = false;
 	bool visible = false;

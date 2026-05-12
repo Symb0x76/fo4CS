@@ -145,9 +145,14 @@ public:
 
 	void WaitForCommandAllocator(UINT a_index);
 
+	void ApplyHDRRuntimeSettings(const HDRSettings& settings);
 	void EnsureColorSpaceResources();
 	void DestroyColorSpaceResources();
 
 	ID3D12GraphicsCommandList4* BeginInteropCommandList();
 	void ExecuteInteropCommandListAndWait();
+
+private:
+	void ApplyHDRSwapChainState();
+	void RecreateBackBufferResources(DXGI_FORMAT a_format);
 };

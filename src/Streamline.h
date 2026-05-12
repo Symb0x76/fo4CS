@@ -95,11 +95,6 @@ public:
 	void PostDevice(ID3D12Device* device, IDXGIAdapter* adapter);
 
 	// Call before creating a D3D12 swap chain.
-	bool UpgradeDXGIFactoryForDLSSG(IDXGIFactory4** factory);
-
-	// Call immediately after native D3D12 swap chain creation and before any swap chain methods.
-	bool UpgradeSwapChainForDLSSG(IDXGISwapChain4** swapChain);
-
 	// Call each frame before Present — tags resources and configures DLSS-G
 	bool TagResourcesAndConfigure(
 		ID3D12Resource* hudless,

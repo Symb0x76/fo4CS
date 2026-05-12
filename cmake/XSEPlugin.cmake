@@ -3,15 +3,19 @@ set(FRAMEGEN ON CACHE BOOL "Build the FrameGen plugin target")
 set(REFLEX ON CACHE BOOL "Build the Reflex plugin target")
 set(UPSCALER ON CACHE BOOL "Build the Upscaler plugin target")
 set(HDR ON CACHE BOOL "Build the HDR plugin target")
+set(OVERLAY ON CACHE BOOL "Build the Overlay plugin target")
+set(COMMUNITY_SHADERS ON CACHE BOOL "Build the Community Shaders plugin target")
 
 set(FO4CS_BUILD_AIO ${AIO} CACHE BOOL "Build the unified NuclearGFX.dll" FORCE)
 set(FO4CS_BUILD_FRAMEGEN ${FRAMEGEN} CACHE BOOL "Build the FrameGen plugin target" FORCE)
 set(FO4CS_BUILD_REFLEX ${REFLEX} CACHE BOOL "Build the Reflex plugin target" FORCE)
 set(FO4CS_BUILD_UPSCALER ${UPSCALER} CACHE BOOL "Build the Upscaler plugin target" FORCE)
 set(FO4CS_BUILD_HDR ${HDR} CACHE BOOL "Build the HDR plugin target" FORCE)
+set(FO4CS_BUILD_OVERLAY ${OVERLAY} CACHE BOOL "Build the Overlay plugin target" FORCE)
+set(FO4CS_BUILD_COMMUNITY_SHADERS ${COMMUNITY_SHADERS} CACHE BOOL "Build the Community Shaders plugin target" FORCE)
 
 function(fo4cs_validate_plugin_selection)
-    if(NOT AIO AND NOT FRAMEGEN AND NOT REFLEX AND NOT UPSCALER AND NOT HDR)
+    if(NOT AIO AND NOT FRAMEGEN AND NOT REFLEX AND NOT UPSCALER AND NOT HDR AND NOT COMMUNITY_SHADERS AND NOT OVERLAY)
         message(FATAL_ERROR "At least one plugin target must be enabled. Set AIO, FRAMEGEN, REFLEX, UPSCALER, and/or HDR to ON.")
     endif()
 endfunction()
@@ -92,6 +96,7 @@ function(fo4cs_apply_plugin_defaults target)
         PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         PRIVATE
+        ${FO4CS_GENERATED_INCLUDE_DIR}
         ${CMAKE_CURRENT_BINARY_DIR}/cmake/${target}
         ${CMAKE_CURRENT_SOURCE_DIR}/src
     )

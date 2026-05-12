@@ -76,15 +76,28 @@ namespace
 // Panel callbacks for Overlay.dll registration
 namespace ReflexOverlay
 {
+	void DrawDLSSRuntimeNotice()
+	{
+		auto* upscaling = Upscaling::GetSingleton();
+		upscaling->ApplyRuntimeFallbacks();
+		if (const char* reason = upscaling->GetDLSSUnavailableReason()) {
+			ImGui::TextWrapped("%s", reason);
+		}
+	}
+
 	int RenderPanel(void* userData)
 	{
 		auto& s = *static_cast<Upscaling::Settings*>(userData);
 		int changed = 0;
 
 		if (ImGui::CollapsingHeader("Reflex")) {
+			DrawDLSSRuntimeNotice();
 			const char* reflexModes[] = { "Off", "Low Latency", "Low Latency + Boost" };
 			changed |= ImGui::Combo("Mode", &s.reflexMode, reflexModes, IM_ARRAYSIZE(reflexModes)) ? 1 : 0;
 			changed |= ImGui::Checkbox("Reflex Sleep Mode", &s.reflexSleepMode) ? 1 : 0;
+		}
+		if (changed) {
+			Upscaling::GetSingleton()->ApplyRuntimeFallbacks();
 		}
 		return changed;
 	}
@@ -92,6 +105,7 @@ namespace ReflexOverlay
 	void SavePanel(void* userData)
 	{
 		auto& s = *static_cast<Upscaling::Settings*>(userData);
+		Upscaling::GetSingleton()->ApplyRuntimeFallbacks();
 		CSimpleIniA ini;
 		ini.SetUnicode();
 		ini.SetValue("Settings", "iReflexMode", std::to_string(s.reflexMode).c_str());
@@ -101,7 +115,8 @@ namespace ReflexOverlay
 
 	void TryRegister()
 	{
-		HMODULE overlay = GetModuleHandleW(L"Overlay.dll");
+		HMODULE overlay = GetModuleHandleW(nullptr);
+		if (!overlay) overlay = GetModuleHandleW(L"Overlay.dll");
 		if (!overlay) return;
 
 		auto registerFn = reinterpret_cast<decltype(&Overlay_RegisterPanel)>(

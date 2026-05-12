@@ -1,3 +1,4 @@
+#define FO4CS_OVERLAY_API_EXPORTS
 #include "Overlay/Overlay.h"
 #include "Overlay/OverlayWndProc.h"
 
@@ -77,26 +78,6 @@ namespace
 		}
 	}
 
-	void SaveOverlaySelfSettings()
-	{
-		auto* overlay = Overlay::GetSingleton();
-		std::error_code ec;
-		std::filesystem::create_directories(kOverlaySelfSettingsPath.parent_path(), ec);
-
-		CSimpleIniA ini;
-		ini.SetUnicode();
-		if (std::filesystem::exists(kOverlaySelfSettingsPath, ec)) {
-			ini.LoadFile(kOverlaySelfSettingsPath.string().c_str());
-		}
-
-		ini.SetValue(kSettingsSection, "showIntro", overlay->IsIntroEnabled() ? "true" : "false");
-		ini.SetValue(kSettingsSection, "iOverlayHotkey", std::to_string(overlay->GetHotkey()).c_str());
-		ini.SetValue(kSettingsSection, "fUIScale", std::to_string(overlay->GetUIScaleOverride()).c_str());
-
-		if (ini.SaveFile(kOverlaySelfSettingsPath.string().c_str()) < 0) {
-			logger::warn("[Overlay] Failed to save Overlay.ini");
-		}
-	}
 }
 
 Overlay* Overlay::GetSingleton()
@@ -108,7 +89,10 @@ Overlay* Overlay::GetSingleton()
 bool Overlay::Initialize(ID3D12Device* a_device, ID3D12CommandQueue* a_commandQueue, IDXGISwapChain4* /*a_swapChain*/, DXGI_FORMAT a_swapChainFormat, HWND a_hwnd)
 {
 	if (initialized) {
-		return true;
+		if (format == a_swapChainFormat) {
+			return true;
+		}
+		Shutdown();
 	}
 
 	hwnd = a_hwnd;
@@ -151,7 +135,9 @@ bool Overlay::Initialize(ID3D12Device* a_device, ID3D12CommandQueue* a_commandQu
 	io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_NoMouseCursorChange;
 	io.IniFilename = nullptr;
 
-	dpiScale = static_cast<float>(GetDpiForWindow(hwnd)) / 96.0f;
+	HDC hdcTmp = GetDC(hwnd);
+	dpiScale = static_cast<float>(GetDeviceCaps(hdcTmp, LOGPIXELSX)) / 96.0f;
+	ReleaseDC(hwnd, hdcTmp);
 	if (dpiScale < 1.0f) dpiScale = 1.0f;
 	io.FontGlobalScale = dpiScale;
 	logger::info("[Overlay] DPI scale: {:.2f}", dpiScale);
@@ -334,25 +320,89 @@ bool Overlay::IsShowingIntroMessage() const noexcept
 	return (GetTickCount64() - initTimestamp) < kIntroMessageDurationMs;
 }
 
-const char* Overlay::GetHotkeyName() const noexcept
-{
-	if (hotkey == VK_END)
-		return "END";
+static const char* VKCodeToName(int a_vkCode)
+	{
+	switch (a_vkCode) {
+	case VK_END:     return "End";
+	case VK_HOME:    return "Home";
+	case VK_INSERT:  return "Insert";
+	case VK_DELETE:  return "Delete";
+	case VK_PRIOR:   return "Page Up";
+	case VK_NEXT:    return "Page Down";
+	case VK_LEFT:    return "Left";
+	case VK_UP:      return "Up";
+	case VK_RIGHT:   return "Right";
+	case VK_DOWN:    return "Down";
+	case VK_SPACE:   return "Space";
+	case VK_RETURN:  return "Enter";
+	case VK_TAB:     return "Tab";
+	case VK_BACK:    return "Backspace";
+	case VK_ESCAPE:  return "Escape";
+	case VK_SNAPSHOT: return "Print Screen";
+	case VK_PAUSE:   return "Pause";
+	case VK_CAPITAL: return "Caps Lock";
+	case VK_SCROLL:  return "Scroll Lock";
+	case VK_NUMLOCK: return "Num Lock";
+	case VK_LSHIFT:  return "Left Shift";
+	case VK_RSHIFT:  return "Right Shift";
+	case VK_LCONTROL: return "Left Ctrl";
+	case VK_RCONTROL: return "Right Ctrl";
+	case VK_LMENU:   return "Left Alt";
+	case VK_RMENU:   return "Right Alt";
+	case VK_LWIN:    return "Left Win";
+	case VK_RWIN:    return "Right Win";
+	case VK_APPS:    return "Menu";
+	case VK_NUMPAD0: return "Numpad 0";
+	case VK_NUMPAD1: return "Numpad 1";
+	case VK_NUMPAD2: return "Numpad 2";
+	case VK_NUMPAD3: return "Numpad 3";
+	case VK_NUMPAD4: return "Numpad 4";
+	case VK_NUMPAD5: return "Numpad 5";
+	case VK_NUMPAD6: return "Numpad 6";
+	case VK_NUMPAD7: return "Numpad 7";
+	case VK_NUMPAD8: return "Numpad 8";
+	case VK_NUMPAD9: return "Numpad 9";
+	case VK_MULTIPLY:  return "Numpad *";
+	case VK_ADD:       return "Numpad +";
+	case VK_SUBTRACT:  return "Numpad -";
+	case VK_DECIMAL:   return "Numpad .";
+	case VK_DIVIDE:    return "Numpad /";
+	case VK_CLEAR:     return "Clear";
+	}
+	if (a_vkCode >= VK_F1 && a_vkCode <= VK_F24) {
+		thread_local char fBuf[8];
+		snprintf(fBuf, sizeof(fBuf), "F%d", a_vkCode - VK_F1 + 1);
+		return fBuf;
+	}
+	if (a_vkCode >= '0' && a_vkCode <= '9') {
+		thread_local char dBuf[2];
+		dBuf[0] = static_cast<char>(a_vkCode);
+		dBuf[1] = '\0';
+		return dBuf;
+	}
+	if (a_vkCode >= 'A' && a_vkCode <= 'Z') {
+		thread_local char cBuf[2];
+		cBuf[0] = static_cast<char>(a_vkCode);
+		cBuf[1] = '\0';
+		return cBuf;
+	}
 
-	const UINT scanCodeEx = MapVirtualKeyW(static_cast<UINT>(hotkey), MAPVK_VK_TO_VSC_EX);
-	if (scanCodeEx == 0)
+	const UINT scanCode = MapVirtualKeyW(static_cast<UINT>(a_vkCode), MAPVK_VK_TO_VSC);
+	if (scanCode == 0)
 		return "(unknown key)";
 
 	thread_local char nameBuf[32];
-	nameBuf[0] = '\0';
-	LONG lParam = static_cast<LONG>(scanCodeEx & 0xFF) << 16;
-	if (scanCodeEx & 0x100)
-		lParam |= 0x01000000;
-	if (GetKeyNameTextA(lParam, nameBuf, static_cast<int>(sizeof(nameBuf))) != 0 && nameBuf[0] != '\0')
+	LONG lParam = static_cast<LONG>(scanCode) << 16;
+	if (GetKeyNameTextA(lParam, nameBuf, sizeof(nameBuf)) != 0 && nameBuf[0] != '\0')
 		return nameBuf;
 
 	return "(unknown key)";
-}
+	}
+
+	const char* Overlay::GetHotkeyName() const noexcept
+	{
+		return VKCodeToName(hotkey);
+	}
 
 void Overlay::RenderIntroMessage()
 {
@@ -375,31 +425,15 @@ void Overlay::RenderIntroMessage()
 	ImGui::End();
 }
 
-void Overlay::RenderBuiltinPanel()
+void Overlay::DrawOverlaySettings()
 {
-	const float uiScale = GetUIScale();
-	ImGui::SetNextWindowSize(ImVec2(360.0f * uiScale, 200.0f * uiScale), ImGuiCond_FirstUseEver);
-	if (!ImGui::Begin("Overlay Settings", nullptr)) {
-		ImGui::End();
-		return;
-	}
-
 	// Hotkey
 	int currentHotkey = GetHotkey();
 	char hotkeyName[32];
 	if (IsCapturingHotkey()) {
 		snprintf(hotkeyName, sizeof(hotkeyName), "Press any key...");
 	} else {
-		const UINT scEx = MapVirtualKeyW(static_cast<UINT>(currentHotkey), MAPVK_VK_TO_VSC_EX);
-		if (scEx != 0) {
-			LONG lParam = static_cast<LONG>(scEx & 0xFF) << 16;
-			if (scEx & 0x100) lParam |= 0x01000000;
-			if (GetKeyNameTextA(lParam, hotkeyName, sizeof(hotkeyName)) == 0 || hotkeyName[0] == 0) {
-				snprintf(hotkeyName, sizeof(hotkeyName), "VK_0x%02X", currentHotkey);
-			}
-		} else {
-			snprintf(hotkeyName, sizeof(hotkeyName), "VK_0x%02X", currentHotkey);
-		}
+		snprintf(hotkeyName, sizeof(hotkeyName), "%s", VKCodeToName(currentHotkey));
 	}
 	ImGui::Text("Toggle Hotkey:");
 	ImGui::SameLine();
@@ -429,32 +463,27 @@ void Overlay::RenderBuiltinPanel()
 		SetUIScaleOverride(kUIScales[scaleIdx]);
 
 	ImGui::Separator();
-	if (ImGui::Button("Save All Settings")) {
-		SaveOverlaySelfSettings();
-		SaveAllSettings();
-	}
-	ImGui::SameLine();
 	ImGui::TextDisabled("Press %s to toggle overlay", GetHotkeyName());
-
-	ImGui::End();
 }
 
-bool Overlay::SaveAllSettings()
+void Overlay::SaveOverlaySelfSettings()
 {
-	auto* overlay = GetSingleton();
-	std::lock_guard lock(overlay->panelMutex);
+	std::error_code ec;
+	std::filesystem::create_directories(kOverlaySelfSettingsPath.parent_path(), ec);
 
-	bool anySaved = false;
-	for (auto& panel : overlay->panels) {
-		if (panel.callbacks.save) {
-			panel.callbacks.save(panel.callbacks.userData);
-			anySaved = true;
-		}
+	CSimpleIniA ini;
+	ini.SetUnicode();
+	if (std::filesystem::exists(kOverlaySelfSettingsPath, ec)) {
+		ini.LoadFile(kOverlaySelfSettingsPath.string().c_str());
 	}
-	if (anySaved) {
-		logger::info("[Overlay] Saved settings from {} panels", overlay->panels.size());
+
+	ini.SetValue(kSettingsSection, "showIntro", IsIntroEnabled() ? "true" : "false");
+	ini.SetValue(kSettingsSection, "iOverlayHotkey", std::to_string(GetHotkey()).c_str());
+	ini.SetValue(kSettingsSection, "fUIScale", std::to_string(GetUIScaleOverride()).c_str());
+
+	if (ini.SaveFile(kOverlaySelfSettingsPath.string().c_str()) < 0) {
+		logger::warn("[Overlay] Failed to save Overlay.ini");
 	}
-	return anySaved;
 }
 
 void Overlay::Render(ID3D12GraphicsCommandList4* a_commandList, ID3D12Resource* a_backBuffer, DXGI_FORMAT a_swapChainFormat)
@@ -502,8 +531,6 @@ void Overlay::Render(ID3D12GraphicsCommandList4* a_commandList, ID3D12Resource* 
 	ImGui::NewFrame();
 
 	if (visible) {
-		RenderBuiltinPanel();
-
 		// Render registered panels (thread-safe copy)
 		{
 			std::lock_guard lock(panelMutex);
@@ -557,64 +584,64 @@ void Overlay::OnPollHotkey()
 
 extern "C" {
 
-int Overlay_RegisterPanel(const char* a_name, int a_category, const OverlayPanelCallbacks* a_callbacks)
+FO4CS_OVERLAY_API int Overlay_RegisterPanel(const char* a_name, int a_category, const OverlayPanelCallbacks* a_callbacks)
 {
 	return Overlay::GetSingleton()->RegisterPanel(a_name, a_category, a_callbacks);
 }
 
-void Overlay_UnregisterPanel(int a_panelId)
+FO4CS_OVERLAY_API void Overlay_UnregisterPanel(int a_panelId)
 {
 	Overlay::GetSingleton()->UnregisterPanel(a_panelId);
 }
 
-int Overlay_GetHotkey(void)
+FO4CS_OVERLAY_API int Overlay_GetHotkey(void)
 {
 	return Overlay::GetSingleton()->GetHotkey();
 }
 
-void Overlay_SetHotkey(int a_vkCode)
+FO4CS_OVERLAY_API void Overlay_SetHotkey(int a_vkCode)
 {
 	Overlay::GetSingleton()->SetHotkey(a_vkCode);
 }
 
-float Overlay_GetUIScale(void)
+FO4CS_OVERLAY_API float Overlay_GetUIScale(void)
 {
 	return Overlay::GetSingleton()->GetUIScaleOverride();
 }
 
-void Overlay_SetUIScale(float a_scale)
+FO4CS_OVERLAY_API void Overlay_SetUIScale(float a_scale)
 {
 	Overlay::GetSingleton()->SetUIScaleOverride(a_scale);
 }
 
-int Overlay_GetVisible(void)
+FO4CS_OVERLAY_API int Overlay_GetVisible(void)
 {
 	return Overlay::GetSingleton()->IsVisible() ? 1 : 0;
 }
 
-void Overlay_SetVisible(int a_visible)
+FO4CS_OVERLAY_API void Overlay_SetVisible(int a_visible)
 {
 	Overlay::GetSingleton()->SetVisible(a_visible != 0);
 }
 
-void Overlay_UpdateStats(const char* a_statKey, const char* a_statValue)
+FO4CS_OVERLAY_API void Overlay_UpdateStats(const char* a_statKey, const char* a_statValue)
 {
 	Overlay::GetSingleton()->UpdateStats(a_statKey, a_statValue);
 }
 
 // Callbacks resolved by DX12SwapChain via GetProcAddress.
 // These are called from whichever DLL creates the D3D12 swap chain.
-void Overlay_OnSwapChainCreated(ID3D12Device* a_device, ID3D12CommandQueue* a_queue, IDXGISwapChain4* a_swapChain, DXGI_FORMAT a_format, HWND a_hwnd)
+FO4CS_OVERLAY_API void Overlay_OnSwapChainCreated(ID3D12Device* a_device, ID3D12CommandQueue* a_queue, IDXGISwapChain4* a_swapChain, DXGI_FORMAT a_format, HWND a_hwnd)
 {
 	Overlay::OnSwapChainCreated(a_device, a_queue, a_swapChain, a_format, a_hwnd);
 }
 
-void Overlay_OnPresent(ID3D12GraphicsCommandList4* a_cmdList, ID3D12Resource* a_backBuffer, DXGI_FORMAT a_format)
+FO4CS_OVERLAY_API void Overlay_OnPresent(ID3D12GraphicsCommandList4* a_cmdList, ID3D12Resource* a_backBuffer, DXGI_FORMAT a_format)
 {
 	Overlay::OnPresent(a_cmdList, a_backBuffer, a_format);
 }
 
-void Overlay_OnPollHotkey(void)
+FO4CS_OVERLAY_API void Overlay_OnPollHotkey(void)
 {
 	Overlay::OnPollHotkey();
 }

@@ -61,7 +61,6 @@ add_library(Core OBJECT
     src/HDR.cpp
     src/HDRCalibration.cpp
     src/HDRCalibration.h
-    src/HDRCalibration.hlsl
     src/HDR.h
     src/Streamline.cpp
     src/Streamline.h
@@ -113,19 +112,23 @@ target_precompile_headers(Core PRIVATE include/PCH.h)
 target_link_libraries(Core PUBLIC ${FO4CS_COMMON_DEPENDENCIES})
 
 # ImGui core sources in Core — shared by all consumers for panel rendering.
-# Feature DLLs call ImGui functions in their registered panel callbacks.
-# Overlay.dll owns the D3D12 backend + context.
+# ImGui D3D12/Win32 backends in Core — needed by HDRCalibration (AIO mode)
+# and Overlay.dll for D3D12 overlay rendering.
 target_sources(Core PRIVATE
     extern/imgui/imgui.cpp
     extern/imgui/imgui_draw.cpp
     extern/imgui/imgui_tables.cpp
     extern/imgui/imgui_widgets.cpp
+    extern/imgui/backends/imgui_impl_dx12.cpp
+    extern/imgui/backends/imgui_impl_win32.cpp
 )
 set(FO4CS_IMGUI_CORE_SOURCES
     extern/imgui/imgui.cpp
     extern/imgui/imgui_draw.cpp
     extern/imgui/imgui_tables.cpp
     extern/imgui/imgui_widgets.cpp
+    extern/imgui/backends/imgui_impl_dx12.cpp
+    extern/imgui/backends/imgui_impl_win32.cpp
 )
 set_source_files_properties(${FO4CS_IMGUI_CORE_SOURCES} PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
 if(CMAKE_GENERATOR MATCHES "Visual Studio")
@@ -213,22 +216,4 @@ if(OVERLAY)
         ${CMAKE_CURRENT_SOURCE_DIR}/extern/imgui/backends
     )
     target_link_libraries(Overlay PRIVATE Core)
-
-    # D3D12/Win32 ImGui backends — only Overlay.dll needs these
-    target_sources(Overlay PRIVATE
-        extern/imgui/backends/imgui_impl_dx12.cpp
-        extern/imgui/backends/imgui_impl_win32.cpp
-    )
-    set_source_files_properties(
-        extern/imgui/backends/imgui_impl_dx12.cpp
-        extern/imgui/backends/imgui_impl_win32.cpp
-        PROPERTIES SKIP_PRECOMPILE_HEADERS ON
-    )
-    if(CMAKE_GENERATOR MATCHES "Visual Studio")
-        set_source_files_properties(
-            extern/imgui/backends/imgui_impl_dx12.cpp
-            extern/imgui/backends/imgui_impl_win32.cpp
-            PROPERTIES COMPILE_OPTIONS "/W0"
-        )
-    endif()
 endif()

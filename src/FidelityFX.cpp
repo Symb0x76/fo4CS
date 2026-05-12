@@ -279,7 +279,11 @@ void FidelityFX::Present(bool a_useFrameGen)
 		configParameters.frameGenerationEnabled = true;
 
 		configParameters.frameGenerationCallback = [](ffxDispatchDescFrameGeneration* params, void* pUserCtx) -> ffxReturnCode_t {
-			return ffxModule.Dispatch(reinterpret_cast<ffxContext*>(pUserCtx), &params->header);
+			try {
+				return ffxModule.Dispatch(reinterpret_cast<ffxContext*>(pUserCtx), &params->header);
+			} catch (...) {
+				return FFX_API_RETURN_ERROR;
+			}
 			};
 		configParameters.frameGenerationCallbackUserContext = &frameGenContext;
 
@@ -339,7 +343,7 @@ void FidelityFX::Present(bool a_useFrameGen)
 		dispatchParameters.commandList = commandList;
 
 		static auto gameViewport = State_GetSingleton();
-		static auto renderTargetManager = RenderTargetManager_GetSingleton();
+			static auto renderTargetManager = RenderTargetManager_GetSingleton();
 
 		auto screenSize = float2(float(gameViewport->screenWidth), float(gameViewport->screenHeight));
 		auto renderSize = float2(screenSize.x * renderTargetManager->dynamicWidthRatio, screenSize.y * renderTargetManager->dynamicHeightRatio);
@@ -384,8 +388,32 @@ void FidelityFX::Present(bool a_useFrameGen)
 		dispatchParameters.cameraRight[0] = 1.0f; dispatchParameters.cameraRight[1] = 0.0f; dispatchParameters.cameraRight[2] = 0.0f;
 		dispatchParameters.cameraForward[0] = 0.0f; dispatchParameters.cameraForward[1] = 0.0f; dispatchParameters.cameraForward[2] = 1.0f;
 
-		if (ffx::Dispatch(frameGenContext, dispatchParameters) != ffx::ReturnCode::Ok) {
-			logger::critical("[FidelityFX] Failed to dispatch frame generation!");
+		static int fgFailuresSinceLastSuccess = 0;
+
+		if (dispatchParameters.renderSize.width > 0 && dispatchParameters.renderSize.height > 0) {
+			ffx::ReturnCode dispatchResult = ffx::Dispatch(frameGenContext, dispatchParameters);
+			if (dispatchResult != ffx::ReturnCode::Ok) {
+				fgFailuresSinceLastSuccess++;
+
+				if (fgFailuresSinceLastSuccess == 1 || fgFailuresSinceLastSuccess % 300 == 0) {
+					logger::critical("[FidelityFX] Failed to dispatch frame generation! Error: {}, consecutive failures: {}",
+						static_cast<uint32_t>(dispatchResult), fgFailuresSinceLastSuccess);
+				}
+
+				ffx::ConfigureDescFrameGeneration disableConfig{};
+				disableConfig.frameGenerationEnabled = false;
+				disableConfig.frameGenerationCallbackUserContext = nullptr;
+				disableConfig.frameGenerationCallback = nullptr;
+				disableConfig.HUDLessColor = FfxApiResource({});
+				disableConfig.swapChain = dx12SwapChain->swapChain;
+				ffx::Configure(frameGenContext, disableConfig);
+			} else {
+				if (fgFailuresSinceLastSuccess > 0) {
+					logger::info("[FidelityFX] Frame generation dispatch recovered after {} failures",
+						fgFailuresSinceLastSuccess);
+				}
+				fgFailuresSinceLastSuccess = 0;
+			}
 		}
 	}
 

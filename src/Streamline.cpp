@@ -509,69 +509,6 @@ bool Streamline::UpgradeD3D12DeviceForDLSSG(ID3D12Device** device)
 	return upgraded;
 }
 
-bool Streamline::UpgradeDXGIFactoryForDLSSG(IDXGIFactory4** factory)
-{
-	if (!Upscaling::GetSingleton()->UsesDLSSFrameGeneration() || !initialized || dlssgDisabledAfterError) {
-		return false;
-	}
-
-	if (!slUpgradeInterface || !factory || !*factory) {
-		DisableDLSSGAfterError("slUpgradeInterface or DXGI factory is unavailable");
-		return false;
-	}
-
-	void* upgradedInterface = *factory;
-	const auto result = slUpgradeInterface(&upgradedInterface);
-	if (result != sl::Result::eOk || !upgradedInterface) {
-		logger::error("[Streamline] slUpgradeInterface failed for DXGI factory: {}", ResultToString(result));
-		DisableDLSSGAfterError("slUpgradeInterface failed for DXGI factory");
-		return false;
-	}
-
-	const bool upgraded = upgradedInterface != *factory;
-	*factory = static_cast<IDXGIFactory4*>(upgradedInterface);
-	logger::info(
-		"[Streamline] DXGI factory {} for manual-hooked DLSS-G swap chain creation path",
-		upgraded ? "upgraded" : "kept native");
-	return upgraded;
-}
-
-bool Streamline::UpgradeSwapChainForDLSSG(IDXGISwapChain4** swapChain)
-{
-	if (!Upscaling::GetSingleton()->UsesDLSSFrameGeneration() || !initialized || !featureDLSSG || dlssgDisabledAfterError) {
-		return false;
-	}
-
-	if (!slUpgradeInterface || !swapChain || !*swapChain) {
-		DisableDLSSGAfterError("slUpgradeInterface or swap chain is unavailable");
-		return false;
-	}
-
-	void* upgradedInterface = *swapChain;
-	const auto result = slUpgradeInterface(&upgradedInterface);
-	if (result != sl::Result::eOk || !upgradedInterface) {
-		logger::error("[Streamline] slUpgradeInterface failed for D3D12 swap chain: {}", ResultToString(result));
-		DisableDLSSGAfterError("slUpgradeInterface failed for D3D12 swap chain");
-		return false;
-	}
-
-	*swapChain = static_cast<IDXGISwapChain4*>(upgradedInterface);
-	logger::info("[Streamline] D3D12 swap chain upgraded for manual-hooked DLSS-G Present path");
-
-	if (slGetNativeInterface) {
-		void* nativeInterface = nullptr;
-		const auto nativeResult = slGetNativeInterface(*swapChain, &nativeInterface);
-		if (nativeResult == sl::Result::eOk && nativeInterface) {
-			logger::debug("[Streamline] Native swap chain interface is available behind Streamline proxy");
-			static_cast<IUnknown*>(nativeInterface)->Release();
-		} else if (Upscaling::GetSingleton()->settings.debugLogging) {
-			logger::debug("[Streamline] slGetNativeInterface for swap chain returned {}", ResultToString(nativeResult));
-		}
-	}
-
-	return true;
-}
-
 void Streamline::LogD3D12CommandQueueProxyState(ID3D12CommandQueue* commandQueue)
 {
 	if (!Upscaling::GetSingleton()->UsesDLSSFrameGeneration() || !initialized || !slGetNativeInterface || !commandQueue) {
@@ -589,7 +526,7 @@ void Streamline::LogD3D12CommandQueueProxyState(ID3D12CommandQueue* commandQueue
 	static_cast<IUnknown*>(nativeInterface)->Release();
 	logger::info(
 		"[Streamline] D3D12 command queue {}",
-		proxied ? "is available behind Streamline proxy" : "is native; DLSS-G Present path may not present generated frames");
+		proxied ? "is available behind Streamline proxy" : "is native");
 }
 
 bool Streamline::EnsureFrameToken(const char* caller)

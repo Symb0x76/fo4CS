@@ -223,7 +223,9 @@ bool HDRCalibrationOverlay::Render(
 
 	ID3D12DescriptorHeap* heaps[] = { srvHeap.get() };
 	commandList->SetDescriptorHeaps(1, heaps);
+	#if !defined(COMMUNITY_SHADERS)
 	ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), commandList);
+#endif
 
 	auto barrierToPresent = CD3DX12_RESOURCE_BARRIER::Transition(backBuffer, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
 	commandList->ResourceBarrier(1, &barrierToPresent);
@@ -262,51 +264,48 @@ bool HDRCalibrationOverlay::Initialize(ID3D12Device* device, ID3D12CommandQueue*
 	rtvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
 	DX::ThrowIfFailed(device->CreateDescriptorHeap(&rtvHeapDesc, IID_PPV_ARGS(rtvHeap.put())));
 
-		auto* overlay = Overlay::GetSingleton();
-		sharedContext = overlay && overlay->IsInitialized();
+	sharedContext = false;
+	if (!sharedContext) {
+		ImGui::CreateContext();
+		imguiContextCreated = true;
+		ImGui::StyleColorsDark();
+		auto& io = ImGui::GetIO();
+		io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_NoMouseCursorChange;
+		HDC hdcTmp = GetDC(hwnd);
+		float uiDpi = static_cast<float>(GetDeviceCaps(hdcTmp, LOGPIXELSX));
+		ReleaseDC(hwnd, hdcTmp);
+		float uiScale = uiDpi / 96.0f;
+		if (uiScale < 1.0f) uiScale = 1.0f;
+		io.FontGlobalScale = uiScale;
 
-		if (sharedContext) {
-			ImGui::SetCurrentContext(overlay->GetImGuiContext());
-			win32Initialized = true;
-			dx12Initialized = true;
-			imguiContextCreated = false;
-			logger::debug("[HDR] Calibration overlay using shared ImGui context from Overlay");
-		} else {
-			ImGui::CreateContext();
-			imguiContextCreated = true;
-			ImGui::StyleColorsDark();
-			auto& io = ImGui::GetIO();
-			io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_NoMouseCursorChange;
-			float uiScale = static_cast<float>(GetDpiForWindow(hwnd)) / 96.0f;
-			if (uiScale < 1.0f) uiScale = 1.0f;
-			io.FontGlobalScale = uiScale;
-
-			win32Initialized = ImGui_ImplWin32_Init(hwnd);
-			if (!win32Initialized) {
-				logger::warn("[HDR] ImGui Win32 backend initialization failed");
-				return false;
-			}
-
-			ImGui_ImplDX12_InitInfo initInfo{};
-			initInfo.Device = device;
-			initInfo.CommandQueue = commandQueue;
-			initInfo.NumFramesInFlight = 2;
-			initInfo.RTVFormat = swapChainFormat;
-			initInfo.DSVFormat = DXGI_FORMAT_UNKNOWN;
-			initInfo.SrvDescriptorHeap = srvHeap.get();
-			initInfo.SrvDescriptorAllocFn = AllocateImGuiDescriptor;
-			initInfo.SrvDescriptorFreeFn = FreeImGuiDescriptor;
-			dx12Initialized = ImGui_ImplDX12_Init(&initInfo);
-			if (!dx12Initialized) {
-				logger::warn("[HDR] ImGui D3D12 backend initialization failed");
-				return false;
-			}
-
-			g_calibrationOverlay = this;
-			previousWndProc = reinterpret_cast<WNDPROC>(SetWindowLongPtrW(hwnd, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(WndProc)));
+		win32Initialized = ImGui_ImplWin32_Init(hwnd);
+		if (!win32Initialized) {
+			logger::warn("[HDR] ImGui Win32 backend initialization failed");
+			return false;
 		}
 
-		EnsurePatternResources(device, swapChainFormat);
+		ImGui_ImplDX12_InitInfo initInfo{};
+		initInfo.Device = device;
+		initInfo.CommandQueue = commandQueue;
+		initInfo.NumFramesInFlight = 2;
+		initInfo.RTVFormat = swapChainFormat;
+		initInfo.DSVFormat = DXGI_FORMAT_UNKNOWN;
+		initInfo.SrvDescriptorHeap = srvHeap.get();
+		initInfo.SrvDescriptorAllocFn = AllocateImGuiDescriptor;
+		initInfo.SrvDescriptorFreeFn = FreeImGuiDescriptor;
+#if !defined(COMMUNITY_SHADERS)
+		dx12Initialized = ImGui_ImplDX12_Init(&initInfo);
+#endif
+		if (!dx12Initialized) {
+			logger::warn("[HDR] ImGui D3D12 backend initialization failed");
+			return false;
+		}
+
+		g_calibrationOverlay = this;
+		previousWndProc = reinterpret_cast<WNDPROC>(SetWindowLongPtrW(hwnd, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(WndProc)));
+	}
+
+	EnsurePatternResources(device, swapChainFormat);
 	initializedFormat = swapChainFormat;
 	initialized = true;
 	logger::info("[HDR] Calibration overlay initialized");
@@ -325,7 +324,9 @@ void HDRCalibrationOverlay::Shutdown()
 		}
 
 		if (dx12Initialized) {
+			#if !defined(COMMUNITY_SHADERS)
 			ImGui_ImplDX12_Shutdown();
+#endif
 		}
 		if (win32Initialized) {
 			ImGui_ImplWin32_Shutdown();
@@ -404,6 +405,9 @@ void HDRCalibrationOverlay::Cancel(HDRSettings& settings)
 	settings.calibrationActive = false;
 	SaveHDRSettingsToINI(settings);
 	active = false;
+
+	auto upscaling = Upscaling::GetSingleton();
+	upscaling->settings.hdrCalibrationActive = false;
 }
 
 void HDRCalibrationOverlay::RenderPattern(ID3D12GraphicsCommandList4* commandList, ID3D12Resource* backBuffer, DXGI_FORMAT swapChainFormat, const HDRSettings& settings)
@@ -438,7 +442,9 @@ void HDRCalibrationOverlay::RenderPattern(ID3D12GraphicsCommandList4* commandLis
 
 void HDRCalibrationOverlay::RenderUI(HDRSettings& settings)
 {
+	#if !defined(COMMUNITY_SHADERS)
 	ImGui_ImplDX12_NewFrame();
+#endif
 	ImGui_ImplWin32_NewFrame();
 	ImGui::GetIO().MouseDrawCursor = true;
 	ImGui::NewFrame();
