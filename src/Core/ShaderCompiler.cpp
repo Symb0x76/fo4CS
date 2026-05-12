@@ -3,6 +3,51 @@
 #include <d3dcompiler.h>
 #include <fstream>
 #include <sstream>
+#include <filesystem>
+
+// Custom include handler that resolves #include paths relative to sourceRoot directories.
+// Mirrors Skyrim CS behavior: "LightLimitFix/Common.hlsli" resolves to
+// <sourceRoot>/LightLimitFix/Common.hlsli, not relative to the source file directory.
+class ShaderIncludeHandler : public ID3DInclude
+{
+public:
+	ShaderIncludeHandler(const std::vector<std::filesystem::path>& a_dirs)
+		: m_dirs(a_dirs) {}
+
+	HRESULT __stdcall Open(D3D_INCLUDE_TYPE /*IncludeType*/, LPCSTR pFileName,
+		LPCVOID /*pParentData*/, LPCVOID* ppData, UINT* pBytes) override
+	{
+		for (auto& dir : m_dirs) {
+			auto fullPath = dir / pFileName;
+			std::error_code ec;
+			if (!std::filesystem::exists(fullPath, ec) || !std::filesystem::is_regular_file(fullPath, ec))
+				continue;
+
+			std::ifstream file(fullPath, std::ios::binary | std::ios::ate);
+			if (!file.is_open())
+				continue;
+
+			auto size = file.tellg();
+			file.seekg(0, std::ios::beg);
+
+			auto* buf = new char[static_cast<size_t>(size)];
+			file.read(buf, size);
+			*ppData = buf;
+			*pBytes = static_cast<UINT>(size);
+			return S_OK;
+		}
+		return E_FAIL;
+	}
+
+	HRESULT __stdcall Close(LPCVOID pData) override
+	{
+		delete[] static_cast<const char*>(pData);
+		return S_OK;
+	}
+
+private:
+	std::vector<std::filesystem::path> m_dirs;
+};
 
 namespace CommunityShaders
 {
@@ -28,6 +73,18 @@ namespace CommunityShaders
 				return "hs_5_0";
 			if (normalized.find("/DS/") != std::string::npos || normalized.find("\\DS\\") != std::string::npos)
 				return "ds_5_0";
+
+		// Fallback: detect profile from filename suffix (e.g. ClusterBuildingCS.hlsl -> cs_5_0)
+		auto stem = std::filesystem::path(path).stem().string();
+		if (stem.size() >= 2) {
+			auto suffix = stem.substr(stem.size() - 2);
+			if (suffix == "VS") return "vs_5_0";
+			if (suffix == "PS") return "ps_5_0";
+			if (suffix == "CS") return "cs_5_0";
+			if (suffix == "GS") return "gs_5_0";
+			if (suffix == "HS") return "hs_5_0";
+			if (suffix == "DS") return "ds_5_0";
+		}
 
 			return "ps_5_0";
 		}
@@ -89,7 +146,7 @@ namespace CommunityShaders
 		std::string_view a_source,
 		std::string_view a_entryPoint,
 		std::string_view a_target,
-		const std::vector<std::filesystem::path>&,
+		const std::vector<std::filesystem::path>& a_includeDirs,
 		std::string* a_error)
 	{
 		UINT flags = D3DCOMPILE_ENABLE_STRICTNESS;
@@ -103,11 +160,12 @@ namespace CommunityShaders
 		winrt::com_ptr<ID3DBlob> code;
 		winrt::com_ptr<ID3DBlob> errors;
 
+		ShaderIncludeHandler includeHandler(a_includeDirs);
 		HRESULT hr = D3DCompile(
 			a_source.data(), a_source.size(),
 			nullptr,  // source name
 			nullptr,  // defines
-			D3D_COMPILE_STANDARD_FILE_INCLUDE,  // use standard #include
+			&includeHandler,
 			std::string(a_entryPoint).c_str(),
 			std::string(a_target).c_str(),
 			flags, 0,

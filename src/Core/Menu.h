@@ -1,4 +1,5 @@
 #pragma once
+#include <Windows.h>
 
 #include <d3d11.h>
 
@@ -10,4 +11,5 @@ namespace CommunityShaders::Menu
 	void Reset();
 	[[nodiscard]] bool IsOpen() noexcept;
 	void SetOpen(bool a_open) noexcept;
+	void SetHwnd(HWND a_hwnd) noexcept;
 }

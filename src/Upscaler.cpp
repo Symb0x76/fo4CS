@@ -487,6 +487,11 @@ void Upscaling::CreateFrameGenerationResources()
 	auto rendererData = fo4cs::GetRendererData();
 	auto context = reinterpret_cast<ID3D11DeviceContext*>(rendererData->context);
 	auto& main = rendererData->renderTargets[(uint)RenderTarget::kMain];
+	if (!main.texture) {
+		logger::warn("[Upscaler] Main render target unavailable in CreateFrameGenerationResources; deferring");
+		setupBuffers = false;
+		return;
+	}
 
 	for (int index = 0; index < 2; index++) {
 		D3D11_TEXTURE2D_DESC texDesc{};

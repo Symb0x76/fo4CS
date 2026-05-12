@@ -78,26 +78,6 @@ namespace
 		}
 	}
 
-	void SaveOverlaySelfSettings()
-	{
-		auto* overlay = Overlay::GetSingleton();
-		std::error_code ec;
-		std::filesystem::create_directories(kOverlaySelfSettingsPath.parent_path(), ec);
-
-		CSimpleIniA ini;
-		ini.SetUnicode();
-		if (std::filesystem::exists(kOverlaySelfSettingsPath, ec)) {
-			ini.LoadFile(kOverlaySelfSettingsPath.string().c_str());
-		}
-
-		ini.SetValue(kSettingsSection, "showIntro", overlay->IsIntroEnabled() ? "true" : "false");
-		ini.SetValue(kSettingsSection, "iOverlayHotkey", std::to_string(overlay->GetHotkey()).c_str());
-		ini.SetValue(kSettingsSection, "fUIScale", std::to_string(overlay->GetUIScaleOverride()).c_str());
-
-		if (ini.SaveFile(kOverlaySelfSettingsPath.string().c_str()) < 0) {
-			logger::warn("[Overlay] Failed to save Overlay.ini");
-		}
-	}
 }
 
 Overlay* Overlay::GetSingleton()
@@ -109,7 +89,10 @@ Overlay* Overlay::GetSingleton()
 bool Overlay::Initialize(ID3D12Device* a_device, ID3D12CommandQueue* a_commandQueue, IDXGISwapChain4* /*a_swapChain*/, DXGI_FORMAT a_swapChainFormat, HWND a_hwnd)
 {
 	if (initialized) {
-		return true;
+		if (format == a_swapChainFormat) {
+			return true;
+		}
+		Shutdown();
 	}
 
 	hwnd = a_hwnd;
@@ -442,15 +425,8 @@ void Overlay::RenderIntroMessage()
 	ImGui::End();
 }
 
-void Overlay::RenderBuiltinPanel()
+void Overlay::DrawOverlaySettings()
 {
-	const float uiScale = GetUIScale();
-	ImGui::SetNextWindowSize(ImVec2(360.0f * uiScale, 200.0f * uiScale), ImGuiCond_FirstUseEver);
-	if (!ImGui::Begin("Overlay Settings", nullptr)) {
-		ImGui::End();
-		return;
-	}
-
 	// Hotkey
 	int currentHotkey = GetHotkey();
 	char hotkeyName[32];
@@ -487,32 +463,27 @@ void Overlay::RenderBuiltinPanel()
 		SetUIScaleOverride(kUIScales[scaleIdx]);
 
 	ImGui::Separator();
-	if (ImGui::Button("Save All Settings")) {
-		SaveOverlaySelfSettings();
-		SaveAllSettings();
-	}
-	ImGui::SameLine();
 	ImGui::TextDisabled("Press %s to toggle overlay", GetHotkeyName());
-
-	ImGui::End();
 }
 
-bool Overlay::SaveAllSettings()
+void Overlay::SaveOverlaySelfSettings()
 {
-	auto* overlay = GetSingleton();
-	std::lock_guard lock(overlay->panelMutex);
+	std::error_code ec;
+	std::filesystem::create_directories(kOverlaySelfSettingsPath.parent_path(), ec);
 
-	bool anySaved = false;
-	for (auto& panel : overlay->panels) {
-		if (panel.callbacks.save) {
-			panel.callbacks.save(panel.callbacks.userData);
-			anySaved = true;
-		}
+	CSimpleIniA ini;
+	ini.SetUnicode();
+	if (std::filesystem::exists(kOverlaySelfSettingsPath, ec)) {
+		ini.LoadFile(kOverlaySelfSettingsPath.string().c_str());
 	}
-	if (anySaved) {
-		logger::info("[Overlay] Saved settings from {} panels", overlay->panels.size());
+
+	ini.SetValue(kSettingsSection, "showIntro", IsIntroEnabled() ? "true" : "false");
+	ini.SetValue(kSettingsSection, "iOverlayHotkey", std::to_string(GetHotkey()).c_str());
+	ini.SetValue(kSettingsSection, "fUIScale", std::to_string(GetUIScaleOverride()).c_str());
+
+	if (ini.SaveFile(kOverlaySelfSettingsPath.string().c_str()) < 0) {
+		logger::warn("[Overlay] Failed to save Overlay.ini");
 	}
-	return anySaved;
 }
 
 void Overlay::Render(ID3D12GraphicsCommandList4* a_commandList, ID3D12Resource* a_backBuffer, DXGI_FORMAT a_swapChainFormat)
@@ -560,8 +531,6 @@ void Overlay::Render(ID3D12GraphicsCommandList4* a_commandList, ID3D12Resource* 
 	ImGui::NewFrame();
 
 	if (visible) {
-		RenderBuiltinPanel();
-
 		// Render registered panels (thread-safe copy)
 		{
 			std::lock_guard lock(panelMutex);

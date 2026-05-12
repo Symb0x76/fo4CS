@@ -2,11 +2,10 @@
 
 #include "Core/CommunityShaders.h"
 
-// Overlay stub: CommunityShaders.dll does not link Overlay.dll.
-// HDRCalibration handles nullptr → creates its own ImGui context.
-class Overlay { public: static Overlay* GetSingleton(); };
-Overlay* Overlay::GetSingleton() { return nullptr; }
+#include "Core/Globals.h"
 #include "Core/Menu.h"
+#include "DX11Hooks.h"
+#include "Overlay/Overlay.h"
 
 #include <d3d11.h>
 #include <dxgi.h>
@@ -16,6 +15,7 @@ namespace
 	ID3D11Device* g_device = nullptr;
 	ID3D11DeviceContext* g_context = nullptr;
 	IDXGISwapChain* g_swapChain = nullptr;
+	HWND g_hwnd = nullptr;
 
 	using PresentFn = HRESULT(STDMETHODCALLTYPE*)(IDXGISwapChain*, UINT, UINT);
 	PresentFn g_originalPresent = nullptr;
@@ -27,8 +27,6 @@ namespace
 		if (runtime->IsLoaded()) {
 			runtime->OnFrame();
 		}
-
-		CommunityShaders::Menu::Render(g_device, g_context);
 
 		return g_originalPresent(a_swapChain, a_syncInterval, a_flags);
 	}
@@ -56,6 +54,10 @@ namespace
 		if (SUCCEEDED(hr) && a_device && *a_device && !g_device) {
 			g_device = *a_device;
 			g_context = *a_immediateContext;
+			if (a_swapChainDesc) {
+				g_hwnd = a_swapChainDesc->OutputWindow;
+				CommunityShaders::Menu::SetHwnd(g_hwnd);
+			}
 
 			CommunityShaders::Runtime::GetSingleton()->OnD3D11DeviceCreated(g_device);
 		}
@@ -123,7 +125,7 @@ extern "C" DLLEXPORT bool F4SEAPI F4SEPlugin_Load(const F4SE::LoadInterface* a_f
 	fo4cs::WaitForDebuggerIfNeeded();
 	fo4cs::InitializeLog();
 
-	logger::info("[CommunityShaders] Initializing Feature framework...");
+	logger::info("[CommunityShaders] Initializing unified Feature framework...");
 
 	CommunityShaders::Runtime::GetSingleton()->Load();
 
@@ -132,6 +134,6 @@ extern "C" DLLEXPORT bool F4SEAPI F4SEPlugin_Load(const F4SE::LoadInterface* a_f
 	auto messaging = F4SE::GetMessagingInterface();
 	messaging->RegisterListener(MessageHandler);
 
-	logger::info("[CommunityShaders] Plugin loaded");
+	logger::info("[CommunityShaders] Plugin loaded with unified Features");
 	return true;
 }

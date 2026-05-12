@@ -7,17 +7,17 @@
 #include "Core/ShaderCache.h"
 #include "Core/ShaderCompiler.h"
 #include "Core/State.h"
-#if defined(FALLOUT_POST_NG)
+#if defined(FALLOUT_POST_AE)
 #include "RE/B/BSGraphics.h"
 #else
 #include "RE/Bethesda/BSGraphics.h"
 #endif
-#if defined(FALLOUT_POST_NG)
+#if defined(FALLOUT_POST_AE)
 #include "RE/B/BSFadeNode.h"
 #else
 #include "RE/Bethesda/BSFadeNode.h"
 #endif
-#if defined(FALLOUT_POST_NG)
+#if defined(FALLOUT_POST_AE)
 #include "RE/T/TESObjectREFR.h"
 #include "RE/T/TESDataHandler.h"
 #include "RE/T/TESObjectLIGH.h"
@@ -26,8 +26,10 @@
 #include "RE/Bethesda/TESDataHandler.h"
 #include "RE/Bethesda/TESBoundAnimObjects.h"  // TESObjectLIGH
 #endif
-#if !defined(FALLOUT_PRE_NG)
+#if defined(FALLOUT_POST_AE)
 #include "RE/N/NiLight.h"
+#else
+#include "RE/NetImmerse/NiLight.h"
 #endif
 
 #include "SimpleIni.h"
@@ -39,7 +41,7 @@ namespace
 
 	std::string GetShaderPath()
 	{
-		return "Data\\Shaders\\LightLimitFix\\";
+		return "LightLimitFix\\";
 	}
 }
 
@@ -111,15 +113,10 @@ void LightLimitFix::SetupResources()
 	auto shaderPath = GetShaderPath();
 
 	auto compileOrLoad = [&](const char* a_name, ID3D11ComputeShader*& a_out) {
-		auto fullPath = shaderPath + a_name;
-		std::error_code ec;
-		if (!std::filesystem::exists(fullPath, ec)) {
-			logger::info("[LightLimitFix] Shader not found: {}", fullPath);
-			return;
-		}
-		auto compiled = CommunityShaders::ShaderCompiler::GetSingleton()->CompileFromFile(fullPath);
+		auto compiled = CommunityShaders::ShaderCompiler::GetSingleton()->CompileFromFile(
+			shaderPath + a_name);
 		if (compiled.empty()) {
-			logger::warn("[LightLimitFix] Failed to compile: {}", fullPath);
+			logger::warn("[LightLimitFix] Failed to compile: {}{}", shaderPath, a_name);
 			return;
 		}
 		device->CreateComputeShader(compiled.data(), compiled.size(), nullptr, &a_out);
@@ -296,7 +293,7 @@ void LightLimitFix::ClearShaderCache()
 
 void LightLimitFix::DataLoaded()
 {
-#if defined(FALLOUT_POST_NG)
+#if defined(FALLOUT_POST_AE)
 	auto* setting = RE::GameSettingCollection::GetSingleton()->GetSetting("iMagicLightMaxCount");
 	if (setting) {
 		setting->SetInt(0x7FFFFFFF);
@@ -570,8 +567,8 @@ void LightLimitFix::CollectLightCB()
 
 void LightLimitFix::CollectLightsFromScene()
 {
-#if !defined(FALLOUT_PRE_NG)
-	// PostNG/PostAE: NiLight scene traversal using fully defined headers.
+	// Collect point lights from placed TESObjectLIGH references via scene graph traversal.
+	// Works for both PreNG and PostAE — NiLight layout is structurally identical.
 	auto* dh = RE::TESDataHandler::GetSingleton();
 	if (!dh) return;
 
@@ -606,9 +603,6 @@ void LightLimitFix::CollectLightsFromScene()
 		data.lightFlags = static_cast<std::uint32_t>(LightFlags::Initialised);
 		frameLights.push_back(data);
 	}
-#else
-	// PreNG: lights collected incrementally via CollectLightsFromPass + CollectLightCB.
-#endif
 }
 
 void LightLimitFix::SetupGeometryBefore(RE::BSRenderPass* /*a_pass*/)
@@ -621,7 +615,10 @@ void LightLimitFix::SetupGeometryAfter(RE::BSRenderPass* a_pass)
 	// Collect BSLight pointers from the pass
 	CollectLightsFromPass(a_pass);
 	// For PreNG (no NiLight headers): read game's light CB for actual data
-#if defined(FALLOUT_PRE_NG)
+// PreNG: CollectLightCB disabled — per-draw GPU readback (CreateBuffer/CopyResource/Map)
+// causes TDR timeout and GSOD on Windows Insider builds.
+// TODO: implement scene-traversal light collection for PreNG once NiLight headers are available.
+#if 0 // defined(FALLOUT_PRE_NG) — disabled 2026-05-11 due to GSOD
 	if (!seenThisPass.empty()) {
 		CollectLightCB();
 	}

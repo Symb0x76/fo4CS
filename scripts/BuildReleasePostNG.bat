@@ -48,7 +48,15 @@ if /I "%REFLEX%"=="ON" xcopy "%BUILD_OUTPUT%\Reflex.dll" "dist\F4SE\Plugins\Refl
 if /I "%UPSCALER%"=="ON" xcopy "%BUILD_OUTPUT%\Upscaler.dll" "dist\F4SE\Plugins\Upscaler\" /I /Y
 
 if exist "package\Common" xcopy "package\Common" "dist" /I /Y /E
-if /I "%COMMUNITY_SHADERS%"=="ON" xcopy "package\CommunityShaders" "dist" /I /Y /E
+if /I "%COMMUNITY_SHADERS%"=="ON" (
+    xcopy "package\CommunityShaders" "dist" /I /Y /E
+    if exist "package\Shaders" xcopy "package\Shaders" "dist\Shaders" /I /Y /E
+    REM CommunityShaders.dll now contains ALL Features — deploy their shaders and INIs too
+    if exist "package\FrameGen" xcopy "package\FrameGen" "dist" /I /Y /E
+    if exist "package\HDR" xcopy "package\HDR" "dist" /I /Y /E
+    if exist "package\Reflex" xcopy "package\Reflex" "dist" /I /Y /E
+    if exist "package\Upscaler" xcopy "package\Upscaler" "dist" /I /Y /E
+)
 if /I "%AIO%"=="ON" (
     xcopy "package\FrameGen" "dist" /I /Y /E
     xcopy "package\HDR" "dist" /I /Y /E

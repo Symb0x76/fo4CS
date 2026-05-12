@@ -8,6 +8,7 @@
 #include <dx12/ffx_api_framegeneration_dx12.hpp>
 #include <dxgi1_6.h>
 #include <string_view>
+#include <tuple>
 
 #include <d3dcompiler.h>
 #include <directx/d3dx12.h>
@@ -421,37 +422,7 @@ void DX12SwapChain::CreateSwapChain(IDXGIFactory4* a_dxgiFactory, DXGI_SWAP_CHAI
 		streamline->UpgradeSwapChainForDLSSG(&swapChain);
 	}
 
-	if (hdrSettings.IsEnabled()) {
-		const auto colorSpace = GetHDRColorSpace(hdrSettings);
-		const auto colorSpaceResult = swapChain->SetColorSpace1(colorSpace);
-		if (FAILED(colorSpaceResult)) {
-			logger::warn("[HDR] SetColorSpace1({}) failed: {}", static_cast<uint32_t>(colorSpace), FormatHRESULT(colorSpaceResult));
-		} else {
-			logger::info("[HDR] Color space set to {}", static_cast<uint32_t>(colorSpace));
-		}
-
-		if (hdrSettings.GetMode() == HDRMode::kHDR10) {
-			DXGI_HDR_METADATA_HDR10 metadata{};
-			metadata.RedPrimary[0] = 34000;
-			metadata.RedPrimary[1] = 16000;
-			metadata.GreenPrimary[0] = 13250;
-			metadata.GreenPrimary[1] = 34500;
-			metadata.BluePrimary[0] = 7500;
-			metadata.BluePrimary[1] = 3000;
-			metadata.WhitePoint[0] = 15635;
-			metadata.WhitePoint[1] = 16450;
-			metadata.MaxMasteringLuminance = static_cast<UINT>(std::clamp(hdrSettings.peakLuminance, 80.0f, 10000.0f) * 10000.0f);
-			metadata.MinMasteringLuminance = 0;
-			metadata.MaxContentLightLevel = NitsToDXGIHDRValue(hdrSettings.peakLuminance);
-			metadata.MaxFrameAverageLightLevel = NitsToDXGIHDRValue(hdrSettings.paperWhiteLuminance);
-			const auto metadataResult = swapChain->SetHDRMetaData(DXGI_HDR_METADATA_TYPE_HDR10, sizeof(metadata), &metadata);
-			if (FAILED(metadataResult)) {
-				logger::warn("[HDR] SetHDRMetaData failed: {}", FormatHRESULT(metadataResult));
-			} else {
-				logger::info("[HDR] HDR10 metadata set (peak={}, paperWhite={})", hdrSettings.peakLuminance, hdrSettings.paperWhiteLuminance);
-			}
-		}
-	}
+	ApplyHDRSwapChainState();
 
 	DX::ThrowIfFailed(swapChain->GetBuffer(0, IID_PPV_ARGS(&swapChainBuffers[0])));
 	DX::ThrowIfFailed(swapChain->GetBuffer(1, IID_PPV_ARGS(&swapChainBuffers[1])));
@@ -503,6 +474,107 @@ void DX12SwapChain::CreateInterop()
 
 	swapChainBufferWrapped[0] = new WrappedResource(texDesc11, d3d11Device.get(), d3d12Device.get());
 	swapChainBufferWrapped[1] = new WrappedResource(texDesc11, d3d11Device.get(), d3d12Device.get());
+}
+
+void DX12SwapChain::ApplyHDRRuntimeSettings(const HDRSettings& settings)
+{
+	hdrSettings = settings;
+	if (!swapChain) {
+		return;
+	}
+
+	if (const auto hdrFormat = GetHDRSwapChainFormat(hdrSettings);
+		hdrFormat != DXGI_FORMAT_UNKNOWN && hdrFormat != swapChainDesc.Format) {
+		RecreateBackBufferResources(hdrFormat);
+	}
+
+	ApplyHDRSwapChainState();
+}
+
+void DX12SwapChain::ApplyHDRSwapChainState()
+{
+	if (!swapChain || !hdrSettings.IsEnabled()) {
+		return;
+	}
+
+	const auto colorSpace = GetHDRColorSpace(hdrSettings);
+	const auto colorSpaceResult = swapChain->SetColorSpace1(colorSpace);
+	if (FAILED(colorSpaceResult)) {
+		logger::warn("[HDR] SetColorSpace1({}) failed: {}", static_cast<uint32_t>(colorSpace), FormatHRESULT(colorSpaceResult));
+	} else {
+		logger::info("[HDR] Color space set to {}", static_cast<uint32_t>(colorSpace));
+	}
+
+	if (hdrSettings.GetMode() != HDRMode::kHDR10) {
+		return;
+	}
+
+	DXGI_HDR_METADATA_HDR10 metadata{};
+	metadata.RedPrimary[0] = 34000;
+	metadata.RedPrimary[1] = 16000;
+	metadata.GreenPrimary[0] = 13250;
+	metadata.GreenPrimary[1] = 34500;
+	metadata.BluePrimary[0] = 7500;
+	metadata.BluePrimary[1] = 3000;
+	metadata.WhitePoint[0] = 15635;
+	metadata.WhitePoint[1] = 16450;
+	metadata.MaxMasteringLuminance = static_cast<UINT>(std::clamp(hdrSettings.peakLuminance, 80.0f, 10000.0f) * 10000.0f);
+	metadata.MinMasteringLuminance = 0;
+	metadata.MaxContentLightLevel = NitsToDXGIHDRValue(hdrSettings.peakLuminance);
+	metadata.MaxFrameAverageLightLevel = NitsToDXGIHDRValue(hdrSettings.paperWhiteLuminance);
+	const auto metadataResult = swapChain->SetHDRMetaData(DXGI_HDR_METADATA_TYPE_HDR10, sizeof(metadata), &metadata);
+	if (FAILED(metadataResult)) {
+		logger::warn("[HDR] SetHDRMetaData failed: {}", FormatHRESULT(metadataResult));
+	} else {
+		logger::info("[HDR] HDR10 metadata set (peak={}, paperWhite={})", hdrSettings.peakLuminance, hdrSettings.paperWhiteLuminance);
+	}
+}
+
+void DX12SwapChain::RecreateBackBufferResources(DXGI_FORMAT a_format)
+{
+	if (!swapChain || !d3d12Device || !d3d11Device) {
+		return;
+	}
+
+	if (commandQueue && d3d12Fence && d3d12FenceEvent) {
+		DX::ThrowIfFailed(commandQueue->Signal(d3d12Fence.get(), fenceValue));
+		DX::ThrowIfFailed(d3d12Fence->SetEventOnCompletion(fenceValue, d3d12FenceEvent));
+		WaitForSingleObject(d3d12FenceEvent, INFINITE);
+		++fenceValue;
+	}
+	if (d3d11Context) {
+		d3d11Context->Flush();
+	}
+
+	if (calibrationOverlay) {
+		delete calibrationOverlay;
+		calibrationOverlay = nullptr;
+	}
+	DestroyColorSpaceResources();
+
+	swapChainBuffers[0] = nullptr;
+	swapChainBuffers[1] = nullptr;
+
+	DX::ThrowIfFailed(swapChain->ResizeBuffers(
+		swapChainDesc.BufferCount,
+		swapChainDesc.Width,
+		swapChainDesc.Height,
+		a_format,
+		swapChainDesc.Flags));
+
+	swapChainDesc.Format = a_format;
+	DX::ThrowIfFailed(swapChain->GetBuffer(0, IID_PPV_ARGS(&swapChainBuffers[0])));
+	DX::ThrowIfFailed(swapChain->GetBuffer(1, IID_PPV_ARGS(&swapChainBuffers[1])));
+	frameIndex = swapChain->GetCurrentBackBufferIndex();
+
+	ResolveOverlayCallbacks();
+	if (auto initCb = s_overlayInitCb ? s_overlayInitCb : overlayInitCallback) {
+		DXGI_SWAP_CHAIN_DESC desc{};
+		std::ignore = swapChain->GetDesc(&desc);
+		initCb(d3d12Device.get(), commandQueue.get(), swapChain, swapChainDesc.Format, desc.OutputWindow);
+	}
+
+	logger::info("[HDR] Recreated swap chain buffers for runtime HDR format {}", static_cast<std::uint32_t>(a_format));
 }
 
 DXGISwapChainProxy* DX12SwapChain::GetSwapChainProxy()
@@ -569,7 +641,7 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
 
 
 		if (auto latestHDRSettings = ReloadCalibrationSettings(); latestHDRSettings.calibrationActive) {
-			hdrSettings = latestHDRSettings;
+			ApplyHDRRuntimeSettings(latestHDRSettings);
 			WaitForCommandAllocator(frameIndex);
 			trace("reset-command-list-calibration");
 			DX::ThrowIfFailed(commandAllocators[frameIndex]->Reset());
@@ -651,7 +723,7 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
 			std::memcpy(colorSpaceMappedConstants, &constants, sizeof(constants));
 
 			D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc{};
-			srvDesc.Format = swapChainDesc.Format;
+			srvDesc.Format = fakeSwapChain->GetDesc().Format;
 			srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
 			srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
 			srvDesc.Texture2D.MipLevels = 1;

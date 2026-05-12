@@ -80,5 +80,9 @@ void main(
 		lightIndexList[offset + j] = visibleLightIndices[j];
 	}
 
-	lightGrid[clusterIndex] = { offset, visibleLightCount, 0u, 0u };
+	LightGrid grid;
+	grid.offset = offset;
+	grid.lightCount = visibleLightCount;
+	grid.pad0 = uint2(0u, 0u);
+	lightGrid[clusterIndex] = grid;
 }

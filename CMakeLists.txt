@@ -48,7 +48,13 @@ set(FO4CS_COMMON_DEPENDENCIES
 )
 
 set(FEATURE_VERSIONS
-    "\t\t{\"ShaderDump\"sv, {0,1,0}}"
+    "		{\"LightLimitFix\"sv, {0,1,0}}"
+    "		{\"ShaderDump\"sv, {0,1,0}}"
+    "		{\"Upscaling\"sv, {1,0,0}}"
+    "		{\"FrameGeneration\"sv, {1,0,0}}"
+    "		{\"Reflex\"sv, {1,0,0}}"
+    "		{\"HDR\"sv, {1,0,0}}"
+    "		{\"Overlay\"sv, {1,0,0}}"
 )
 string(REPLACE ";" ",\n" FEATURE_VERSIONS "${FEATURE_VERSIONS}")
 set(FO4CS_GENERATED_INCLUDE_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
@@ -186,6 +192,20 @@ add_library(CoreCS OBJECT
     src/Features/LightLimitFix.h
 )
 
+if(COMMUNITY_SHADERS)
+    target_sources(CoreCS PRIVATE
+        src/Features/Upscaling.cpp
+        src/Features/FrameGeneration.cpp
+        src/Features/Reflex.cpp
+        src/Features/HDRDisplay.cpp
+        src/Features/Overlay.cpp
+        src/Overlay/Overlay.cpp src/Overlay/Overlay.h
+    )
+    target_include_directories(CoreCS PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/extern/Streamline/include
+    )
+endif()
+
 target_compile_features(CoreCS PRIVATE cxx_std_23)
 
 target_include_directories(CoreCS
@@ -245,6 +265,16 @@ if(AIO)
     set(REFLEX OFF)
     set(UPSCALER OFF)
     set(HDR OFF)
+endif()
+
+# community-shaders 分支: 全进 CommunityShaders.dll
+if(COMMUNITY_SHADERS)
+    set(AIO OFF)
+    set(FRAMEGEN OFF)
+    set(REFLEX OFF)
+    set(UPSCALER OFF)
+    set(HDR OFF)
+    set(OVERLAY OFF)
 endif()
 
 if(FRAMEGEN)
@@ -318,12 +348,10 @@ if(COMMUNITY_SHADERS)
     fo4cs_create_plugin(CommunityShaders CommunityShaders "CommunityShaders" ${FO4CS_COMMON_DEPENDENCIES})
     target_sources(CommunityShaders PRIVATE
         src/CommunityShadersPlugin.cpp
-        extern/imgui/backends/imgui_impl_dx11.cpp
         extern/imgui/backends/imgui_impl_win32.cpp
         extern/imgui/backends/imgui_impl_dx12.cpp
     )
     set_source_files_properties(
-        extern/imgui/backends/imgui_impl_dx11.cpp
         extern/imgui/backends/imgui_impl_dx12.cpp
         extern/imgui/backends/imgui_impl_win32.cpp
         PROPERTIES SKIP_PRECOMPILE_HEADERS ON
@@ -331,7 +359,6 @@ if(COMMUNITY_SHADERS)
     if(CMAKE_GENERATOR MATCHES "Visual Studio")
         set_source_files_properties(
         extern/imgui/backends/imgui_impl_dx12.cpp
-            extern/imgui/backends/imgui_impl_dx11.cpp
             extern/imgui/backends/imgui_impl_win32.cpp
             PROPERTIES COMPILE_OPTIONS "/W0"
         )
