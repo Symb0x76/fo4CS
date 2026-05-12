@@ -64,6 +64,13 @@ void FeatureReflex::LoadSettings()
 
 void FeatureReflex::SaveSettings()
 {
+	if (upscaling) {
+		upscaling->settings.reflexMode = settings.reflexMode;
+		upscaling->settings.reflexSleepMode = settings.reflexSleepMode;
+		upscaling->ApplyRuntimeFallbacks();
+		settings.reflexMode = upscaling->settings.reflexMode;
+	}
+
 	CSimpleIniA ini;
 	ini.SetUnicode();
 
@@ -95,6 +102,15 @@ void FeatureReflex::DrawSettings()
 	if (ImGui::CollapsingHeader("Reflex")) {
 		int changed = 0;
 
+		if (upscaling) {
+			upscaling->settings.reflexMode = settings.reflexMode;
+			upscaling->ApplyRuntimeFallbacks();
+			settings.reflexMode = upscaling->settings.reflexMode;
+			if (const char* reason = upscaling->GetDLSSUnavailableReason()) {
+				ImGui::TextWrapped("%s", reason);
+			}
+		}
+
 		const char* modes[] = { "Off", "Low Latency", "Low Latency + Boost" };
 		changed |= ImGui::Combo("Mode", &settings.reflexMode, modes, IM_ARRAYSIZE(modes)) ? 1 : 0;
 		changed |= ImGui::Checkbox("Reflex Sleep Mode", &settings.reflexSleepMode) ? 1 : 0;
@@ -102,6 +118,8 @@ void FeatureReflex::DrawSettings()
 		if (changed && upscaling) {
 			upscaling->settings.reflexMode = settings.reflexMode;
 			upscaling->settings.reflexSleepMode = settings.reflexSleepMode;
+			upscaling->ApplyRuntimeFallbacks();
+			settings.reflexMode = upscaling->settings.reflexMode;
 		}
 	}
 }

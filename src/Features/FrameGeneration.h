@@ -16,7 +16,7 @@ struct FeatureFrameGeneration : Feature
 	{
 		bool frameGenerationMode = true;
 		bool frameLimitMode = true;
-		int frameGenerationBackend = 0;
+		int frameGenerationBackend = 1;
 	} settings;
 
 	Upscaling* upscaling = nullptr;

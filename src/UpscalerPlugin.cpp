@@ -24,16 +24,26 @@ namespace
 // Panel callbacks for Overlay.dll registration
 namespace UpscalerOverlay
 {
+	void DrawDLSSRuntimeNotice()
+	{
+		auto* upscaling = Upscaling::GetSingleton();
+		upscaling->ApplyRuntimeFallbacks();
+		if (const char* reason = upscaling->GetDLSSUnavailableReason()) {
+			ImGui::TextWrapped("%s", reason);
+		}
+	}
+
 	int RenderPanel(void* userData)
 	{
 		auto& s = *static_cast<Upscaling::Settings*>(userData);
 		int changed = 0;
 
 		if (ImGui::CollapsingHeader("Upscaler")) {
+			DrawDLSSRuntimeNotice();
 			const char* upscaleMethods[] = { "Disabled", "FSR", "DLSS" };
 			changed |= ImGui::Combo("Method", &s.upscaleMethodPreference, upscaleMethods, IM_ARRAYSIZE(upscaleMethods)) ? 1 : 0;
 
-			const char* qualityModes[] = { "Ultra Quality", "Quality", "Balanced", "Performance", "Ultra Performance" };
+			const char* qualityModes[] = { "Native AA", "Quality", "Balanced", "Performance", "Ultra Performance" };
 			changed |= ImGui::Combo("Quality", &s.qualityMode, qualityModes, IM_ARRAYSIZE(qualityModes)) ? 1 : 0;
 
 			const int validPresetValues[] = { 0, 10, 11, 12, 13 };
@@ -47,12 +57,16 @@ namespace UpscalerOverlay
 				changed = 1;
 			}
 		}
+		if (changed) {
+			Upscaling::GetSingleton()->ApplyRuntimeFallbacks();
+		}
 		return changed;
 	}
 
 	void SavePanel(void* userData)
 	{
 		auto& s = *static_cast<Upscaling::Settings*>(userData);
+		Upscaling::GetSingleton()->ApplyRuntimeFallbacks();
 		CSimpleIniA ini;
 		ini.SetUnicode();
 		ini.SetValue("Settings", "iUpscaleMethodPreference", std::to_string(s.upscaleMethodPreference).c_str());

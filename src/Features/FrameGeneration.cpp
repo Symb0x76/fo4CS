@@ -62,13 +62,15 @@ void FeatureFrameGeneration::LoadSettings()
 
 		settings.frameGenerationMode = ini.GetBoolValue("Settings", "bFrameGenerationMode", settings.frameGenerationMode);
 		settings.frameLimitMode = ini.GetBoolValue("Settings", "bFrameLimitMode", settings.frameLimitMode);
-		settings.frameGenerationBackend = static_cast<int>(ini.GetLongValue("Settings", "iFrameGenerationBackend", settings.frameGenerationBackend));
+		settings.frameGenerationBackend = static_cast<int>(ini.GetLongValue("Settings", "iFrameGenerationBackend", Upscaling::kFrameGenerationBackendDLSS));
 	}
 
 	// Sync to shared Upscaling singleton
 	upscaling->settings.frameGenerationMode = settings.frameGenerationMode;
 	upscaling->settings.frameLimitMode = settings.frameLimitMode;
 	upscaling->settings.frameGenerationBackend = settings.frameGenerationBackend;
+	upscaling->ApplyRuntimeFallbacks();
+	settings.frameGenerationBackend = upscaling->settings.frameGenerationBackend;
 
 	logger::info("[Feature::FrameGeneration] Settings (enabled={}, limiter={}, backend={})",
 		settings.frameGenerationMode, settings.frameLimitMode, settings.frameGenerationBackend);
@@ -76,6 +78,14 @@ void FeatureFrameGeneration::LoadSettings()
 
 void FeatureFrameGeneration::SaveSettings()
 {
+	if (upscaling) {
+		upscaling->settings.frameGenerationMode = settings.frameGenerationMode;
+		upscaling->settings.frameLimitMode = settings.frameLimitMode;
+		upscaling->settings.frameGenerationBackend = settings.frameGenerationBackend;
+		upscaling->ApplyRuntimeFallbacks();
+		settings.frameGenerationBackend = upscaling->settings.frameGenerationBackend;
+	}
+
 	CSimpleIniA ini;
 	ini.SetUnicode();
 
@@ -113,13 +123,28 @@ void FeatureFrameGeneration::DrawSettings()
 		ImGui::SameLine();
 		changed |= ImGui::Checkbox("Frame Limit", &settings.frameLimitMode) ? 1 : 0;
 
-		const char* backends[] = { "Auto", "NVIDIA DLSS-G", "AMD FSR FG" };
-		changed |= ImGui::Combo("Backend", &settings.frameGenerationBackend, backends, IM_ARRAYSIZE(backends)) ? 1 : 0;
+		if (upscaling) {
+			upscaling->settings.frameGenerationBackend = settings.frameGenerationBackend;
+			upscaling->ApplyRuntimeFallbacks();
+			settings.frameGenerationBackend = upscaling->settings.frameGenerationBackend;
+			if (const char* reason = upscaling->GetDLSSUnavailableReason()) {
+				ImGui::TextWrapped("%s", reason);
+			}
+		}
+
+		const char* backends[] = { "NVIDIA DLSS-G", "AMD FSR FG" };
+		int backendIndex = settings.frameGenerationBackend == Upscaling::kFrameGenerationBackendFSR ? 1 : 0;
+		if (ImGui::Combo("Backend", &backendIndex, backends, IM_ARRAYSIZE(backends))) {
+			settings.frameGenerationBackend = backendIndex == 0 ? Upscaling::kFrameGenerationBackendDLSS : Upscaling::kFrameGenerationBackendFSR;
+			changed = 1;
+		}
 
 		if (changed && upscaling) {
 			upscaling->settings.frameGenerationMode = settings.frameGenerationMode;
 			upscaling->settings.frameLimitMode = settings.frameLimitMode;
 			upscaling->settings.frameGenerationBackend = settings.frameGenerationBackend;
+			upscaling->ApplyRuntimeFallbacks();
+			settings.frameGenerationBackend = upscaling->settings.frameGenerationBackend;
 		}
 	}
 }

@@ -21,7 +21,7 @@ public:
 	{
 		bool frameGenerationMode = 1;
 		bool frameLimitMode = 1;
-		int frameGenerationBackend = 0;
+		int frameGenerationBackend = 1;
 		int reflexMode = 1;
 		bool reflexSleepMode = true;
 		int hdrMode = 0;
@@ -50,6 +50,9 @@ public:
 		kFSR = 1,
 		kDLSS = 2
 	};
+
+	static constexpr int kFrameGenerationBackendDLSS = 1;
+	static constexpr int kFrameGenerationBackendFSR = 2;
 
 	Settings settings;
 
@@ -90,6 +93,10 @@ public:
 	void LoadFrameGenerationSettings();
 	void LoadReflexSettings();
 	void LoadHDRSettings();
+	void ApplyRuntimeFallbacks();
+	[[nodiscard]] const char* GetDLSSUnavailableReason() const;
+	[[nodiscard]] static bool IsPreNGRuntime() noexcept;
+	[[nodiscard]] static bool IsStreamlineRuntimeAvailable();
 
 	void PostPostLoad();
 	void OnD3D11DeviceCreated(ID3D11Device* a_device, IDXGIAdapter* a_adapter);

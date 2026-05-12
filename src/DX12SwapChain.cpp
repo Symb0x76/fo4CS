@@ -372,11 +372,6 @@ void DX12SwapChain::CreateSwapChain(IDXGIFactory4* a_dxgiFactory, DXGI_SWAP_CHAI
 	auto streamline = Streamline::GetSingleton();
 	const bool useFidelityFXSwapChain = upscaling->UsesFSRFrameGeneration() && fidelityFX->module;
 	IDXGIFactory4* dxgiFactory = a_dxgiFactory;
-	winrt::com_ptr<IDXGIFactory4> streamlineFactory;
-	const bool useStreamlineFactory = streamline->UpgradeDXGIFactoryForDLSSG(&dxgiFactory);
-	if (useStreamlineFactory && dxgiFactory != a_dxgiFactory) {
-		streamlineFactory.attach(dxgiFactory);
-	}
 	logger::info(
 		"[DX12SwapChain] Creating D3D12 proxy swap chain {}x{} fmt={} flags=0x{:X} backend={} hdrMode={}",
 		swapChainDesc.Width,
@@ -418,9 +413,7 @@ void DX12SwapChain::CreateSwapChain(IDXGIFactory4* a_dxgiFactory, DXGI_SWAP_CHAI
 		createNativeSwapChain();
 	}
 
-	if (!useStreamlineFactory) {
-		streamline->UpgradeSwapChainForDLSSG(&swapChain);
-	}
+	(void)streamline;
 
 	ApplyHDRSwapChainState();
 

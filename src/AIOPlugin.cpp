@@ -56,6 +56,27 @@ namespace AIOOverlay
 		SaveHDRPanelSettings(settings);
 		logger::info("[HDR] Calibration requested from AIO overlay");
 	}
+
+	void DrawDLSSRuntimeNotice()
+	{
+		auto* upscaling = Upscaling::GetSingleton();
+		upscaling->ApplyRuntimeFallbacks();
+		if (const char* reason = upscaling->GetDLSSUnavailableReason()) {
+			ImGui::TextWrapped("%s", reason);
+		}
+	}
+
+	int DrawFrameGenerationBackendCombo(int& backend)
+	{
+		const char* fgBackends[] = { "NVIDIA DLSS-G", "AMD FSR FG" };
+		int backendIndex = backend == Upscaling::kFrameGenerationBackendFSR ? 1 : 0;
+		if (ImGui::Combo("Backend", &backendIndex, fgBackends, IM_ARRAYSIZE(fgBackends))) {
+			backend = backendIndex == 0 ? Upscaling::kFrameGenerationBackendDLSS : Upscaling::kFrameGenerationBackendFSR;
+			return 1;
+		}
+		return 0;
+	}
+
 	template <int PanelId>
 	int RenderPanel(void* userData)
 	{
@@ -67,11 +88,12 @@ namespace AIOOverlay
 				changed |= ImGui::Checkbox("Enabled", &s.frameGenerationMode) ? 1 : 0;
 				ImGui::SameLine();
 				changed |= ImGui::Checkbox("Frame Limit", &s.frameLimitMode) ? 1 : 0;
-				const char* fgBackends[] = { "Auto", "NVIDIA DLSS-G", "AMD FSR FG" };
-				changed |= ImGui::Combo("Backend", &s.frameGenerationBackend, fgBackends, IM_ARRAYSIZE(fgBackends)) ? 1 : 0;
+				DrawDLSSRuntimeNotice();
+				changed |= DrawFrameGenerationBackendCombo(s.frameGenerationBackend);
 			}
 		} else if constexpr (PanelId == 1) { // Reflex
 			if (ImGui::CollapsingHeader("Reflex")) {
+				DrawDLSSRuntimeNotice();
 				const char* reflexModes[] = { "Off", "Low Latency", "Low Latency + Boost" };
 				changed |= ImGui::Combo("Mode", &s.reflexMode, reflexModes, IM_ARRAYSIZE(reflexModes)) ? 1 : 0;
 				changed |= ImGui::Checkbox("Reflex Sleep Mode", &s.reflexSleepMode) ? 1 : 0;
@@ -97,11 +119,15 @@ namespace AIOOverlay
 			}
 		} else if constexpr (PanelId == 3) { // Upscaler
 			if (ImGui::CollapsingHeader("Upscaler")) {
+				DrawDLSSRuntimeNotice();
 				const char* upscaleMethods[] = { "Disabled", "FSR", "DLSS" };
 				changed |= ImGui::Combo("Method", &s.upscaleMethodPreference, upscaleMethods, IM_ARRAYSIZE(upscaleMethods)) ? 1 : 0;
-				const char* qualityModes[] = { "Ultra Quality", "Quality", "Balanced", "Performance", "Ultra Performance" };
+				const char* qualityModes[] = { "Native AA", "Quality", "Balanced", "Performance", "Ultra Performance" };
 				changed |= ImGui::Combo("Quality", &s.qualityMode, qualityModes, IM_ARRAYSIZE(qualityModes)) ? 1 : 0;
 			}
+		}
+		if (changed) {
+			Upscaling::GetSingleton()->ApplyRuntimeFallbacks();
 		}
 		return changed;
 	}
@@ -110,6 +136,7 @@ namespace AIOOverlay
 	void SavePanel(void* userData)
 	{
 		auto& s = *static_cast<Upscaling::Settings*>(userData);
+		Upscaling::GetSingleton()->ApplyRuntimeFallbacks();
 		CSimpleIniA ini;
 		ini.SetUnicode();
 

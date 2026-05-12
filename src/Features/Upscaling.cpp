@@ -90,6 +90,14 @@ void FeatureUpscaling::LoadSettings()
 
 void FeatureUpscaling::SaveSettings()
 {
+	if (upscaling) {
+		upscaling->settings.upscaleMethodPreference = settings.upscaleMethodPreference;
+		upscaling->settings.qualityMode = settings.qualityMode;
+		upscaling->settings.dlssPreset = settings.dlssPreset;
+		upscaling->ApplyRuntimeFallbacks();
+		settings.upscaleMethodPreference = upscaling->settings.upscaleMethodPreference;
+	}
+
 	constexpr const char* section = "Settings";
 
 	CSimpleIniA ini;
@@ -128,12 +136,21 @@ void FeatureUpscaling::DrawSettings()
 	if (ImGui::CollapsingHeader("Upscaling")) {
 		int changed = 0;
 
+		if (upscaling) {
+			upscaling->settings.upscaleMethodPreference = settings.upscaleMethodPreference;
+			upscaling->ApplyRuntimeFallbacks();
+			settings.upscaleMethodPreference = upscaling->settings.upscaleMethodPreference;
+			if (const char* reason = upscaling->GetDLSSUnavailableReason()) {
+				ImGui::TextWrapped("%s", reason);
+			}
+		}
+
 		const char* methods[] = { "Disabled", "FSR", "DLSS" };
 		if (ImGui::Combo("Method", &settings.upscaleMethodPreference, methods, IM_ARRAYSIZE(methods))) {
 			changed = 1;
 		}
 
-		const char* qualityModes[] = { "Ultra Quality", "Quality", "Balanced", "Performance", "Ultra Performance" };
+		const char* qualityModes[] = { "Native AA", "Quality", "Balanced", "Performance", "Ultra Performance" };
 		if (ImGui::Combo("Quality", &settings.qualityMode, qualityModes, IM_ARRAYSIZE(qualityModes))) {
 			changed = 1;
 		}
@@ -153,6 +170,8 @@ void FeatureUpscaling::DrawSettings()
 			upscaling->settings.upscaleMethodPreference = settings.upscaleMethodPreference;
 			upscaling->settings.qualityMode = settings.qualityMode;
 			upscaling->settings.dlssPreset = settings.dlssPreset;
+			upscaling->ApplyRuntimeFallbacks();
+			settings.upscaleMethodPreference = upscaling->settings.upscaleMethodPreference;
 		}
 	}
 }

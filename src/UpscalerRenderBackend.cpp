@@ -133,13 +133,11 @@ namespace
 		return nullptr;
 	}
 
-	void CopyNativeAABorder(ID3D11DeviceContext* context, ID3D11Resource* source, Texture2D* output)
+	void CopyNativeAABorder(ID3D11DeviceContext* context, ID3D11Resource* source, ID3D11Resource* destination, UINT width, UINT height)
 	{
-		if (!context || !source || !output || !output->resource)
+		if (!context || !source || !destination)
 			return;
 
-		const auto width = output->desc.Width;
-		const auto height = output->desc.Height;
 		if (width == 0 || height == 0)
 			return;
 
@@ -148,14 +146,14 @@ namespace
 		if (border == 0)
 			return;
 
-		auto destination = output->resource.get();
 		auto copyBox = [&](UINT left, UINT top, UINT right, UINT bottom) {
 			D3D11_BOX box{ left, top, 0, right, bottom, 1 };
 			context->CopySubresourceRegion(destination, 0, left, top, 0, source, 0, &box);
 		};
 
-		// Native AA is 1:1, so preserving the original frame edge avoids a narrow
-		// upscaler border where edge texels can be clamped into a stretched strip.
+		// Native AA is 1:1. Restore the final frame edges from the pre-upscale
+		// color after the upscaler output copy so clamped output texels cannot
+		// stretch into a visible edge strip.
 		copyBox(0, 0, border, height);
 		copyBox(width - border, 0, width, height);
 		copyBox(0, 0, width, border);
@@ -920,9 +918,9 @@ void Upscaling::Upscale()
 			dx12SwapChain->ExecuteInteropCommandListAndWait();
 
 			if (dispatched) {
-				if (settings.qualityMode == 0)
-					CopyNativeAABorder(context, frameBufferResource, upscalerOutputShared[frameIndex]);
 				context->CopyResource(frameBufferResource, upscalerOutputShared[frameIndex]->resource.get());
+				if (settings.qualityMode == 0 && upscalingTexture)
+					CopyNativeAABorder(context, upscalingTexture->resource.get(), frameBufferResource, upscalingTexture->desc.Width, upscalingTexture->desc.Height);
 			}
 		}
 	} else if (upscaleMethod == UpscaleMethod::kFSR && d3d12Interop) {
@@ -964,9 +962,9 @@ void Upscaling::Upscale()
 			dx12SwapChain->ExecuteInteropCommandListAndWait();
 
 			if (dispatched) {
-				if (settings.qualityMode == 0)
-					CopyNativeAABorder(context, frameBufferResource, upscalerOutputShared[frameIndex]);
 				context->CopyResource(frameBufferResource, upscalerOutputShared[frameIndex]->resource.get());
+				if (settings.qualityMode == 0 && upscalingTexture)
+					CopyNativeAABorder(context, upscalingTexture->resource.get(), frameBufferResource, upscalingTexture->desc.Width, upscalingTexture->desc.Height);
 			}
 		}
 	}

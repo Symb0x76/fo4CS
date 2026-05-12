@@ -65,9 +65,29 @@ namespace
 // Panel callbacks for Overlay.dll registration
 namespace FGOverlay
 {
+	void DrawDLSSRuntimeNotice()
+	{
+		auto* upscaling = Upscaling::GetSingleton();
+		upscaling->ApplyRuntimeFallbacks();
+		if (const char* reason = upscaling->GetDLSSUnavailableReason()) {
+			ImGui::TextWrapped("%s", reason);
+		}
+	}
+
+	int DrawFrameGenerationBackendCombo(int& backend)
+	{
+		const char* fgBackends[] = { "NVIDIA DLSS-G", "AMD FSR FG" };
+		int backendIndex = backend == Upscaling::kFrameGenerationBackendFSR ? 1 : 0;
+		if (ImGui::Combo("Backend", &backendIndex, fgBackends, IM_ARRAYSIZE(fgBackends))) {
+			backend = backendIndex == 0 ? Upscaling::kFrameGenerationBackendDLSS : Upscaling::kFrameGenerationBackendFSR;
+			return 1;
+		}
+		return 0;
+	}
+
 	int RenderPanel(void* userData)
 	{
-		auto& s = static_cast<Upscaling::Settings*>(userData);
+		auto* s = static_cast<Upscaling::Settings*>(userData);
 		int changed = 0;
 
 		if (ImGui::CollapsingHeader("Frame Generation")) {
@@ -75,8 +95,11 @@ namespace FGOverlay
 			ImGui::SameLine();
 			changed |= ImGui::Checkbox("Frame Limit", &s->frameLimitMode) ? 1 : 0;
 
-			const char* fgBackends[] = { "Auto", "NVIDIA DLSS-G", "AMD FSR FG" };
-			changed |= ImGui::Combo("Backend", &s->frameGenerationBackend, fgBackends, IM_ARRAYSIZE(fgBackends)) ? 1 : 0;
+			DrawDLSSRuntimeNotice();
+			changed |= DrawFrameGenerationBackendCombo(s->frameGenerationBackend);
+		}
+		if (changed) {
+			Upscaling::GetSingleton()->ApplyRuntimeFallbacks();
 		}
 		return changed;
 	}
@@ -84,6 +107,7 @@ namespace FGOverlay
 	void SavePanel(void* userData)
 	{
 		auto& s = *static_cast<Upscaling::Settings*>(userData);
+		Upscaling::GetSingleton()->ApplyRuntimeFallbacks();
 		CSimpleIniA ini;
 		ini.SetUnicode();
 		ini.SetValue("Settings", "bFrameGenerationMode", s.frameGenerationMode ? "true" : "false");

@@ -150,6 +150,49 @@ namespace
 		return false;
 	}
 
+	std::filesystem::path GetModuleDirectory(HMODULE module)
+	{
+		std::array<wchar_t, 4096> buffer{};
+		const auto length = GetModuleFileNameW(module, buffer.data(), static_cast<DWORD>(buffer.size()));
+		if (length == 0 || length >= buffer.size()) {
+			return {};
+		}
+
+		return std::filesystem::path(buffer.data(), buffer.data() + length).parent_path();
+	}
+
+	std::filesystem::path GetCurrentPluginDirectory()
+	{
+		HMODULE module = nullptr;
+		if (!GetModuleHandleExW(
+				GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+				reinterpret_cast<LPCWSTR>(&GetCurrentPluginDirectory),
+				&module)) {
+			return {};
+		}
+
+		return GetModuleDirectory(module);
+	}
+
+	bool HasStreamlineInterposer()
+	{
+		std::error_code ec;
+		const auto exists = [&](const std::filesystem::path& directory) {
+			return !directory.empty() && std::filesystem::exists(directory / L"sl.interposer.dll", ec);
+		};
+
+		if (exists(GetCurrentPluginDirectory() / L"Streamline")) {
+			return true;
+		}
+		ec.clear();
+
+		if (exists(GetModuleDirectory(nullptr) / L"Data" / L"F4SE" / L"Plugins" / L"Streamline")) {
+			return true;
+		}
+
+		return false;
+	}
+
 	std::optional<int> ParseIntSetting(std::string_view value)
 	{
 		try {
@@ -282,10 +325,15 @@ void Upscaling::LoadFrameGenerationSettings()
 
 	settings.frameGenerationMode = ini.GetBoolValue("Settings", "bFrameGenerationMode", true);
 	settings.frameLimitMode = ini.GetBoolValue("Settings", "bFrameLimitMode", true);
-	settings.frameGenerationBackend = static_cast<int>(ini.GetLongValue("Settings", "iFrameGenerationBackend", 0));
+	settings.frameGenerationBackend = ClampIntSetting(
+		static_cast<int>(ini.GetLongValue("Settings", "iFrameGenerationBackend", kFrameGenerationBackendDLSS)),
+		0,
+		kFrameGenerationBackendFSR,
+		"iFrameGenerationBackend");
 	LoadSharedDebugSettings(settings);
 	ApplyDebugEnvironmentOverrides(settings);
 	ConfigureDebugLogging(settings);
+	ApplyRuntimeFallbacks();
 }
 
 void Upscaling::LoadReflexSettings()
@@ -315,6 +363,7 @@ void Upscaling::LoadReflexSettings()
 	LoadSharedDebugSettings(settings);
 	ApplyDebugEnvironmentOverrides(settings);
 	ConfigureDebugLogging(settings);
+	ApplyRuntimeFallbacks();
 
 	logger::info(
 		"[Settings] Reflex(mode={}, sleep={}), Debug(enabled={}, streamlineLogLevel={}, frames={})",
@@ -378,18 +427,7 @@ void Upscaling::LoadSettings()
 		15,
 		"iDLSSPreset");
 
-#if defined(FALLOUT_PRE_NG)
-	if (settings.upscaleMethodPreference == static_cast<int>(UpscaleMethod::kDLSS)) {
-		settings.upscaleMethodPreference = static_cast<int>(UpscaleMethod::kFSR);
-		logger::info("[Upscaler] PreNG: defaulting upscale method to FSR (DLSS unavailable)");
-	}
-	if (settings.frameGenerationBackend == 0) {
-		settings.frameGenerationBackend = 2;
-		logger::info("[FrameGen] PreNG: defaulting frame generation backend to FSR FG (DLSS-G unavailable)");
-	}
-	settings.reflexMode = 0;
-	logger::info("[Reflex] PreNG: disabling Reflex (unavailable)");
-#endif
+	ApplyRuntimeFallbacks();
 
 	logger::info(
 		"[Settings] FrameGen(enabled={}, limiter={}, backend={}), Upscaler(method={}, quality={}, dlssPreset={}), Reflex(mode={}), Debug(enabled={}, streamlineLogLevel={}, frames={})",
@@ -403,6 +441,57 @@ void Upscaling::LoadSettings()
 		settings.debugLogging,
 		settings.streamlineLogLevel,
 		settings.debugFrameLogCount);
+}
+
+void Upscaling::ApplyRuntimeFallbacks()
+{
+	if (settings.frameGenerationBackend != kFrameGenerationBackendDLSS &&
+		settings.frameGenerationBackend != kFrameGenerationBackendFSR) {
+		settings.frameGenerationBackend = kFrameGenerationBackendDLSS;
+	}
+
+	const bool dlssUnavailable = GetDLSSUnavailableReason() != nullptr;
+	if (dlssUnavailable && settings.upscaleMethodPreference == static_cast<int>(UpscaleMethod::kDLSS)) {
+		settings.upscaleMethodPreference = static_cast<int>(UpscaleMethod::kFSR);
+		logger::info("[Upscaler] DLSS unavailable; switching Upscaling to FSR");
+	}
+
+	if (dlssUnavailable && settings.frameGenerationBackend == kFrameGenerationBackendDLSS) {
+		settings.frameGenerationBackend = kFrameGenerationBackendFSR;
+		logger::info("[FrameGen] DLSS-G unavailable; switching Frame Generation to FSR FG");
+	}
+
+	if (IsPreNGRuntime() && settings.reflexMode != 0) {
+		settings.reflexMode = 0;
+		logger::info("[Reflex] PreNG detected; disabling Reflex");
+	}
+}
+
+const char* Upscaling::GetDLSSUnavailableReason() const
+{
+	if (IsPreNGRuntime()) {
+		return "PreNG (1.10.163) detected: DLSS is unavailable because of an engine issue. FSR is selected automatically for Frame Generation and Upscaling.";
+	}
+
+	if (!IsStreamlineRuntimeAvailable()) {
+		return "NVIDIA Streamline runtime is missing (sl.interposer.dll). FSR is selected automatically for Frame Generation and Upscaling; DLSS and Reflex are unavailable.";
+	}
+
+	return nullptr;
+}
+
+bool Upscaling::IsPreNGRuntime() noexcept
+{
+#if defined(FALLOUT_PRE_NG)
+	return true;
+#else
+	return false;
+#endif
+}
+
+bool Upscaling::IsStreamlineRuntimeAvailable()
+{
+	return HasStreamlineInterposer();
 }
 
 Upscaling::UpscaleMethod Upscaling::GetPreferredUpscaleMethod() const
@@ -433,13 +522,11 @@ bool Upscaling::UsesDLSSFrameGeneration() const
 		return false;
 
 	switch (settings.frameGenerationBackend) {
-	case 0: // Auto: follow upscale preference
-		return GetPreferredUpscaleMethod() == UpscaleMethod::kDLSS;
-	case 1: // Force NVIDIA DLSS-G
+	case kFrameGenerationBackendDLSS:
 		return true;
-	case 2: // Force AMD FSR FG
+	case kFrameGenerationBackendFSR:
 		return false;
-	default: // Off
+	default:
 		return false;
 	}
 }
@@ -450,13 +537,11 @@ bool Upscaling::UsesFSRFrameGeneration() const
 		return false;
 
 	switch (settings.frameGenerationBackend) {
-	case 0: // Auto: follow upscale preference
-		return GetPreferredUpscaleMethod() == UpscaleMethod::kFSR;
-	case 1: // Force NVIDIA DLSS-G
+	case kFrameGenerationBackendDLSS:
 		return false;
-	case 2: // Force AMD FSR FG
+	case kFrameGenerationBackendFSR:
 		return true;
-	default: // Off
+	default:
 		return false;
 	}
 }
