@@ -85,39 +85,56 @@ void Deferred::SetupResources()
 
 void Deferred::ReflectionsPrepasses()
 {
-	auto context = reinterpret_cast<ID3D11DeviceContext*>(fo4cs::GetRendererData()->context);
+	auto* rd = fo4cs::GetRendererData();
+	if (!rd || !rd->context) return;
+	auto context = reinterpret_cast<ID3D11DeviceContext*>(rd->context);
 	context->OMSetRenderTargets(0, nullptr, nullptr);
 
 	Feature::ForEachLoadedFeature("ReflectionsPrepass", [](Feature* a_feature) {
-		a_feature->ReflectionsPrepass();
+		try { a_feature->ReflectionsPrepass(); } catch (...) {}
 	});
 }
 
 void Deferred::EarlyPrepasses()
 {
-	auto context = reinterpret_cast<ID3D11DeviceContext*>(fo4cs::GetRendererData()->context);
+	auto* rd = fo4cs::GetRendererData();
+	if (!rd || !rd->context) return;
+	auto context = reinterpret_cast<ID3D11DeviceContext*>(rd->context);
 	context->OMSetRenderTargets(0, nullptr, nullptr);
 
 	Feature::ForEachLoadedFeature("EarlyPrepass", [](Feature* a_feature) {
-		a_feature->EarlyPrepass();
+		try { a_feature->EarlyPrepass(); } catch (...) {}
 	});
 }
 
 void Deferred::PrepassPasses()
 {
-	auto context = reinterpret_cast<ID3D11DeviceContext*>(fo4cs::GetRendererData()->context);
+	auto* rd = fo4cs::GetRendererData();
+	if (!rd || !rd->context) return;
+	auto context = reinterpret_cast<ID3D11DeviceContext*>(rd->context);
 	context->OMSetRenderTargets(0, nullptr, nullptr);
 
 	Feature::ForEachLoadedFeature("Prepass", [](Feature* a_feature) {
-		a_feature->Prepass();
+		try {
+			a_feature->Prepass();
+		} catch (const std::exception& e) {
+			logger::error("[Deferred] Feature '{}' Prepass exception: {}", a_feature->GetName(), e.what());
+		} catch (...) {
+			logger::error("[Deferred] Feature '{}' Prepass unknown exception", a_feature->GetName());
+		}
 	});
 }
 
 void Deferred::StartDeferred()
 {
 	deferredPass = true;
-	// OverrideBlendStates();  // disabled: crashes Godrays
-	PrepassPasses();
+	try {
+		PrepassPasses();
+	} catch (const std::exception& e) {
+		logger::error("[Deferred] StartDeferred exception: {}", e.what());
+	} catch (...) {
+		logger::error("[Deferred] StartDeferred unknown exception");
+	}
 }
 
 void Deferred::EndDeferred()
@@ -438,40 +455,52 @@ void Deferred::Hooks::Install()
 
 void Deferred::Hooks::Main_RenderShadowMaps::thunk()
 {
-	func();  // call original first (preserves regs for write_thunk_call)
-	LogHookFire("Main_RenderShadowMaps");
-	GetSingleton()->EarlyPrepasses();
+	try {
+		func();  // call original first (preserves regs for write_thunk_call)
+		LogHookFire("Main_RenderShadowMaps");
+		GetSingleton()->EarlyPrepasses();
+	} catch (...) {
+		logger::error("[Deferred] Main_RenderShadowMaps exception");
+	}
 }
 
 void Deferred::Hooks::Main_RenderWorld::thunk()
 {
-	LogHookFire("Main_RenderWorld");
-	func();
+	try {
+		LogHookFire("Main_RenderWorld");
+		func();
+	} catch (...) {
+		logger::error("[Deferred] Main_RenderWorld exception");
+	}
 }
 
 void Deferred::Hooks::Main_RenderWorld_Start::thunk()
 {
-	LogHookFire("Main_RenderWorld_Start");
-	GetSingleton()->StartDeferred();
-	func();
+	try {
+		LogHookFire("Main_RenderWorld_Start");
+		GetSingleton()->StartDeferred();
+		func();
+	} catch (...) {
+		logger::error("[Deferred] Main_RenderWorld_Start exception");
+	}
 }
 
 void Deferred::Hooks::Main_RenderWorld_BlendedDecals::thunk()
 {
-	func();  // call original first (preserves regs for write_thunk_call)
-	LogHookFire("Main_RenderWorld_BlendedDecals");
-	// EndDeferred() deferred until D3D11 context usage is verified safe
-	// GetSingleton()->EndDeferred();
+	try {
+		func();  // call original first (preserves regs for write_thunk_call)
+		LogHookFire("Main_RenderWorld_BlendedDecals");
+	} catch (...) {
+		logger::error("[Deferred] Main_RenderWorld_BlendedDecals exception");
+	}
 }
 
 void Deferred::Hooks::Renderer_ResetState::thunk(void* a_this)
 {
-	LogHookFire("Renderer_ResetState");
-	func(a_this);
-
-	// Re-bind per-frame constant buffers after state reset.
-	// Skyrim CS pattern:
-	//   ID3D11Buffer* buffers[3] = { permutationCB, sharedDataCB, featureDataCB };
-	//   context->PSSetConstantBuffers(4, 3, buffers);
-	//   context->CSSetConstantBuffers(5, 2, buffers + 1);
+	try {
+		LogHookFire("Renderer_ResetState");
+		func(a_this);
+	} catch (...) {
+		logger::error("[Deferred] Renderer_ResetState exception");
+	}
 }
