@@ -25,10 +25,9 @@ set(FFX_AUTO_COMPILE_SHADERS ON CACHE BOOL "" FORCE)
 add_subdirectory("${FFX_30_ROOT}/sdk" "${CMAKE_CURRENT_BINARY_DIR}/ffx30" EXCLUDE_FROM_ALL)
 
 # Export include paths for consumption by Core target
-set(FFX_30_INCLUDE_DIR "${FFX_30_ROOT}/sdk/include" PARENT_SCOPE)
+set(FFX_30_INCLUDE_DIR "${FFX_30_ROOT}/sdk/include")
 set(FFX_30_LIBRARIES
     ffx_backend_dx11_x64
     ffx_fsr3_x64
-    PARENT_SCOPE
 )
 message(STATUS "[FSR30] D3D11-native FSR 3.0 enabled for PreNG (${FFX_30_ROOT})")
