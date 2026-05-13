@@ -19,6 +19,7 @@
 #if defined(FALLOUT_PRE_NG)
 // FSR 3.0 — static linking via ffx_fsr3_x64 + ffx_backend_dx11_x64.
 // No runtime DLL loading or stubs needed — the C API is directly linked.
+
 #else
 ffxFunctions ffxModule;
 
@@ -488,7 +489,7 @@ void FidelityFX::CreateFSR3Context(
 	}
 
 	FfxFsr3ContextDescription contextDesc{};
-	contextDesc.flags = FFX_FSR3_ENABLE_UPSCALING | FFX_FSR3_ENABLE_FRAME_INTERPOLATION;
+	contextDesc.flags = FFX_FSR3_ENABLE_HIGH_DYNAMIC_RANGE;  // FG enabled by providing backendInterfaceFrameInterpolation
 	contextDesc.maxRenderSize = { a_maxRenderWidth, a_maxRenderHeight };
 	contextDesc.maxUpscaleSize = { a_outputWidth, a_outputHeight };
 	contextDesc.displaySize = { a_outputWidth, a_outputHeight };
@@ -534,6 +535,7 @@ bool FidelityFX::Upscale(
 	float2 a_displaySize,
 	uint a_qualityMode)
 {
+	(void)a_qualityMode;
 	if (!fsr3Initialized || !a_context || !a_color || !a_output || !a_depth || !a_motionVectors)
 		return false;
 
@@ -555,13 +557,13 @@ bool FidelityFX::Upscale(
 
 	FfxFsr3DispatchUpscaleDescription dispatch{};
 	dispatch.commandList = ffxGetCommandListDX11(a_context);
-	dispatch.color = ffxGetResourceDX11(a_color, nullptr, FFX_RESOURCE_STATE_PIXEL_COMPUTE_READ);
-	dispatch.depth = ffxGetResourceDX11(a_depth, nullptr, FFX_RESOURCE_STATE_PIXEL_COMPUTE_READ);
-	dispatch.motionVectors = ffxGetResourceDX11(a_motionVectors, nullptr, FFX_RESOURCE_STATE_PIXEL_COMPUTE_READ);
-	dispatch.exposure = ffxGetResourceDX11(nullptr, nullptr, FFX_RESOURCE_STATE_PIXEL_COMPUTE_READ);
-	dispatch.reactive = ffxGetResourceDX11(nullptr, nullptr, FFX_RESOURCE_STATE_PIXEL_COMPUTE_READ);
-	dispatch.transparencyAndComposition = ffxGetResourceDX11(nullptr, nullptr, FFX_RESOURCE_STATE_PIXEL_COMPUTE_READ);
-	dispatch.upscaleOutput = ffxGetResourceDX11(a_output, nullptr, FFX_RESOURCE_STATE_PIXEL_COMPUTE_READ);
+	dispatch.color = ffxGetResourceDX11(a_color, {}, nullptr, FFX_RESOURCE_STATE_PIXEL_COMPUTE_READ);
+	dispatch.depth = ffxGetResourceDX11(a_depth, {}, nullptr, FFX_RESOURCE_STATE_PIXEL_COMPUTE_READ);
+	dispatch.motionVectors = ffxGetResourceDX11(a_motionVectors, {}, nullptr, FFX_RESOURCE_STATE_PIXEL_COMPUTE_READ);
+	dispatch.exposure = ffxGetResourceDX11(nullptr, {}, nullptr, FFX_RESOURCE_STATE_PIXEL_COMPUTE_READ);
+	dispatch.reactive = ffxGetResourceDX11(nullptr, {}, nullptr, FFX_RESOURCE_STATE_PIXEL_COMPUTE_READ);
+	dispatch.transparencyAndComposition = ffxGetResourceDX11(nullptr, {}, nullptr, FFX_RESOURCE_STATE_PIXEL_COMPUTE_READ);
+	dispatch.upscaleOutput = ffxGetResourceDX11(a_output, {}, nullptr, FFX_RESOURCE_STATE_PIXEL_COMPUTE_READ);
 
 	dispatch.jitterOffset.x = -a_jitter.x;
 	dispatch.jitterOffset.y = -a_jitter.y;

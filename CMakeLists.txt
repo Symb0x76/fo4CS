@@ -50,7 +50,7 @@ set(FO4CS_COMMON_DEPENDENCIES
     dxgi.lib
     magic_enum::magic_enum
     d3dcompiler.lib
-    "$<$<BOOL:${BUILD_PRE_NG}>:${FFX_30_LIBRARIES}>"
+
 )
 
 set(FEATURE_VERSIONS
@@ -348,7 +348,11 @@ if(AIO)
         )
     endif()
     set_target_properties(NuclearGFX PROPERTIES OUTPUT_NAME "NuclearGFX")
-    target_link_libraries(NuclearGFX PRIVATE Core)
+	if(BUILD_PRE_NG)
+		target_link_libraries(NuclearGFX PRIVATE Core ffx_backend_dx11_x64 ffx_fsr3_x64)
+	else()
+		target_link_libraries(NuclearGFX PRIVATE Core)
+	endif()
 endif()
 
 if(COMMUNITY_SHADERS)
@@ -371,7 +375,11 @@ if(COMMUNITY_SHADERS)
         )
     endif()
     target_compile_definitions(CommunityShaders PRIVATE COMMUNITY_SHADERS)
-    target_link_libraries(CommunityShaders PRIVATE Core CoreCS)
+	if(BUILD_PRE_NG)
+		target_link_libraries(CommunityShaders PRIVATE Core CoreCS ffx_backend_dx11_x64 ffx_fsr3_x64)
+	else()
+		target_link_libraries(CommunityShaders PRIVATE Core CoreCS)
+	endif()
 endif()
 
 if(OVERLAY)
