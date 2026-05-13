@@ -6,11 +6,23 @@
 #include "Upscaler.h"
 
 #include "DX12SwapChain.h"
-#include <dx12/ffx_api_dx12.hpp>
 
+#if defined(FALLOUT_PRE_NG)
+// FSR 3.0 — D3D11-native combined upscale + frame generation
+#include <FidelityFX/host/ffx_fsr3.h>
+#include <FidelityFX/host/backends/dx11/ffx_dx11.h>
+#else
+// FSR 3.1 — D3D12-interop, separate upscaling + frame generation contexts
+#include <dx12/ffx_api_dx12.hpp>
+#endif
+
+#if defined(FALLOUT_PRE_NG)
+// FSR 3.0 — static linking via ffx_fsr3_x64 + ffx_backend_dx11_x64.
+// No runtime DLL loading or stubs needed — the C API is directly linked.
+#else
 ffxFunctions ffxModule;
 
-// Stubs: forward the FFX SDK inline wrapper calls to the runtime-loaded function pointers
+// Stubs: forward the FFX SDK C++ wrapper calls to the runtime-loaded function pointers
 extern "C" ffxReturnCode_t ffxCreateContext(ffxContext* context, ffxCreateContextDescHeader* desc, const ffxAllocationCallbacks* memCb)
 {
 	return ffxModule.CreateContext(context, desc, memCb);
@@ -31,9 +43,16 @@ extern "C" ffxReturnCode_t ffxQuery(ffxContext* context, ffxQueryDescHeader* des
 {
 	return ffxModule.Query(context, desc);
 }
+#endif
 
 void FidelityFX::LoadFFX()
 {
+#if defined(FALLOUT_PRE_NG)
+	// FSR 3.0 is statically linked via ffx_fsr3_x64 + ffx_backend_dx11_x64.
+	// No runtime DLL loading needed — the D3D11 backend is compiled in.
+	featureFSR = true;
+	logger::info("[FidelityFX] FSR 3.0 D3D11-native backend active (statically linked)");
+#else
 	struct RuntimePath
 	{
 		const wchar_t* path;
@@ -57,12 +76,21 @@ void FidelityFX::LoadFFX()
 	} else {
 		logger::warn("[FidelityFX] amd_fidelityfx_dx12.dll is not loaded");
 	}
+#endif
 }
 
 void FidelityFX::SetupFrameGeneration()
 {
 	featureFrameGen = false;
 
+#if defined(FALLOUT_PRE_NG)
+	// FSR 3.0 handles frame generation via the combined upscale dispatch.
+	// No separate FG context needed — featureFrameGen is set when the FSR 3.0
+	// context is created in CreateFSR3Context().
+	if (fsr3Initialized)
+		featureFrameGen = true;
+	return;
+#else
 	if (!module) {
 		logger::warn("[FidelityFX] Runtime is not loaded, skipping frame generation context");
 		return;
@@ -89,8 +117,10 @@ void FidelityFX::SetupFrameGeneration()
 	}
 
 	featureFrameGen = true;
+#endif
 }
 
+#if !defined(FALLOUT_PRE_NG)
 bool FidelityFX::SetupUpscaling(ID3D12Device* a_device, uint32_t a_maxRenderWidth, uint32_t a_maxRenderHeight, uint32_t a_outputWidth, uint32_t a_outputHeight)
 {
 	if (!module || !a_device)
@@ -338,6 +368,8 @@ void FidelityFX::Present(bool a_useFrameGen)
 	lastFrameTime = currentFrameTime;
 
 	if (canUseFrameGen) {
+		static int fgFailuresSinceLastSuccess = 0;
+		static constexpr int kMaxConsecutiveFrameGenFailures = 5;
 		ffx::DispatchDescFrameGenerationPrepareV2 dispatchParameters{};
 
 		dispatchParameters.commandList = commandList;
@@ -388,7 +420,6 @@ void FidelityFX::Present(bool a_useFrameGen)
 		dispatchParameters.cameraRight[0] = 1.0f; dispatchParameters.cameraRight[1] = 0.0f; dispatchParameters.cameraRight[2] = 0.0f;
 		dispatchParameters.cameraForward[0] = 0.0f; dispatchParameters.cameraForward[1] = 0.0f; dispatchParameters.cameraForward[2] = 1.0f;
 
-		static int fgFailuresSinceLastSuccess = 0;
 
 		if (dispatchParameters.renderSize.width > 0 && dispatchParameters.renderSize.height > 0) {
 			ffx::ReturnCode dispatchResult = ffx::Dispatch(frameGenContext, dispatchParameters);
@@ -407,6 +438,12 @@ void FidelityFX::Present(bool a_useFrameGen)
 				disableConfig.HUDLessColor = FfxApiResource({});
 				disableConfig.swapChain = dx12SwapChain->swapChain;
 				ffx::Configure(frameGenContext, disableConfig);
+
+				if (fgFailuresSinceLastSuccess >= kMaxConsecutiveFrameGenFailures) {
+					featureFrameGen = false;
+					logger::error("[FidelityFX] Disabling FSR frame generation after {} consecutive dispatch failures; last error={}",
+						fgFailuresSinceLastSuccess, static_cast<uint32_t>(dispatchResult));
+				}
 			} else {
 				if (fgFailuresSinceLastSuccess > 0) {
 					logger::info("[FidelityFX] Frame generation dispatch recovered after {} failures",
@@ -419,3 +456,152 @@ void FidelityFX::Present(bool a_useFrameGen)
 
 	frameID++;
 }
+
+#endif // !FALLOUT_PRE_NG
+
+#if defined(FALLOUT_PRE_NG)
+
+void FidelityFX::CreateFSR3Context(
+	ID3D11Device* a_device,
+	uint32_t a_maxRenderWidth, uint32_t a_maxRenderHeight,
+	uint32_t a_outputWidth, uint32_t a_outputHeight)
+{
+	if (fsr3Initialized)
+		return;
+
+	auto fsrDevice = ffxGetDeviceDX11(a_device);
+
+	size_t scratchBufferSize = ffxGetScratchMemorySizeDX11(FFX_FSR3_CONTEXT_COUNT);
+	fsr3ScratchBuffer = calloc(scratchBufferSize, 1);
+	if (!fsr3ScratchBuffer) {
+		logger::critical("[FidelityFX] FSR 3.0: Failed to allocate scratch buffer");
+		return;
+	}
+	memset(fsr3ScratchBuffer, 0, scratchBufferSize);
+
+	FfxInterface fsrInterface;
+	if (ffxGetInterfaceDX11(&fsrInterface, fsrDevice, fsr3ScratchBuffer, scratchBufferSize, FFX_FSR3_CONTEXT_COUNT) != FFX_OK) {
+		logger::critical("[FidelityFX] FSR 3.0: Failed to get D3D11 backend interface");
+		free(fsr3ScratchBuffer);
+		fsr3ScratchBuffer = nullptr;
+		return;
+	}
+
+	FfxFsr3ContextDescription contextDesc{};
+	contextDesc.flags = FFX_FSR3_ENABLE_UPSCALING | FFX_FSR3_ENABLE_FRAME_INTERPOLATION;
+	contextDesc.maxRenderSize = { a_maxRenderWidth, a_maxRenderHeight };
+	contextDesc.maxUpscaleSize = { a_outputWidth, a_outputHeight };
+	contextDesc.displaySize = { a_outputWidth, a_outputHeight };
+	contextDesc.backendInterfaceSharedResources = fsrInterface;
+	contextDesc.backendInterfaceUpscaling = fsrInterface;
+	contextDesc.backendInterfaceFrameInterpolation = fsrInterface;
+	contextDesc.fpMessage = nullptr;
+
+	if (ffxFsr3ContextCreate(&fsr3Context, &contextDesc) != FFX_OK) {
+		logger::critical("[FidelityFX] FSR 3.0: Failed to create context");
+		free(fsr3ScratchBuffer);
+		fsr3ScratchBuffer = nullptr;
+		return;
+	}
+
+	fsr3Initialized = true;
+	featureFSR = true;
+	featureFrameGen = true;
+	logger::info("[FidelityFX] FSR 3.0 D3D11 context created ({}x{} -> {}x{}, FG enabled)",
+		a_maxRenderWidth, a_maxRenderHeight, a_outputWidth, a_outputHeight);
+}
+
+void FidelityFX::DestroyFSR3Context()
+{
+	if (fsr3Initialized) {
+		ffxFsr3ContextDestroy(&fsr3Context);
+		free(fsr3ScratchBuffer);
+		fsr3ScratchBuffer = nullptr;
+		fsr3Initialized = false;
+	}
+	featureFrameGen = false;
+	featureFSR = false;
+}
+
+bool FidelityFX::Upscale(
+	ID3D11DeviceContext* a_context,
+	ID3D11Texture2D* a_color,
+	ID3D11Texture2D* a_output,
+	ID3D11Texture2D* a_depth,
+	ID3D11Texture2D* a_motionVectors,
+	float2 a_jitter,
+	float2 a_renderSize,
+	float2 a_displaySize,
+	uint a_qualityMode)
+{
+	if (!fsr3Initialized || !a_context || !a_color || !a_output || !a_depth || !a_motionVectors)
+		return false;
+
+	static LARGE_INTEGER frequency = []() {
+		LARGE_INTEGER freq{};
+		QueryPerformanceFrequency(&freq);
+		return freq;
+	}();
+	static LARGE_INTEGER lastFrameTime = []() {
+		LARGE_INTEGER time{};
+		QueryPerformanceCounter(&time);
+		return time;
+	}();
+	LARGE_INTEGER currentFrameTime{};
+	QueryPerformanceCounter(&currentFrameTime);
+	float deltaTime = static_cast<float>(currentFrameTime.QuadPart - lastFrameTime.QuadPart)
+		/ static_cast<float>(frequency.QuadPart);
+	lastFrameTime = currentFrameTime;
+
+	FfxFsr3DispatchUpscaleDescription dispatch{};
+	dispatch.commandList = ffxGetCommandListDX11(a_context);
+	dispatch.color = ffxGetResourceDX11(a_color, nullptr, FFX_RESOURCE_STATE_PIXEL_COMPUTE_READ);
+	dispatch.depth = ffxGetResourceDX11(a_depth, nullptr, FFX_RESOURCE_STATE_PIXEL_COMPUTE_READ);
+	dispatch.motionVectors = ffxGetResourceDX11(a_motionVectors, nullptr, FFX_RESOURCE_STATE_PIXEL_COMPUTE_READ);
+	dispatch.exposure = ffxGetResourceDX11(nullptr, nullptr, FFX_RESOURCE_STATE_PIXEL_COMPUTE_READ);
+	dispatch.reactive = ffxGetResourceDX11(nullptr, nullptr, FFX_RESOURCE_STATE_PIXEL_COMPUTE_READ);
+	dispatch.transparencyAndComposition = ffxGetResourceDX11(nullptr, nullptr, FFX_RESOURCE_STATE_PIXEL_COMPUTE_READ);
+	dispatch.upscaleOutput = ffxGetResourceDX11(a_output, nullptr, FFX_RESOURCE_STATE_PIXEL_COMPUTE_READ);
+
+	dispatch.jitterOffset.x = -a_jitter.x;
+	dispatch.jitterOffset.y = -a_jitter.y;
+	dispatch.motionVectorScale.x = a_renderSize.x;
+	dispatch.motionVectorScale.y = a_renderSize.y;
+	dispatch.renderSize.width = static_cast<uint32_t>(a_renderSize.x);
+	dispatch.renderSize.height = static_cast<uint32_t>(a_renderSize.y);
+	dispatch.upscaleSize.width = static_cast<uint32_t>(a_displaySize.x);
+	dispatch.upscaleSize.height = static_cast<uint32_t>(a_displaySize.y);
+
+	dispatch.enableSharpening = false;
+	dispatch.sharpness = 0.0f;
+	dispatch.frameTimeDelta = std::max(deltaTime * 1000.f, 0.0f);
+	dispatch.preExposure = 1.0f;
+	dispatch.reset = false;
+
+	dispatch.cameraNear = *(float*)REL::ID(57985).address();
+	dispatch.cameraFar = *(float*)REL::ID(958877).address();
+	dispatch.cameraFovAngleVertical = 1.0f;
+	dispatch.viewSpaceToMetersFactor = 0.01428222656f;
+	dispatch.flags = 0;
+	dispatch.frameID = 0;
+
+	if (ffxFsr3ContextDispatchUpscale(&fsr3Context, &dispatch) != FFX_OK) {
+		logger::error("[FidelityFX] FSR 3.0 dispatch failed");
+		return false;
+	}
+
+	return true;
+}
+
+void FidelityFX::DestroyUpscaling()
+{
+	DestroyFSR3Context();
+}
+
+void FidelityFX::Present(bool /*a_useFrameGeneration*/)
+{
+	// FSR 3.0 handles frame generation within the upscale dispatch.
+	// No separate Present-time FG dispatch needed.
+}
+
+#endif // FALLOUT_PRE_NG

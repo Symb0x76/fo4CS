@@ -205,7 +205,11 @@ void Upscaling::OnD3D11DeviceCreated(ID3D11Device* a_device, IDXGIAdapter* a_ada
 	(void)a_adapter;
 	renderBackendEnabled =
 		(UsesDLSSUpscaling() && d3d12Interop && Streamline::GetSingleton()->featureDLSS) ||
+#if defined(FALLOUT_PRE_NG)
+		(UsesFSRUpscaling() && FidelityFX::GetSingleton()->featureFSR);  // D3D11-native, no D3D12 interop
+#else
 		(UsesFSRUpscaling() && d3d12Interop && FidelityFX::GetSingleton()->featureFSR);
+#endif
 }
 
 Upscaling::UpscaleMethod Upscaling::GetUpscaleMethod(bool a_checkMenu) const
@@ -226,7 +230,11 @@ Upscaling::UpscaleMethod Upscaling::GetUpscaleMethod(bool a_checkMenu) const
 	auto method = GetPreferredUpscaleMethod();
 	if (method == UpscaleMethod::kFSR) {
 		static bool loggedUnavailableFSR = false;
+#if defined(FALLOUT_PRE_NG)
+		if (!FidelityFX::GetSingleton()->featureFSR) {
+#else
 		if (!d3d12Interop || !FidelityFX::GetSingleton()->featureFSR) {
+#endif
 			if (!loggedUnavailableFSR) {
 				logger::warn("[Upscaler] FSR requires the D3D12 proxy and FidelityFX runtime; disabling FSR");
 				loggedUnavailableFSR = true;
@@ -948,6 +956,18 @@ void Upscaling::Upscale()
 			context->CopyResource(upscalerInputShared[frameIndex]->resource.get(), frameBufferResource);
 			CopyBuffersToSharedResources();
 
+#if defined(FALLOUT_PRE_NG)
+			const bool dispatched = FidelityFX::GetSingleton()->Upscale(
+				context,
+				upscalerInputShared[frameIndex]->resource.get(),
+				upscalerOutputShared[frameIndex]->resource.get(),
+				depthBufferShared[frameIndex]->resource.get(),
+				motionVectorBufferShared[frameIndex]->resource.get(),
+				jitter,
+				renderSize,
+				screenSize,
+				settings.qualityMode);
+#else
 			auto commandList = dx12SwapChain->BeginInteropCommandList();
 			const bool dispatched = FidelityFX::GetSingleton()->Upscale(
 				commandList,
@@ -960,6 +980,7 @@ void Upscaling::Upscale()
 				screenSize,
 				settings.qualityMode);
 			dx12SwapChain->ExecuteInteropCommandListAndWait();
+#endif
 
 			if (dispatched) {
 				context->CopyResource(frameBufferResource, upscalerOutputShared[frameIndex]->resource.get());
@@ -986,7 +1007,13 @@ void Upscaling::CreateUpscalingResources()
 
 	const bool needsDLSSSharedResources = UsesDLSSUpscaling() && Streamline::GetSingleton()->featureDLSS;
 	const bool needsFSRSharedResources = UsesFSRUpscaling() && FidelityFX::GetSingleton()->featureFSR;
+#if defined(FALLOUT_PRE_NG)
+	// FSR 3.0 works on D3D11 native — no D3D12 interop needed.
+	// DLSS still requires D3D12; if only DLSS, check interop as before.
+	if ((!needsDLSSSharedResources && !needsFSRSharedResources) || (!needsFSRSharedResources && !d3d12Interop))
+#else
 	if ((!needsDLSSSharedResources && !needsFSRSharedResources) || !d3d12Interop)
+#endif
 		return;
 
 	auto dx12SwapChain = DX12SwapChain::GetSingleton();
@@ -1047,12 +1074,21 @@ void Upscaling::CreateUpscalingResources()
 	}
 
 	if (needsFSRSharedResources) {
+#if defined(FALLOUT_PRE_NG)
+		FidelityFX::GetSingleton()->CreateFSR3Context(
+			reinterpret_cast<ID3D11Device*>(fo4cs::GetRendererData()->device),
+			colorDesc.Width,
+			colorDesc.Height,
+			colorDesc.Width,
+			colorDesc.Height);
+#else
 		FidelityFX::GetSingleton()->SetupUpscaling(
 			dx12SwapChain->d3d12Device.get(),
 			colorDesc.Width,
 			colorDesc.Height,
 			colorDesc.Width,
 			colorDesc.Height);
+#endif
 	}
 }
 
