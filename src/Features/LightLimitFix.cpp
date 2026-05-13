@@ -311,6 +311,18 @@ void LightLimitFix::Prepass()
 {
 	if (!resourcesCreated) return;
 
+	// Safety gate: skip first 5 frames after game start / save load.
+	// Prepass fires during deferred render pass — on the initial frame,
+	// the D3D11 pipeline is still initializing render targets, shader caches,
+	// and BSGraphics state. Compute dispatch + scene traversal during this
+	// window can cause GPU pipeline stalls manifesting as save-load freezes.
+	if (++diagFrameCounter < 5) {
+		if (diagFrameCounter == 1) {
+			logger::info("[LightLimitFix] Prepass gated — waiting for pipeline stabilization (frame {})", diagFrameCounter);
+		}
+		return;
+	}
+
 	auto* rendererData = fo4cs::GetRendererData();
 	if (!rendererData) return;
 	auto* context = reinterpret_cast<ID3D11DeviceContext*>(rendererData->context);
@@ -341,8 +353,14 @@ void LightLimitFix::Prepass()
 	}
 
 
-	// --- Upload lights collected last frame (via SetupGeometry hooks) ---
-	CollectLightsFromScene();
+		// Collect lights: prefer BSLight* pointers from last frame's SetupGeometry
+		// (targeted, only lights actually rendered). Fall back to scene traversal
+		// for the first frame when nothing has been tracked yet.
+		if (!seenLights.empty()) {
+			CollectLightsFromBSLight();
+		} else {
+			CollectLightsFromScene();
+		}
 
 	currentLightCount = static_cast<std::uint32_t>(frameLights.size());
 	if (currentLightCount > 0) {
@@ -351,7 +369,7 @@ void LightLimitFix::Prepass()
 	}
 
 	// Diagnostic: log every 300 frames (~5 sec) to avoid spam
-	if (++diagFrameCounter % 300 == 0) {
+	if (diagFrameCounter % 300 == 0) {
 		logger::info("[LightLimitFix] frame={} lights={} clusters={}x{}x{} near={:.1f} far={:.0f}",
 		             diagFrameCounter, currentLightCount,
 		             clusterSize[0], clusterSize[1], clusterSize[2],
@@ -433,17 +451,23 @@ void LightLimitFix::Prepass()
 		context->CSSetShader(nullptr, nullptr, 0);
 	}
 
-	// --- Bind output SRVs for pixel shader consumption ---
-	// Disabled: slots 35-37 may conflict with Godrays / other effects.
-	// Enable after verifying slot availability and deploying PS replacements.
-#if 0
-	ID3D11ShaderResourceView* views[3]{
-		lightsSRV,
-		lightIndexListSRV,
-		lightGridSRV
-	};
-	context->PSSetShaderResources(35, ARRAYSIZE(views), views);
-#endif
+	// Bind clustered light grid SRVs for pixel shader consumption.
+	// Slots t35-t37 match the register(t35) declarations in LightingPS.hlsl.
+	// Gate: skip first 3 frames after save load to avoid GPU pipeline stalls
+	// while the game initializes render state. Only bind when lights exist.
+	if (diagFrameCounter >= 3 && currentLightCount > 0) {
+		ID3D11ShaderResourceView* views[3]{
+			lightsSRV,
+			lightIndexListSRV,
+			lightGridSRV
+		};
+		context->PSSetShaderResources(35, ARRAYSIZE(views), views);
+
+		if (diagFrameCounter % 300 == 0) {
+			logger::info("[LightLimitFix] SRVs bound to PS slots t35-t37 ({} lights, {} clusters)",
+			             currentLightCount, clusterSize[0] * clusterSize[1] * clusterSize[2]);
+		}
+	}
 }
 
 void LightLimitFix::Reset()
@@ -563,6 +587,26 @@ void LightLimitFix::CollectLightCB()
 
 	ctx->Unmap(stagingCB, 0);
 	stagingCB->Release();
+}
+
+void LightLimitFix::CollectLightsFromBSLight()
+{
+	for (auto* light : seenLights) {
+		if (!light || frameLights.size() >= kMaxLights) break;
+		auto* niLight = reinterpret_cast<RE::NiLight*>(light);
+		LightData data{};
+		data.color.x = niLight->diff.r;
+		data.color.y = niLight->diff.g;
+		data.color.z = niLight->diff.b;
+		data.fade = niLight->dimmer;
+		data.radius = niLight->modelBound.fRadius;
+		data.invRadius = data.radius > 0.0f ? 1.0f / data.radius : 0.0f;
+		data.positionWS[0].data.x = niLight->world.translate.x;
+		data.positionWS[0].data.y = niLight->world.translate.y;
+		data.positionWS[0].data.z = niLight->world.translate.z;
+		data.lightFlags = static_cast<std::uint32_t>(LightFlags::Initialised);
+		frameLights.push_back(data);
+	}
 }
 
 void LightLimitFix::CollectLightsFromScene()

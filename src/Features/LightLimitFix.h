@@ -155,6 +155,7 @@ struct LightLimitFix : Feature
 	// Per-frame light accumulation (cleared each Prepass before compute dispatch)
 	void CollectLightsFromPass(RE::BSRenderPass* a_pass);
 	void CollectLightsFromScene();
+	void CollectLightsFromBSLight();
 	void CollectLightCB();  // read game's per-draw light CB (PS slot 2)
 	std::vector<LightData> frameLights;
 	std::set<RE::BSLight*> seenLights;

@@ -26,6 +26,11 @@ set(Boost_USE_STATIC_RUNTIME ON)
 xseplugin_resolve_commonlib_root(CommonLibRoot CommonLibName)
 xseplugin_resolve_commonlib_project(CommonLibPath "${CommonLibRoot}")
 
+# FSR 3.0 — D3D11-native combined upscale+FG for PreNG
+if(BUILD_PRE_NG)
+    include(FSR30)
+endif()
+
 if(F4SE_SUPPORT_XBYAK)
     set(COMMONLIBF4_ENABLE_XBYAK ON CACHE BOOL "Enable xbyak support for CommonLibF4" FORCE)
 endif()
@@ -45,6 +50,7 @@ set(FO4CS_COMMON_DEPENDENCIES
     dxgi.lib
     magic_enum::magic_enum
     d3dcompiler.lib
+    "$<$<BOOL:${BUILD_PRE_NG}>:${FFX_30_LIBRARIES}>"
 )
 
 set(FEATURE_VERSIONS
@@ -98,6 +104,7 @@ target_include_directories(Core
     ${CMAKE_CURRENT_SOURCE_DIR}/extern/imgui
     ${CMAKE_CURRENT_SOURCE_DIR}/extern/imgui/backends
     ${CMAKE_CURRENT_SOURCE_DIR}/include
+    "$<$<BOOL:${BUILD_PRE_NG}>:${FFX_30_INCLUDE_DIR}>"
     PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
