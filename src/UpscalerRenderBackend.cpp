@@ -1,5 +1,8 @@
 #include "Upscaler.h"
 
+#include "RE/CameraData.h"
+#include "RE/SingletonAccessors.h"
+
 #include <algorithm>
 #include <cmath>
 #include <d3dcompiler.h>
@@ -40,25 +43,6 @@ namespace
 		kMain = 2
 	};
 
-	[[nodiscard]] RE::BSGraphics::State* State_GetSingleton()
-	{
-#if defined(FALLOUT_POST_NG)
-		REL::Relocation<RE::BSGraphics::State*> singleton{ REL::ID(2704621) };
-#else
-		REL::Relocation<RE::BSGraphics::State*> singleton{ REL::ID(600795) };
-#endif
-		return singleton.get();
-	}
-
-	[[nodiscard]] RE::BSGraphics::RenderTargetManager* RenderTargetManager_GetSingleton()
-	{
-#if defined(FALLOUT_POST_NG)
-		REL::Relocation<RE::BSGraphics::RenderTargetManager*> singleton{ REL::ID(2666735) };
-#else
-		REL::Relocation<RE::BSGraphics::RenderTargetManager*> singleton{ REL::ID(1508457) };
-#endif
-		return singleton.get();
-	}
 
 	float GetUpscaleRatio(uint qualityMode)
 	{
@@ -183,21 +167,8 @@ namespace
 		previousStage = stage;
 		logger::debug("[Upscaler] Render backend stage: {}", stage);
 	}
-
-	struct SamplerStates
-	{
-		ID3D11SamplerState* a[320];
-
-		static SamplerStates* GetSingleton()
-		{
-#if defined(FALLOUT_POST_NG)
-			return reinterpret_cast<SamplerStates*>(REL::ID(2704455).address());
-#else
-			return reinterpret_cast<SamplerStates*>(REL::ID(44312).address());
-#endif
-		}
-	};
 }
+
 
 void Upscaling::OnD3D11DeviceCreated(ID3D11Device* a_device, IDXGIAdapter* a_adapter)
 {
@@ -528,10 +499,10 @@ void Upscaling::UpdateSamplerStates(float a_currentMipBias)
 
 	auto rendererData = fo4cs::GetRendererData();
 	auto device = reinterpret_cast<ID3D11Device*>(rendererData->device);
-	auto samplerStates = SamplerStates::GetSingleton();
+	auto samplerStates = fo4cs::RE::GetSamplerStateArray();
 
 	for (int i = 0; i < 320; i++) {
-		originalSamplerStates[i] = samplerStates->a[i];
+		originalSamplerStates[i] = samplerStates[i];
 		if (!originalSamplerStates[i])
 			continue;
 
@@ -549,19 +520,19 @@ void Upscaling::UpdateSamplerStates(float a_currentMipBias)
 
 void Upscaling::OverrideSamplerStates()
 {
-	auto samplerStates = SamplerStates::GetSingleton();
+	auto samplerStates = fo4cs::RE::GetSamplerStateArray();
 	for (int i = 0; i < 320; i++) {
 		if (biasedSamplerStates[i])
-			samplerStates->a[i] = biasedSamplerStates[i];
+			samplerStates[i] = biasedSamplerStates[i];
 	}
 }
 
 void Upscaling::ResetSamplerStates()
 {
-	auto samplerStates = SamplerStates::GetSingleton();
+	auto samplerStates = fo4cs::RE::GetSamplerStateArray();
 	for (int i = 0; i < 320; i++) {
 		if (originalSamplerStates[i])
-			samplerStates->a[i] = originalSamplerStates[i];
+			samplerStates[i] = originalSamplerStates[i];
 	}
 }
 
@@ -569,8 +540,8 @@ void Upscaling::CopyDepth()
 {
 	auto rendererData = fo4cs::GetRendererData();
 	auto context = reinterpret_cast<ID3D11DeviceContext*>(rendererData->context);
-	auto gameViewport = State_GetSingleton();
-	auto renderTargetManager = RenderTargetManager_GetSingleton();
+	auto gameViewport = fo4cs::RE::GetGraphicsState();
+	auto renderTargetManager = fo4cs::RE::GetRenderTargetManager();
 
 	auto screenSize = float2(float(gameViewport->screenWidth), float(gameViewport->screenHeight));
 	auto renderSize = float2(screenSize.x * renderTargetManager->dynamicWidthRatio, screenSize.y * renderTargetManager->dynamicHeightRatio);
@@ -777,19 +748,12 @@ ConstantBuffer* Upscaling::GetUpscalingCB()
 
 void Upscaling::UpdateAndBindUpscalingCB(ID3D11DeviceContext* a_context, float2 a_screenSize, float2 a_renderSize)
 {
-#if defined(FALLOUT_POST_NG)
-	static auto cameraNear = (float*)REL::ID(2712882).address();
-	static auto cameraFar = (float*)REL::ID(2712883).address();
-#else
-	static auto cameraNear = (float*)REL::ID(57985).address();
-	static auto cameraFar = (float*)REL::ID(958877).address();
-#endif
 	UpscalingCB data{};
 	data.ScreenSize[0] = static_cast<uint>(a_screenSize.x);
 	data.ScreenSize[1] = static_cast<uint>(a_screenSize.y);
 	data.RenderSize[0] = static_cast<uint>(a_renderSize.x);
 	data.RenderSize[1] = static_cast<uint>(a_renderSize.y);
-	data.CameraData = float4(*cameraFar, *cameraNear, *cameraFar - *cameraNear, *cameraFar * *cameraNear);
+	data.CameraData = float4(fo4cs::RE::GetCameraFar(), fo4cs::RE::GetCameraNear(), fo4cs::RE::GetCameraFar() - fo4cs::RE::GetCameraNear(), fo4cs::RE::GetCameraFar() * fo4cs::RE::GetCameraNear());
 
 	auto cb = GetUpscalingCB();
 	cb->Update(data);
@@ -799,12 +763,7 @@ void Upscaling::UpdateAndBindUpscalingCB(ID3D11DeviceContext* a_context, float2 
 
 void Upscaling::UpdateGameSettings()
 {
-#if defined(FALLOUT_POST_NG)
-	static auto enableTAA = (bool*)REL::ID(2704658).address();
-#else
-	static auto enableTAA = (bool*)REL::ID(460417).address();
-#endif
-	*enableTAA = true;
+	*fo4cs::RE::GetTAAEnableFlag() = true;
 }
 
 void Upscaling::UpdateUpscaling()
@@ -813,8 +772,8 @@ void Upscaling::UpdateUpscaling()
 		return;
 
 	TraceRenderBackendStage("UpdateUpscaling");
-	auto gameViewport = State_GetSingleton();
-	auto renderTargetManager = RenderTargetManager_GetSingleton();
+	auto gameViewport = fo4cs::RE::GetGraphicsState();
+	auto renderTargetManager = fo4cs::RE::GetRenderTargetManager();
 	if (!gameViewport || !renderTargetManager) {
 		logger::warn("[Upscaler] Render backend globals are unavailable; disabling upscaling for this update");
 		upscaleMethodNoMenu = UpscaleMethod::kDisabled;
@@ -882,8 +841,8 @@ void Upscaling::Upscale()
 	}
 	context->CopyResource(upscalingTexture->resource.get(), frameBufferResource);
 
-	auto gameViewport = State_GetSingleton();
-	auto renderTargetManager = RenderTargetManager_GetSingleton();
+	auto gameViewport = fo4cs::RE::GetGraphicsState();
+	auto renderTargetManager = fo4cs::RE::GetRenderTargetManager();
 	auto screenSize = float2(float(gameViewport->screenWidth), float(gameViewport->screenHeight));
 	auto renderSize = float2(screenSize.x * renderTargetManager->dynamicWidthRatio, screenSize.y * renderTargetManager->dynamicHeightRatio);
 

@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <array>
 
+#include "RE/CameraData.h"
+#include "RE/SingletonAccessors.h"
 #include "Upscaler.h"
 
 #include "DX12SwapChain.h"
@@ -216,13 +218,8 @@ bool FidelityFX::Upscale(
 	dispatchUpscale.preExposure = 1.0f;
 	dispatchUpscale.reset = false;
 
-#if defined(FALLOUT_POST_NG)
-	dispatchUpscale.cameraNear = *(float*)REL::ID(2712882).address();
-	dispatchUpscale.cameraFar = *(float*)REL::ID(2712883).address();
-#else
-	dispatchUpscale.cameraNear = *(float*)REL::ID(57985).address();
-	dispatchUpscale.cameraFar = *(float*)REL::ID(958877).address();
-#endif
+	dispatchUpscale.cameraNear = fo4cs::RE::GetCameraNear();
+	dispatchUpscale.cameraFar = fo4cs::RE::GetCameraFar();
 
 	dispatchUpscale.cameraFovAngleVertical = 1.0f;
 	dispatchUpscale.viewSpaceToMetersFactor = 0.01428222656f;
@@ -255,27 +252,6 @@ void FidelityFX::DestroyUpscaling()
 	upscaleMaxRenderHeight = 0;
 	upscaleMaxOutputWidth = 0;
 	upscaleMaxOutputHeight = 0;
-}
-
-[[nodiscard]] static RE::BSGraphics::State* State_GetSingleton()
-{
-#if defined(FALLOUT_POST_NG)
-	REL::Relocation<RE::BSGraphics::State*> singleton{ REL::ID(2704621) };
-#else
-	REL::Relocation<RE::BSGraphics::State*> singleton{ REL::ID(600795) };
-#endif
-	return singleton.get();
-}
-
-
-[[nodiscard]] static RE::BSGraphics::RenderTargetManager* RenderTargetManager_GetSingleton()
-{
-#if defined(FALLOUT_POST_NG)
-	REL::Relocation<RE::BSGraphics::RenderTargetManager*> singleton{ REL::ID(2666735) };
-#else
-	REL::Relocation<RE::BSGraphics::RenderTargetManager*> singleton{ REL::ID(1508457) };
-#endif
-	return singleton.get();
 }
 
 void FidelityFX::Present(bool a_useFrameGen)
@@ -375,8 +351,8 @@ void FidelityFX::Present(bool a_useFrameGen)
 
 		dispatchParameters.commandList = commandList;
 
-		static auto gameViewport = State_GetSingleton();
-			static auto renderTargetManager = RenderTargetManager_GetSingleton();
+		static auto gameViewport = fo4cs::RE::GetGraphicsState();
+			static auto renderTargetManager = fo4cs::RE::GetRenderTargetManager();
 
 		auto screenSize = float2(float(gameViewport->screenWidth), float(gameViewport->screenHeight));
 		auto renderSize = float2(screenSize.x * renderTargetManager->dynamicWidthRatio, screenSize.y * renderTargetManager->dynamicHeightRatio);
@@ -395,13 +371,8 @@ void FidelityFX::Present(bool a_useFrameGen)
 
 		dispatchParameters.frameTimeDelta = deltaTime * 1000.f;
 
-#if defined(FALLOUT_POST_NG)
-		dispatchParameters.cameraNear = *(float*)REL::ID(2712882).address();
-		dispatchParameters.cameraFar = *(float*)REL::ID(2712883).address();
-#else
-		dispatchParameters.cameraNear = *(float*)REL::ID(57985).address();
-		dispatchParameters.cameraFar = *(float*)REL::ID(958877).address();
-#endif
+	dispatchParameters.cameraNear = fo4cs::RE::GetCameraNear();
+	dispatchParameters.cameraFar = fo4cs::RE::GetCameraFar();
 
 		dispatchParameters.cameraFovAngleVertical = 1.0f;
 		dispatchParameters.viewSpaceToMetersFactor = 0.01428222656f;
@@ -580,8 +551,8 @@ bool FidelityFX::Upscale(
 	dispatch.preExposure = 1.0f;
 	dispatch.reset = false;
 
-	dispatch.cameraNear = *(float*)REL::ID(57985).address();
-	dispatch.cameraFar = *(float*)REL::ID(958877).address();
+	dispatch.cameraNear = fo4cs::RE::GetCameraNear();
+	dispatch.cameraFar = fo4cs::RE::GetCameraFar();
 	dispatch.cameraFovAngleVertical = 1.0f;
 	dispatch.viewSpaceToMetersFactor = 0.01428222656f;
 	dispatch.flags = 0;
