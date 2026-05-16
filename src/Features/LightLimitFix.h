@@ -140,6 +140,7 @@ struct LightLimitFix : Feature
 	void LoadSettings() override;
 	void SaveSettings() override;
 	void RestoreDefaultSettings() override;
+	void DrawSettings() override;
 	void ClearShaderCache();
 	void PostPostLoad() override;
 	void DataLoaded() override;

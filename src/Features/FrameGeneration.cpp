@@ -29,6 +29,7 @@ void FeatureFrameGeneration::PostPostLoad()
 void FeatureFrameGeneration::SetupResources()
 {
 	if (!loaded || !upscaling) return;
+	if (!upscaling->UsesFSRFrameGeneration()) return;
 
 	if (auto* device = CommunityShaders::Runtime::GetSingleton()->GetDevice()) {
 		upscaling->CreateFrameGenerationResources();
@@ -38,6 +39,7 @@ void FeatureFrameGeneration::SetupResources()
 void FeatureFrameGeneration::Prepass()
 {
 	if (!loaded || !upscaling) return;
+	if (!upscaling->UsesFSRFrameGeneration()) return;
 
 	if (upscaling->setupBuffers) {
 		upscaling->CopyBuffersToSharedResources();
@@ -70,6 +72,8 @@ void FeatureFrameGeneration::LoadSettings()
 	upscaling->settings.frameLimitMode = settings.frameLimitMode;
 	upscaling->settings.frameGenerationBackend = settings.frameGenerationBackend;
 	upscaling->ApplyRuntimeFallbacks();
+	settings.frameGenerationMode = upscaling->settings.frameGenerationMode;
+	settings.frameLimitMode = upscaling->settings.frameLimitMode;
 	settings.frameGenerationBackend = upscaling->settings.frameGenerationBackend;
 
 	logger::info("[Feature::FrameGeneration] Settings (enabled={}, limiter={}, backend={})",
@@ -83,6 +87,8 @@ void FeatureFrameGeneration::SaveSettings()
 		upscaling->settings.frameLimitMode = settings.frameLimitMode;
 		upscaling->settings.frameGenerationBackend = settings.frameGenerationBackend;
 		upscaling->ApplyRuntimeFallbacks();
+		settings.frameGenerationMode = upscaling->settings.frameGenerationMode;
+		settings.frameLimitMode = upscaling->settings.frameLimitMode;
 		settings.frameGenerationBackend = upscaling->settings.frameGenerationBackend;
 	}
 

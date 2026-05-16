@@ -32,6 +32,7 @@ public:
 	FfxFsr3Context fsr3Context{};
 	void* fsr3ScratchBuffer = nullptr;
 	bool fsr3Initialized = false;
+	bool fsr3Unavailable = false;
 #else
 	// FSR 3.1 — separate contexts per effect
 	ffx::Context swapChainContext{};

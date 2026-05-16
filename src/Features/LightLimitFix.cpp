@@ -34,6 +34,8 @@
 
 #include "SimpleIni.h"
 
+#include <imgui.h>
+
 namespace
 {
 	constexpr std::uint32_t kClusterMaxLights = 128;
@@ -87,6 +89,28 @@ void LightLimitFix::SaveSettings()
 void LightLimitFix::RestoreDefaultSettings()
 {
 	settings = {};
+}
+
+void LightLimitFix::DrawSettings()
+{
+	if (ImGui::CollapsingHeader("Light Limit Fix")) {
+		int changed = 0;
+		changed |= ImGui::Checkbox("Lights Visualisation", &settings.EnableLightsVisualisation) ? 1 : 0;
+
+		const char* modes[] = { "Clusters", "Lights", "Both" };
+		int mode = static_cast<int>(settings.LightsVisualisationMode);
+		if (ImGui::Combo("Visualisation Mode", &mode, modes, IM_ARRAYSIZE(modes))) {
+			settings.LightsVisualisationMode = static_cast<std::uint32_t>(std::clamp(mode, 0, IM_ARRAYSIZE(modes) - 1));
+			changed = 1;
+		}
+
+		ImGui::Text("Lights: %u", currentLightCount);
+		ImGui::Text("Clusters: %ux%ux%u", clusterSize[0], clusterSize[1], clusterSize[2]);
+
+		if (changed) {
+			SaveSettings();
+		}
+	}
 }
 
 LightLimitFix::PerFrame LightLimitFix::GetCommonBufferData()
@@ -304,24 +328,19 @@ void LightLimitFix::DataLoaded()
 
 void LightLimitFix::PostPostLoad()
 {
+#if defined(FALLOUT_PRE_NG)
+	logger::warn("[LightLimitFix] PreNG runtime hooks disabled; ShaderDB replacement is still placeholder-only and the GPU prepass crashes during save-load");
+#else
 	Hooks::Install();
+#endif
 }
 
 void LightLimitFix::Prepass()
 {
+#if defined(FALLOUT_PRE_NG)
+	return;
+#else
 	if (!resourcesCreated) return;
-
-	// Safety gate: skip first 5 frames after game start / save load.
-	// Prepass fires during deferred render pass — on the initial frame,
-	// the D3D11 pipeline is still initializing render targets, shader caches,
-	// and BSGraphics state. Compute dispatch + scene traversal during this
-	// window can cause GPU pipeline stalls manifesting as save-load freezes.
-	if (++diagFrameCounter < 5) {
-		if (diagFrameCounter == 1) {
-			logger::info("[LightLimitFix] Prepass gated — waiting for pipeline stabilization (frame {})", diagFrameCounter);
-		}
-		return;
-	}
 
 	auto* rendererData = fo4cs::GetRendererData();
 	if (!rendererData) return;
@@ -468,6 +487,7 @@ void LightLimitFix::Prepass()
 			             currentLightCount, clusterSize[0] * clusterSize[1] * clusterSize[2]);
 		}
 	}
+#endif
 }
 
 void LightLimitFix::Reset()
@@ -675,9 +695,13 @@ namespace RE::VTABLE
 
 void LightLimitFix::Hooks::Install()
 {
+#if defined(FALLOUT_PRE_NG)
+	logger::warn("[LightLimitFix] PreNG SetupGeometry hooks skipped");
+#else
 	stl::write_vfunc<0x7, BSLightingShader_SetupGeometry>(RE::VTABLE::BSLightingShader[0]);
 	stl::write_vfunc<0x7, BSEffectShader_SetupGeometry>(RE::VTABLE::BSEffectShader[0]);
 	logger::info("[LightLimitFix] Installed SetupGeometry hooks (vfunc index 7)");
+#endif
 }
 
 void LightLimitFix::Hooks::BSLightingShader_SetupGeometry::thunk(

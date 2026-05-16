@@ -13,6 +13,17 @@ if(NOT EXISTS "${FFX_30_ROOT}/sdk/CMakeLists.txt")
     return()
 endif()
 
+function(fo4cs_resolve_msvc_compiler_path variable_name)
+    if("${${variable_name}}" STREQUAL "cl")
+        find_program(FO4CS_CL_EXE cl REQUIRED)
+        file(TO_CMAKE_PATH "${FO4CS_CL_EXE}" FO4CS_CL_EXE_CMAKE)
+        set(${variable_name} "${FO4CS_CL_EXE_CMAKE}" CACHE FILEPATH "" FORCE)
+    endif()
+endfunction()
+
+fo4cs_resolve_msvc_compiler_path(CMAKE_C_COMPILER)
+fo4cs_resolve_msvc_compiler_path(CMAKE_CXX_COMPILER)
+
 # Only build the D3D11 backend — no D3D12 or Vulkan needed for FSR 3.0 on PreNG
 set(FFX_API_VK OFF CACHE BOOL "" FORCE)
 set(FFX_API_DX12 OFF CACHE BOOL "" FORCE)

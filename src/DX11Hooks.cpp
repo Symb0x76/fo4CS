@@ -21,6 +21,8 @@ CreateSwapChainForHwndFn ptrCreateSwapChainForHwnd;
 using PresentFn = HRESULT(STDMETHODCALLTYPE*)(IDXGISwapChain*, UINT, UINT);
 PresentFn ptrPresent;
 bool g_swapChainVTableHooked = false;
+DX11Hooks::DeviceCreatedCallback g_deviceCreatedCallback = nullptr;
+DX11Hooks::PresentCallback g_presentCallback = nullptr;
 
 namespace
 {
@@ -40,6 +42,15 @@ namespace
 		return upscaling->UsesFSRUpscaling() || upscaling->UsesFSRFrameGeneration();
 	}
 
+	bool ShouldCreateD3D12Proxy()
+	{
+#ifdef FALLOUT_PRE_NG
+		return false;
+#else
+		return true;
+#endif
+	}
+
 	template <class T>
 	void ReleaseAndNull(T** a_value)
 	{
@@ -51,6 +62,10 @@ namespace
 
 	HRESULT STDMETHODCALLTYPE hk_IDXGISwapChain_Present(IDXGISwapChain* a_swapChain, UINT a_syncInterval, UINT a_flags)
 	{
+		if (g_presentCallback) {
+			g_presentCallback(a_swapChain);
+		}
+
 		return ptrPresent(a_swapChain, a_syncInterval, a_flags);
 	}
 
@@ -67,6 +82,16 @@ namespace
 
 HRESULT WINAPI hk_IDXGIFactory_CreateSwapChain(IDXGIFactory2* This, _In_ ID3D11Device* a_device, _In_ DXGI_SWAP_CHAIN_DESC* pDesc, _COM_Outptr_ IDXGISwapChain** ppSwapChain)
 {
+	if (!ShouldCreateD3D12Proxy()) {
+		auto ret = ptrCreateSwapChain(reinterpret_cast<IDXGIFactory*>(This), a_device, pDesc, ppSwapChain);
+		if (SUCCEEDED(ret) && ppSwapChain && *ppSwapChain) {
+			InstallSwapChainPresentHook(*ppSwapChain);
+			Upscaling::GetSingleton()->OnD3D11DeviceCreated(a_device, nullptr);
+			DX11Hooks::NotifyD3D11DeviceCreated(a_device);
+		}
+		return ret;
+	}
+
 	if (DX12SwapChain::GetSingleton()->swapChain) {
 		logger::debug("[FrameGen] D3D12 proxy already exists, delegating to original CreateSwapChain");
 		return ptrCreateSwapChain(reinterpret_cast<IDXGIFactory*>(This), a_device, pDesc, ppSwapChain);
@@ -124,6 +149,14 @@ HRESULT WINAPI hk_IDXGIFactory2_CreateSwapChainForHwnd(
 	const DXGI_SWAP_CHAIN_DESC1* pDesc, const DXGI_SWAP_CHAIN_FULLSCREEN_DESC* pFullscreenDesc,
 	IDXGIOutput* pRestrictToOutput, IDXGISwapChain1** ppSwapChain)
 {
+	if (!ShouldCreateD3D12Proxy()) {
+		auto ret = ptrCreateSwapChainForHwnd(This, pDevice, hWnd, pDesc, pFullscreenDesc, pRestrictToOutput, ppSwapChain);
+		if (SUCCEEDED(ret) && ppSwapChain && *ppSwapChain) {
+			InstallSwapChainPresentHook(reinterpret_cast<IDXGISwapChain*>(*ppSwapChain));
+		}
+		return ret;
+	}
+
 	if (DX12SwapChain::GetSingleton()->swapChain) {
 		logger::debug("[FrameGen] D3D12 proxy already exists, delegating to original CreateSwapChainForHwnd");
 		return ptrCreateSwapChainForHwnd(This, pDevice, hWnd, pDesc, pFullscreenDesc, pRestrictToOutput, ppSwapChain);
@@ -264,7 +297,7 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 	const auto originalFeatureLevels = pFeatureLevels;
 	const auto originalFeatureLevelCount = FeatureLevels;
 
-	if (pSwapChainDesc->Windowed) {
+	if (pSwapChainDesc->Windowed && ShouldCreateD3D12Proxy()) {
 		logger::debug("[FrameGen] Using D3D12 proxy");
 		
 		try {
@@ -410,7 +443,19 @@ void DX11Hooks::Install()
 		ptrD3D11CreateDevice != nullptr);
 }
 
-void DX11Hooks::NotifyD3D11DeviceCreated(ID3D11Device*)
+void DX11Hooks::SetDeviceCreatedCallback(DeviceCreatedCallback a_callback)
 {
-	// CommunityShaders hooks are now managed by community-shaders.dll independently
+	g_deviceCreatedCallback = a_callback;
+}
+
+void DX11Hooks::SetPresentCallback(PresentCallback a_callback)
+{
+	g_presentCallback = a_callback;
+}
+
+void DX11Hooks::NotifyD3D11DeviceCreated(ID3D11Device* a_device)
+{
+	if (g_deviceCreatedCallback) {
+		g_deviceCreatedCallback(a_device);
+	}
 }

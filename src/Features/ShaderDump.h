@@ -13,6 +13,7 @@ struct ShaderDump : Feature
 	void LoadSettings() override;
 	void SaveSettings() override;
 	void Load() override;
+	void DrawSettings() override;
 
 	bool dumpAllShaders = false;
 };

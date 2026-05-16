@@ -360,16 +360,19 @@ if(COMMUNITY_SHADERS)
     target_sources(CommunityShaders PRIVATE
         src/CommunityShadersPlugin.cpp
         extern/imgui/backends/imgui_impl_win32.cpp
+        extern/imgui/backends/imgui_impl_dx11.cpp
         extern/imgui/backends/imgui_impl_dx12.cpp
     )
     set_source_files_properties(
+        extern/imgui/backends/imgui_impl_dx11.cpp
         extern/imgui/backends/imgui_impl_dx12.cpp
         extern/imgui/backends/imgui_impl_win32.cpp
         PROPERTIES SKIP_PRECOMPILE_HEADERS ON
     )
     if(CMAKE_GENERATOR MATCHES "Visual Studio")
         set_source_files_properties(
-        extern/imgui/backends/imgui_impl_dx12.cpp
+            extern/imgui/backends/imgui_impl_dx11.cpp
+            extern/imgui/backends/imgui_impl_dx12.cpp
             extern/imgui/backends/imgui_impl_win32.cpp
             PROPERTIES COMPILE_OPTIONS "/W0"
         )

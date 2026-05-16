@@ -441,11 +441,12 @@ void Deferred::Hooks::Install()
 				// ShadowMaps: write_thunk_call at CALL -50 (verified)
 				stl::write_thunk_call<Main_RenderShadowMaps>(base + *GetRELOffset(620025) - 50);
 
-				// BlendedDecals: write_thunk_call at CALL 0x2852755 (sub_142852590 -> sub_142851BD0)
-				// IDA xref: sub_140D3CBE0 -> sub_142857480 -> sub_142852590 -> sub_142851BD0
-				stl::write_thunk_call<Main_RenderWorld_BlendedDecals>(base + 0x2852755);
+				// BlendedDecals is intentionally not hooked on PreNG. Crash logs showed an AV
+				// inside the original decal call chain after this call-site hook was installed,
+				// while the thunk only added logging and no required rendering work.
 				// ResetState: no standalone function in PreNG (inline D3D11 state changes)
-				logger::info("[Deferred] PreNG: World_Start + ShadowMaps + BlendedDecals installed");		} else {
+				logger::info("[Deferred] PreNG: World_Start + ShadowMaps installed; BlendedDecals skipped");
+		} else {
 			logger::warn("[Deferred] PreNG: no hooks installed ({} IDs missing from .bin)", skipped);
 		}
 

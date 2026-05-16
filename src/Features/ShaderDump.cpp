@@ -5,6 +5,7 @@
 #include "SimpleIni.h"
 
 #include <filesystem>
+#include <imgui.h>
 
 namespace
 {
@@ -85,5 +86,17 @@ void ShaderDump::Load()
 		CommunityShaders::ShaderCache::GetSingleton()->SetTracePipeline(true);
 		logger::info("[CommunityShaders] Pipeline tracer enabled (FO4CS_TRACE_PIPELINE=1)");
 		logger::info("[CommunityShaders] Traces written to Data/F4SE/Plugins/CommunityShaders/PipelineTrace/");
+	}
+}
+
+void ShaderDump::DrawSettings()
+{
+	if (ImGui::CollapsingHeader("ShaderDB Dump")) {
+		if (ImGui::Checkbox("Dump All Shaders", &dumpAllShaders)) {
+			CommunityShaders::ShaderCache::GetSingleton()->SetDumpAllShaders(dumpAllShaders);
+			SaveSettings();
+		}
+
+		ImGui::TextWrapped("Writes shader bytecode dumps under Data/F4SE/Plugins/CommunityShaders/ShaderDump for building ShaderDB data.");
 	}
 }

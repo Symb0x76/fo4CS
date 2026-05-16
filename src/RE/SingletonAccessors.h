@@ -12,21 +12,21 @@ namespace fo4cs::RE
 	[[nodiscard]] inline ::RE::BSGraphics::State* GetGraphicsState()
 	{
 #if defined(FALLOUT_POST_NG)
-		static REL::Relocation<::RE::BSGraphics::State**> ptr{ REL::ID(2704621) };
+		static REL::Relocation<::RE::BSGraphics::State*> ptr{ REL::ID(2704621) };
 #else
-		static REL::Relocation<::RE::BSGraphics::State**> ptr{ REL::ID(600795) };
+		static REL::Relocation<::RE::BSGraphics::State*> ptr{ REL::ID(600795) };
 #endif
-		return *ptr;
+		return ptr.get();
 	}
 
 	[[nodiscard]] inline ::RE::BSGraphics::RenderTargetManager* GetRenderTargetManager()
 	{
 #if defined(FALLOUT_POST_NG)
-		static REL::Relocation<::RE::BSGraphics::RenderTargetManager**> ptr{ REL::ID(2666735) };
+		static REL::Relocation<::RE::BSGraphics::RenderTargetManager*> ptr{ REL::ID(2666735) };
 #else
-		static REL::Relocation<::RE::BSGraphics::RenderTargetManager**> ptr{ REL::ID(1508457) };
+		static REL::Relocation<::RE::BSGraphics::RenderTargetManager*> ptr{ REL::ID(1508457) };
 #endif
-		return *ptr;
+		return ptr.get();
 	}
 
 	[[nodiscard]] inline ID3D11SamplerState** GetSamplerStateArray()

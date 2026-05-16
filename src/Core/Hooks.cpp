@@ -18,6 +18,45 @@ namespace CommunityShaders::Hooks
 		CreateComputeShaderFn createComputeShader = nullptr;
 		bool installedDeviceHooks = false;
 
+		std::string HashShaderBytecode(const void* a_bytecode, SIZE_T a_bytecodeLength)
+		{
+			if (!a_bytecode || a_bytecodeLength == 0) {
+				return "0000000000000000";
+			}
+
+			const auto* bytes = static_cast<const std::uint8_t*>(a_bytecode);
+			std::uint64_t hash = 14695981039346656037ull;
+			for (SIZE_T i = 0; i < a_bytecodeLength; ++i) {
+				hash ^= bytes[i];
+				hash *= 1099511628211ull;
+			}
+
+			return std::format("{:016X}", hash);
+		}
+
+		std::uint32_t ReadBytecodeMagic(const void* a_bytecode, SIZE_T a_bytecodeLength)
+		{
+			if (!a_bytecode || a_bytecodeLength < sizeof(std::uint32_t)) {
+				return 0;
+			}
+
+			std::uint32_t magic = 0;
+			std::memcpy(&magic, a_bytecode, sizeof(magic));
+			return magic;
+		}
+
+		void LogCreateComputeShaderFailure(ID3D11Device* a_device, const void* a_bytecode, SIZE_T a_bytecodeLength, HRESULT a_result)
+		{
+			const auto removedReason = a_device ? a_device->GetDeviceRemovedReason() : E_POINTER;
+			logger::error(
+				"[CommunityShaders] CreateComputeShader failed (hr=0x{:08X}, deviceRemoved=0x{:08X}, len={}, magic=0x{:08X}, hash={})",
+				static_cast<std::uint32_t>(a_result),
+				static_cast<std::uint32_t>(removedReason),
+				a_bytecodeLength,
+				ReadBytecodeMagic(a_bytecode, a_bytecodeLength),
+				HashShaderBytecode(a_bytecode, a_bytecodeLength));
+		}
+
 		HRESULT STDMETHODCALLTYPE CreateVertexShaderHook(ID3D11Device* a_device, const void* a_bytecode, SIZE_T a_bytecodeLength, ID3D11ClassLinkage* a_classLinkage, ID3D11VertexShader** a_vertexShader)
 		{
 			ShaderCache::GetSingleton()->ObserveShader(ShaderStage::Vertex, a_bytecode, a_bytecodeLength);
@@ -69,7 +108,11 @@ namespace CommunityShaders::Hooks
 				}
 			}
 
-			return createComputeShader(a_device, a_bytecode, a_bytecodeLength, a_classLinkage, a_computeShader);
+			const auto result = createComputeShader(a_device, a_bytecode, a_bytecodeLength, a_classLinkage, a_computeShader);
+			if (FAILED(result)) {
+				LogCreateComputeShaderFailure(a_device, a_bytecode, a_bytecodeLength, result);
+			}
+			return result;
 		}
 	}
 

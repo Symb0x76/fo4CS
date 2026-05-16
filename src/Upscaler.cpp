@@ -150,6 +150,14 @@ namespace
 		return false;
 	}
 
+	bool IsLoadingMenuOpen()
+	{
+		if (auto ui = RE::UI::GetSingleton()) {
+			return ui->GetMenuOpen("LoadingMenu");
+		}
+		return false;
+	}
+
 	std::filesystem::path GetModuleDirectory(HMODULE module)
 	{
 		std::array<wchar_t, 4096> buffer{};
@@ -461,6 +469,14 @@ void Upscaling::ApplyRuntimeFallbacks()
 		logger::info("[FrameGen] DLSS-G unavailable; switching Frame Generation to FSR FG");
 	}
 
+	if (pluginMode == PluginMode::kUpscaler && !IsFrameGenPluginVisible()) {
+		if (settings.frameGenerationMode || settings.frameLimitMode) {
+			logger::info("[FrameGen] FrameGen.dll is not visible; disabling frame generation in Upscaler mode");
+		}
+		settings.frameGenerationMode = false;
+		settings.frameLimitMode = false;
+	}
+
 	if (IsPreNGRuntime() && settings.reflexMode != 0) {
 		settings.reflexMode = 0;
 		logger::info("[Reflex] PreNG detected; disabling Reflex");
@@ -559,20 +575,31 @@ void Upscaling::PostPostLoad()
 
 	renderBackendEnabled = pluginMode == PluginMode::kUpscaler &&
 		((UsesDLSSUpscaling() && Streamline::GetSingleton()->featureDLSS) ||
+#if defined(FALLOUT_PRE_NG)
+		 (UsesFSRUpscaling() && FidelityFX::GetSingleton()->featureFSR));
+#else
 		 (UsesFSRUpscaling() && d3d12Interop && FidelityFX::GetSingleton()->featureFSR));
+#endif
 	InstallHooks();
 }
 
 void Upscaling::CreateFrameGenerationResources()
 {
 	logger::debug("[FrameGen] Creating resources");
+
+	if (IsLoadingMenuOpen()) {
+		setupBuffers = false;
+		return;
+	}
 	
 	setupBuffers = true;
 
 	auto rendererData = fo4cs::GetRendererData();
 	auto context = reinterpret_cast<ID3D11DeviceContext*>(rendererData->context);
 	auto& main = rendererData->renderTargets[(uint)RenderTarget::kMain];
-	if (!main.texture) {
+	auto& motionVector = rendererData->renderTargets[(uint)RenderTarget::kMotionVectors];
+	auto& depth = rendererData->depthStencilTargets[(uint)DepthStencilTarget::kMain];
+	if (!main.texture || !main.srView || !main.rtView || !motionVector.texture || !depth.srViewDepth) {
 		logger::warn("[Upscaler] Main render target unavailable in CreateFrameGenerationResources; deferring");
 		setupBuffers = false;
 		return;
@@ -604,8 +631,13 @@ void Upscaling::CreateFrameGenerationResources()
 		auto dx12SwapChain = DX12SwapChain::GetSingleton();
 
 		// ---- HUDLess, UI, reticle: backbuffer resolution ----
-		texDesc.Width = dx12SwapChain->swapChainDesc.Width;
-		texDesc.Height = dx12SwapChain->swapChainDesc.Height;
+		if (dx12SwapChain->swapChain) {
+			texDesc.Width = dx12SwapChain->swapChainDesc.Width;
+			texDesc.Height = dx12SwapChain->swapChainDesc.Height;
+		} else {
+			texDesc.Width = renderWidth;
+			texDesc.Height = renderHeight;
+		}
 		texDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
 		srvDesc.Format = texDesc.Format;
 		rtvDesc.Format = texDesc.Format;
@@ -639,7 +671,6 @@ void Upscaling::CreateFrameGenerationResources()
 		depthBufferShared[index]->CreateRTV(rtvDesc);
 		depthBufferShared[index]->CreateUAV(uavDesc);
 
-		auto& motionVector = rendererData->renderTargets[(uint)RenderTarget::kMotionVectors];
 		D3D11_TEXTURE2D_DESC texDescMotionVector{};
 		reinterpret_cast<ID3D11Texture2D*>(motionVector.texture)->GetDesc(&texDescMotionVector);
 
@@ -754,6 +785,9 @@ void Upscaling::CreateFrameGenerationResources()
 
 void Upscaling::PreAlpha()
 {
+	if (IsLoadingMenuOpen())
+		return;
+
 	auto rendererData = fo4cs::GetRendererData();
 	auto context = reinterpret_cast<ID3D11DeviceContext*>(rendererData->context);
 
@@ -770,6 +804,8 @@ void Upscaling::PreAlpha()
 		return;
 	if (!setupBuffers)
 		CreateFrameGenerationResources();
+	if (!setupBuffers)
+		return;
 
 	auto& frameBuffer = rendererData->renderTargets[(uint)RenderTarget::kFrameBuffer];
 	const auto frameIndex = DX12SwapChain::GetSingleton()->frameIndex;
@@ -778,11 +814,16 @@ void Upscaling::PreAlpha()
 
 void Upscaling::PostAlpha()
 {
+	if (IsLoadingMenuOpen())
+		return;
+
 	if (!d3d12Interop)
 		return;
 
 	if (!setupBuffers)
 		CreateFrameGenerationResources();
+	if (!setupBuffers)
+		return;
 
 	auto rendererData = fo4cs::GetRendererData();
 
@@ -858,59 +899,73 @@ void Upscaling::PostAlpha()
 
 void Upscaling::CopyBuffersToSharedResources()
 {
+	if (IsLoadingMenuOpen())
+		return;
+
+#if defined(FALLOUT_PRE_NG)
+	constexpr uint32_t frameIndex = 0;
+#else
 	if (!d3d12Interop)
 		return;
+#endif
 
 	if (!setupBuffers)
 		CreateFrameGenerationResources();
-auto rendererData = fo4cs::GetRendererData();
-
+	if (!setupBuffers)
+		return;
+	auto rendererData = fo4cs::GetRendererData();
 
 	auto context = reinterpret_cast<ID3D11DeviceContext*>(rendererData->context);
+
+#if !defined(FALLOUT_PRE_NG)
 	auto dx12SwapChain = DX12SwapChain::GetSingleton();
-	
+	const auto frameIndex = dx12SwapChain->frameIndex;
+#endif
+	if (!motionVectorBufferShared[frameIndex] || !depthBufferShared[frameIndex])
+		return;
+
 	context->OMSetRenderTargets(0, nullptr, nullptr);
 
 	auto& motionVector = rendererData->renderTargets[(uint)RenderTarget::kMotionVectors];
-	context->CopyResource(motionVectorBufferShared[dx12SwapChain->frameIndex]->resource.get(), reinterpret_cast<ID3D11Texture2D*>(motionVector.texture));
-		
+	context->CopyResource(motionVectorBufferShared[frameIndex]->resource.get(), reinterpret_cast<ID3D11Texture2D*>(motionVector.texture));
+
 	{
 		auto& depth = rendererData->depthStencilTargets[(uint)DepthStencilTarget::kMain];
+		const uint32_t dispatchX = static_cast<uint32_t>(std::ceil(static_cast<float>(depthBufferShared[frameIndex]->desc.Width) / 8.0f));
+		const uint32_t dispatchY = static_cast<uint32_t>(std::ceil(static_cast<float>(depthBufferShared[frameIndex]->desc.Height) / 8.0f));
 
-		{
-			uint32_t dispatchX = (uint32_t)std::ceil(float(dx12SwapChain->swapChainDesc.Width) / 8.0f);
-			uint32_t dispatchY = (uint32_t)std::ceil(float(dx12SwapChain->swapChainDesc.Height) / 8.0f);
-
-
-			ID3D11ShaderResourceView* views[1] = { reinterpret_cast<ID3D11ShaderResourceView*>(depth.srViewDepth) };
-			context->CSSetShaderResources(0, ARRAYSIZE(views), views);
-
-			ID3D11UnorderedAccessView* uavs[1] = { depthBufferShared[dx12SwapChain->frameIndex]->uav.get() };
-			context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
-
-			context->CSSetShader(copyDepthToSharedBufferCS, nullptr, 0);
-
-			context->Dispatch(dispatchX, dispatchY, 1);
-		}
-
-		ID3D11ShaderResourceView* views[1] = { nullptr };
+		ID3D11ShaderResourceView* views[1] = { reinterpret_cast<ID3D11ShaderResourceView*>(depth.srViewDepth) };
 		context->CSSetShaderResources(0, ARRAYSIZE(views), views);
 
-		ID3D11UnorderedAccessView* uavs[1] = { nullptr };
+		ID3D11UnorderedAccessView* uavs[1] = { depthBufferShared[frameIndex]->uav.get() };
 		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
 
-		ID3D11ComputeShader* shader = nullptr;
-		context->CSSetShader(shader, nullptr, 0);
-	}	
+		context->CSSetShader(copyDepthToSharedBufferCS, nullptr, 0);
+		context->Dispatch(dispatchX, dispatchY, 1);
+	}
+
+	ID3D11ShaderResourceView* views[1] = { nullptr };
+	context->CSSetShaderResources(0, ARRAYSIZE(views), views);
+
+	ID3D11UnorderedAccessView* uavs[1] = { nullptr };
+	context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
+
+	ID3D11ComputeShader* shader = nullptr;
+	context->CSSetShader(shader, nullptr, 0);
 }
 
 bool Upscaling::BuildUIColorAndAlphaResource(ID3D11Texture2D* a_finalFrame)
 {
+	if (IsLoadingMenuOpen())
+		return false;
+
 	if (!d3d12Interop || !a_finalFrame)
 		return false;
 
 	if (!setupBuffers)
 		CreateFrameGenerationResources();
+	if (!setupBuffers)
+		return false;
 
 	auto dx12SwapChain = DX12SwapChain::GetSingleton();
 	const auto frameIndex = dx12SwapChain->frameIndex;
@@ -973,11 +1028,16 @@ bool Upscaling::BuildUIColorAndAlphaResource(ID3D11Texture2D* a_finalFrame)
 
 void Upscaling::DenoiseUIAlphaResource()
 {
+	if (IsLoadingMenuOpen())
+		return;
+
 	if (!d3d12Interop || !denoiseUIAlphaCS)
 		return;
 
 	if (!setupBuffers)
 		CreateFrameGenerationResources();
+	if (!setupBuffers)
+		return;
 
 	auto dx12SwapChain = DX12SwapChain::GetSingleton();
 	const auto frameIndex = dx12SwapChain->frameIndex;
@@ -1122,11 +1182,16 @@ double Upscaling::GetRefreshRate(HWND a_window)
 
 void Upscaling::PostDisplay()
 {
+	if (IsLoadingMenuOpen())
+		return;
+
 	if (!d3d12Interop)
 		return;
 
 	if (!setupBuffers)
 		CreateFrameGenerationResources();
+	if (!setupBuffers)
+		return;
 	auto rendererData = fo4cs::GetRendererData();
 
 
@@ -1146,11 +1211,16 @@ void Upscaling::PostDisplay()
 
 void Upscaling::Reset()
 {
+	if (IsLoadingMenuOpen())
+		return;
+
 	if (!d3d12Interop)
 		return;
 
 	if (!setupBuffers)
 		CreateFrameGenerationResources();
+	if (!setupBuffers)
+		return;
 
 	auto rendererData = fo4cs::GetRendererData();
 	auto context = reinterpret_cast<ID3D11DeviceContext*>(rendererData->context);

@@ -4,6 +4,7 @@
 
 #include "Core/Globals.h"
 #include "Core/Menu.h"
+#include "Diagnostics/HangTrace.h"
 #include "DX11Hooks.h"
 #include "Overlay/Overlay.h"
 
@@ -13,83 +14,50 @@
 namespace
 {
 	ID3D11Device* g_device = nullptr;
-	ID3D11DeviceContext* g_context = nullptr;
-	IDXGISwapChain* g_swapChain = nullptr;
-	HWND g_hwnd = nullptr;
 
-	using PresentFn = HRESULT(STDMETHODCALLTYPE*)(IDXGISwapChain*, UINT, UINT);
-	PresentFn g_originalPresent = nullptr;
-	bool g_presentHooked = false;
-
-	HRESULT STDMETHODCALLTYPE hk_Present(IDXGISwapChain* a_swapChain, UINT a_syncInterval, UINT a_flags)
+	void OnD3D11DeviceCreated(ID3D11Device* a_device)
 	{
+		fo4cs::Diagnostics::WriteHangTraceLine("D3D11DeviceCreated:enter");
+		if (!a_device || g_device) {
+			fo4cs::Diagnostics::WriteHangTraceLine("D3D11DeviceCreated:skip");
+			return;
+		}
+
+		g_device = a_device;
+
+		fo4cs::Diagnostics::WriteHangTraceLine("Runtime:OnD3D11DeviceCreated:begin");
+		CommunityShaders::Runtime::GetSingleton()->OnD3D11DeviceCreated(g_device);
+		fo4cs::Diagnostics::WriteHangTraceLine("Runtime:OnD3D11DeviceCreated:end");
+	}
+
+	void OnPresent(IDXGISwapChain* a_swapChain)
+	{
+		fo4cs::Diagnostics::WriteHangTraceLine("Present:enter");
 		auto* runtime = CommunityShaders::Runtime::GetSingleton();
 		if (runtime->IsLoaded()) {
+			fo4cs::Diagnostics::WriteHangTraceLine("Runtime:OnFrame:begin");
 			runtime->OnFrame();
+			fo4cs::Diagnostics::WriteHangTraceLine("Runtime:OnFrame:end");
 		}
 
-		return g_originalPresent(a_swapChain, a_syncInterval, a_flags);
-	}
-
-	using CreateDeviceAndSwapChainFn = HRESULT(WINAPI*)(
-		IDXGIAdapter*, D3D_DRIVER_TYPE, HMODULE, UINT,
-		const D3D_FEATURE_LEVEL*, UINT, UINT,
-		const DXGI_SWAP_CHAIN_DESC*, IDXGISwapChain**, ID3D11Device**,
-		D3D_FEATURE_LEVEL*, ID3D11DeviceContext**);
-
-	CreateDeviceAndSwapChainFn g_originalCreateDeviceAndSwapChain = nullptr;
-
-	HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
-		IDXGIAdapter* a_adapter, D3D_DRIVER_TYPE a_driverType, HMODULE a_software,
-		UINT a_flags, const D3D_FEATURE_LEVEL* a_featureLevels, UINT a_featureLevelsCount,
-		UINT a_sdkVersion, const DXGI_SWAP_CHAIN_DESC* a_swapChainDesc,
-		IDXGISwapChain** a_swapChain, ID3D11Device** a_device,
-		D3D_FEATURE_LEVEL* a_featureLevel, ID3D11DeviceContext** a_immediateContext)
-	{
-		auto hr = g_originalCreateDeviceAndSwapChain(
-			a_adapter, a_driverType, a_software, a_flags, a_featureLevels,
-			a_featureLevelsCount, a_sdkVersion, a_swapChainDesc,
-			a_swapChain, a_device, a_featureLevel, a_immediateContext);
-
-		if (SUCCEEDED(hr) && a_device && *a_device && !g_device) {
-			g_device = *a_device;
-			g_context = *a_immediateContext;
-			if (a_swapChainDesc) {
-				g_hwnd = a_swapChainDesc->OutputWindow;
-				CommunityShaders::Menu::SetHwnd(g_hwnd);
-			}
-
-			CommunityShaders::Runtime::GetSingleton()->OnD3D11DeviceCreated(g_device);
+#if defined(FALLOUT_PRE_NG)
+		if (!a_swapChain || !g_device) {
+			fo4cs::Diagnostics::WriteHangTraceLine("Present:exit:no-swapchain-or-device");
+			return;
 		}
 
-		if (!g_presentHooked && a_swapChain && *a_swapChain) {
-			g_swapChain = *a_swapChain;
-
-			void** vtable = *reinterpret_cast<void***>(g_swapChain);
-			g_originalPresent = reinterpret_cast<PresentFn>(vtable[8]);
-
-			DWORD oldProtect;
-			VirtualProtect(&vtable[8], sizeof(void*), PAGE_READWRITE, &oldProtect);
-			vtable[8] = hk_Present;
-			VirtualProtect(&vtable[8], sizeof(void*), oldProtect, &oldProtect);
-
-			g_presentHooked = true;
-			logger::info("[CommunityShaders] Present hook installed");
+		ID3D11DeviceContext* context = nullptr;
+		fo4cs::Diagnostics::WriteHangTraceLine("D3D11:GetImmediateContext:begin");
+		g_device->GetImmediateContext(&context);
+		fo4cs::Diagnostics::WriteHangTraceLine("D3D11:GetImmediateContext:end");
+		if (context) {
+			fo4cs::Diagnostics::WriteHangTraceLine("Menu:RenderD3D11:begin");
+			CommunityShaders::Menu::Render(g_device, context, a_swapChain);
+			fo4cs::Diagnostics::WriteHangTraceLine("Menu:RenderD3D11:end");
+			context->Release();
 		}
-
-		return hr;
-	}
-
-	void InstallD3D11Hooks()
-	{
-		uintptr_t moduleBase = reinterpret_cast<uintptr_t>(GetModuleHandle(nullptr));
-
-		reinterpret_cast<uintptr_t&>(g_originalCreateDeviceAndSwapChain) =
-			Detours::IATHook(moduleBase, "d3d11.dll", "D3D11CreateDeviceAndSwapChain",
-			                 reinterpret_cast<uintptr_t>(hk_D3D11CreateDeviceAndSwapChain));
-
-		logger::info("[CommunityShaders] D3D11 IAT hooks installed (createDeviceAndSwapChain={})",
-		             g_originalCreateDeviceAndSwapChain != nullptr);
+#endif
+		fo4cs::Diagnostics::WriteHangTraceLine("Present:exit");
 	}
 
 	void MessageHandler(F4SE::MessagingInterface::Message* message)
@@ -124,12 +92,14 @@ extern "C" DLLEXPORT bool F4SEAPI F4SEPlugin_Load(const F4SE::LoadInterface* a_f
 #endif
 	fo4cs::WaitForDebuggerIfNeeded();
 	fo4cs::InitializeLog();
+	fo4cs::Diagnostics::ResetHangTrace();
 
 	logger::info("[CommunityShaders] Initializing unified Feature framework...");
 
-	CommunityShaders::Runtime::GetSingleton()->Load();
+	DX11Hooks::SetDeviceCreatedCallback(OnD3D11DeviceCreated);
+	DX11Hooks::SetPresentCallback(OnPresent);
 
-	InstallD3D11Hooks();
+	CommunityShaders::Runtime::GetSingleton()->Load();
 
 	auto messaging = F4SE::GetMessagingInterface();
 	messaging->RegisterListener(MessageHandler);
