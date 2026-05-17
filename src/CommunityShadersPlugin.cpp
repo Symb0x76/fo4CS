@@ -6,6 +6,7 @@
 #include "Core/Menu.h"
 #include "Diagnostics/HangTrace.h"
 #include "DX11Hooks.h"
+#include "DX12SwapChain.h"
 #include "Overlay/Overlay.h"
 
 #include <d3d11.h>
@@ -32,6 +33,9 @@ namespace
 
 	void OnPresent(IDXGISwapChain* a_swapChain)
 	{
+#if !defined(FALLOUT_PRE_NG)
+		(void)a_swapChain;
+#endif
 		fo4cs::Diagnostics::WriteHangTraceLine("Present:enter");
 		auto* runtime = CommunityShaders::Runtime::GetSingleton();
 		if (runtime->IsLoaded()) {
@@ -43,6 +47,11 @@ namespace
 #if defined(FALLOUT_PRE_NG)
 		if (!a_swapChain || !g_device) {
 			fo4cs::Diagnostics::WriteHangTraceLine("Present:exit:no-swapchain-or-device");
+			return;
+		}
+
+		if (DX12SwapChain::GetSingleton()->swapChain) {
+			fo4cs::Diagnostics::WriteHangTraceLine("Present:skip-d3d11-menu-dx12-proxy");
 			return;
 		}
 

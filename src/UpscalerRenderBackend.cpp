@@ -203,45 +203,6 @@ namespace
 		fo4cs::Diagnostics::WriteHangTraceLine("RestoreNativeRenderState:end");
 	}
 
-	bool EnsurePreNGFSRContextBeforeRenderTargetOverride(uint32_t a_width, uint32_t a_height)
-	{
-#if defined(FALLOUT_PRE_NG)
-		fo4cs::Diagnostics::WriteHangTraceLine("PreNGFSRPreflight:begin");
-		auto* fidelity = FidelityFX::GetSingleton();
-		if (fidelity->fsr3Initialized) {
-			fo4cs::Diagnostics::WriteHangTraceLine("PreNGFSRPreflight:already-initialized");
-			return true;
-		}
-		if (fidelity->fsr3Unavailable) {
-			fo4cs::Diagnostics::WriteHangTraceLine("PreNGFSRPreflight:unavailable");
-			return false;
-		}
-
-		fo4cs::Diagnostics::WriteHangTraceLine("PreNGFSRPreflight:get-device:begin");
-		auto* rendererData = fo4cs::GetRendererData();
-		auto* device = rendererData ? reinterpret_cast<ID3D11Device*>(rendererData->device) : nullptr;
-		fo4cs::Diagnostics::WriteHangTraceLine("PreNGFSRPreflight:get-device:end");
-		if (!device) {
-			logger::warn("[Upscaler] D3D11 device unavailable; disabling PreNG FSR before render-target override");
-			fo4cs::Diagnostics::WriteHangTraceLine("PreNGFSRPreflight:no-device");
-			return false;
-		}
-
-		fo4cs::Diagnostics::WriteHangTraceLine("PreNGFSRPreflight:CreateFSR3Context:begin");
-		fidelity->CreateFSR3Context(device, a_width, a_height, a_width, a_height);
-		fo4cs::Diagnostics::WriteHangTraceLine("PreNGFSRPreflight:CreateFSR3Context:end");
-		if (!fidelity->featureFSR) {
-			logger::error("[Upscaler] PreNG FSR 3.0 preflight failed; keeping native render targets");
-			fo4cs::Diagnostics::WriteHangTraceLine("PreNGFSRPreflight:failed");
-			return false;
-		}
-		fo4cs::Diagnostics::WriteHangTraceLine("PreNGFSRPreflight:success");
-#else
-		(void)a_width;
-		(void)a_height;
-#endif
-		return true;
-	}
 }
 
 
@@ -251,11 +212,7 @@ void Upscaling::OnD3D11DeviceCreated(ID3D11Device* a_device, IDXGIAdapter* a_ada
 	(void)a_adapter;
 	renderBackendEnabled =
 		(UsesDLSSUpscaling() && d3d12Interop && Streamline::GetSingleton()->featureDLSS) ||
-#if defined(FALLOUT_PRE_NG)
-		UsesFSRUpscaling();  // D3D11-native; context creation may disable FSR later.
-#else
 		(UsesFSRUpscaling() && d3d12Interop && FidelityFX::GetSingleton()->featureFSR);
-#endif
 }
 
 Upscaling::UpscaleMethod Upscaling::GetUpscaleMethod(bool a_checkMenu) const
@@ -276,11 +233,7 @@ Upscaling::UpscaleMethod Upscaling::GetUpscaleMethod(bool a_checkMenu) const
 	auto method = GetPreferredUpscaleMethod();
 	if (method == UpscaleMethod::kFSR) {
 		static bool loggedUnavailableFSR = false;
-#if defined(FALLOUT_PRE_NG)
-		if (FidelityFX::GetSingleton()->fsr3Unavailable) {
-#else
 		if (!d3d12Interop || !FidelityFX::GetSingleton()->featureFSR) {
-#endif
 			if (!loggedUnavailableFSR) {
 				logger::warn("[Upscaler] FSR is unavailable; disabling FSR");
 				loggedUnavailableFSR = true;
@@ -893,17 +846,6 @@ void Upscaling::UpdateUpscaling()
 	upscaleMethod = GetUpscaleMethod(true);
 	fo4cs::Diagnostics::WriteHangTraceLine("UpdateUpscaling:GetUpscaleMethod:end");
 
-#if defined(FALLOUT_PRE_NG)
-	if (upscaleMethodNoMenu == UpscaleMethod::kFSR &&
-		!EnsurePreNGFSRContextBeforeRenderTargetOverride(screenWidth, screenHeight)) {
-		renderBackendEnabled = false;
-		fo4cs::Diagnostics::WriteHangTraceLine("UpdateUpscaling:RestoreNativeRenderState:preflight-failed:begin");
-		RestoreNativeRenderState(renderTargetManager, gameViewport);
-		fo4cs::Diagnostics::WriteHangTraceLine("UpdateUpscaling:RestoreNativeRenderState:preflight-failed:end");
-		fo4cs::Diagnostics::WriteHangTraceLine("UpdateUpscaling:exit:fsr-preflight-failed");
-		return;
-	}
-#endif
 
 	float resolutionScale = upscaleMethodNoMenu == UpscaleMethod::kDisabled ? 1.0f : 1.0f / GetUpscaleRatio(settings.qualityMode);
 	float currentMipBias = std::log2f(resolutionScale);
@@ -1025,29 +967,16 @@ void Upscaling::Upscale()
 					CopyNativeAABorder(context, upscalingTexture->resource.get(), frameBufferResource, upscalingTexture->desc.Width, upscalingTexture->desc.Height);
 			}
 		}
-	} else if (upscaleMethod == UpscaleMethod::kFSR
-#if !defined(FALLOUT_PRE_NG)
-		&& d3d12Interop
-#endif
-	) {
+	} else if (upscaleMethod == UpscaleMethod::kFSR && d3d12Interop) {
 		if (!setupBuffers)
 			CreateFrameGenerationResources();
 
-#if defined(FALLOUT_PRE_NG)
-		const auto frameIndex = 0;
-#else
 		auto dx12SwapChain = DX12SwapChain::GetSingleton();
 		const auto frameIndex = dx12SwapChain->frameIndex;
-#endif
 
 		const bool missingSharedColor =
-			!upscalerInputShared[frameIndex] || !upscalerOutputShared[frameIndex]
-#if !defined(FALLOUT_PRE_NG)
-			||
+			!upscalerInputShared[frameIndex] || !upscalerOutputShared[frameIndex] ||
 			!upscalerInputShared12[frameIndex] || !upscalerOutputShared12[frameIndex];
-#else
-			;
-#endif
 		const bool mismatchedSharedColor =
 			upscalerInputShared[frameIndex] &&
 			(upscalerInputShared[frameIndex]->desc.Width != upscalingTexture->desc.Width ||
@@ -1058,27 +987,11 @@ void Upscaling::Upscale()
 			CreateUpscalingResources();
 
 		if (upscalerInputShared[frameIndex] && upscalerOutputShared[frameIndex] &&
-#if defined(FALLOUT_PRE_NG)
-			depthBufferShared[frameIndex] && motionVectorBufferShared[frameIndex]) {
-#else
 			upscalerInputShared12[frameIndex] && upscalerOutputShared12[frameIndex] &&
 			depthBufferShared12[frameIndex] && motionVectorBufferShared12[frameIndex]) {
-#endif
 			context->CopyResource(upscalerInputShared[frameIndex]->resource.get(), frameBufferResource);
 			CopyBuffersToSharedResources();
 
-#if defined(FALLOUT_PRE_NG)
-			const bool dispatched = FidelityFX::GetSingleton()->Upscale(
-				context,
-				upscalerInputShared[frameIndex]->resource.get(),
-				upscalerOutputShared[frameIndex]->resource.get(),
-				depthBufferShared[frameIndex]->resource.get(),
-				motionVectorBufferShared[frameIndex]->resource.get(),
-				jitter,
-				renderSize,
-				screenSize,
-				settings.qualityMode);
-#else
 			auto commandList = dx12SwapChain->BeginInteropCommandList();
 			const bool dispatched = FidelityFX::GetSingleton()->Upscale(
 				commandList,
@@ -1091,7 +1004,6 @@ void Upscaling::Upscale()
 				screenSize,
 				settings.qualityMode);
 			dx12SwapChain->ExecuteInteropCommandListAndWait();
-#endif
 
 			if (dispatched) {
 				context->CopyResource(frameBufferResource, upscalerOutputShared[frameIndex]->resource.get());
@@ -1117,29 +1029,13 @@ void Upscaling::CreateUpscalingResources()
 	reinterpret_cast<ID3D11Texture2D*>(main.texture)->GetDesc(&motionVectorDesc);
 
 	const bool needsDLSSSharedResources = UsesDLSSUpscaling() && Streamline::GetSingleton()->featureDLSS;
-#if defined(FALLOUT_PRE_NG)
-	const bool needsFSRSharedResources = UsesFSRUpscaling() && !FidelityFX::GetSingleton()->fsr3Unavailable;
-#else
 	const bool needsFSRSharedResources = UsesFSRUpscaling() && FidelityFX::GetSingleton()->featureFSR;
-#endif
-#if defined(FALLOUT_PRE_NG)
-	// FSR 3.0 works on D3D11 native — no D3D12 interop needed.
-	// DLSS still requires D3D12; if only DLSS, check interop as before.
-	if ((!needsDLSSSharedResources && !needsFSRSharedResources) || (!needsFSRSharedResources && !d3d12Interop))
-#else
 	if ((!needsDLSSSharedResources && !needsFSRSharedResources) || !d3d12Interop)
-#endif
 		return;
 
 	auto dx12SwapChain = DX12SwapChain::GetSingleton();
-#if !defined(FALLOUT_PRE_NG)
 	if (!dx12SwapChain->d3d12Device)
 		return;
-#else
-	const bool needsD3D12SharedResources = needsDLSSSharedResources;
-	if (needsD3D12SharedResources && !dx12SwapChain->d3d12Device)
-		return;
-#endif
 
 	D3D11_TEXTURE2D_DESC colorDesc{};
 	if (upscalingTexture) {
@@ -1190,47 +1086,22 @@ void Upscaling::CreateUpscalingResources()
 		upscalerOutputShared[index] = new Texture2D(colorDesc);
 		upscalerInputShared12[index] = nullptr;
 		upscalerOutputShared12[index] = nullptr;
-#if defined(FALLOUT_PRE_NG)
-		if (needsD3D12SharedResources) {
-			openSharedTexture(upscalerInputShared[index], upscalerInputShared12[index]);
-			openSharedTexture(upscalerOutputShared[index], upscalerOutputShared12[index]);
-		}
-#else
 		openSharedTexture(upscalerInputShared[index], upscalerInputShared12[index]);
 		openSharedTexture(upscalerOutputShared[index], upscalerOutputShared12[index]);
-#endif
 	}
 
 	if (needsFSRSharedResources) {
-#if defined(FALLOUT_PRE_NG)
-		if (FidelityFX::GetSingleton()->fsr3Unavailable) {
-			upscaleMethodNoMenu = UpscaleMethod::kDisabled;
-			upscaleMethod = UpscaleMethod::kDisabled;
-			renderBackendEnabled = false;
-			return;
-		}
-
-		FidelityFX::GetSingleton()->CreateFSR3Context(
-			reinterpret_cast<ID3D11Device*>(fo4cs::GetRendererData()->device),
-			colorDesc.Width,
-			colorDesc.Height,
-			colorDesc.Width,
-			colorDesc.Height);
-		if (!FidelityFX::GetSingleton()->featureFSR) {
-			logger::error("[Upscaler] FSR 3.0 context creation failed; disabling upscaling backend");
-			upscaleMethodNoMenu = UpscaleMethod::kDisabled;
-			upscaleMethod = UpscaleMethod::kDisabled;
-			renderBackendEnabled = false;
-			return;
-		}
-#else
-		FidelityFX::GetSingleton()->SetupUpscaling(
+		if (!FidelityFX::GetSingleton()->SetupUpscaling(
 			dx12SwapChain->d3d12Device.get(),
 			colorDesc.Width,
 			colorDesc.Height,
 			colorDesc.Width,
-			colorDesc.Height);
-#endif
+			colorDesc.Height)) {
+			logger::error("[Upscaler] FSR upscaling context creation failed; disabling upscaling backend");
+			upscaleMethodNoMenu = UpscaleMethod::kDisabled;
+			upscaleMethod = UpscaleMethod::kDisabled;
+			renderBackendEnabled = false;
+		}
 	}
 }
 

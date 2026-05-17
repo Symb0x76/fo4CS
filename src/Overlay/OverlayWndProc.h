@@ -31,18 +31,16 @@ inline LRESULT CALLBACK WndProc(HWND a_hwnd, UINT a_msg, WPARAM a_wParam, LPARAM
 		}
 
 		if (g_overlay->IsVisible()) {
-			if (a_msg == WM_INPUT) {
-				return 0;
-			}
-
 			auto& io = ImGui::GetIO();
 			const bool mouseMessage =
 				a_msg >= WM_MOUSEFIRST && a_msg <= WM_MOUSELAST;
 			const bool keyboardMessage =
 				a_msg >= WM_KEYFIRST && a_msg <= WM_KEYLAST;
-			if (imguiHandled ||
-				mouseMessage ||
-				(keyboardMessage && io.WantCaptureKeyboard)) {
+
+			if ((a_msg == WM_INPUT && io.WantCaptureMouse) ||
+				(mouseMessage && io.WantCaptureMouse) ||
+				(keyboardMessage && io.WantCaptureKeyboard) ||
+				(imguiHandled && (io.WantCaptureMouse || io.WantCaptureKeyboard))) {
 				return true;
 			}
 		}

@@ -368,13 +368,9 @@ void DX12SwapChain::CreateSwapChain(IDXGIFactory4* a_dxgiFactory, DXGI_SWAP_CHAI
 	}
 
 	auto streamline = Streamline::GetSingleton();
-#if !defined(FALLOUT_PRE_NG)
 	auto upscaling = Upscaling::GetSingleton();
 	auto fidelityFX = FidelityFX::GetSingleton();
 	const bool useFidelityFXSwapChain = upscaling->UsesFSRFrameGeneration() && fidelityFX->module;
-#else
-	const bool useFidelityFXSwapChain = false;  // FSR 3.0 D3D11-native, no FFX swap chain needed
-#endif
 	IDXGIFactory4* dxgiFactory = a_dxgiFactory;
 	logger::info(
 		"[DX12SwapChain] Creating D3D12 proxy swap chain {}x{} fmt={} flags=0x{:X} backend={} hdrMode={}",
@@ -397,7 +393,6 @@ void DX12SwapChain::CreateSwapChain(IDXGIFactory4* a_dxgiFactory, DXGI_SWAP_CHAI
 		DX::ThrowIfFailed(nativeSwapChain->QueryInterface(IID_PPV_ARGS(&swapChain)));
 	};
 
-#if !defined(FALLOUT_PRE_NG)
 	if (useFidelityFXSwapChain) {
 		ffx::CreateContextDescFrameGenerationSwapChainForHwndDX12 ffxSwapChainDesc{};
 
@@ -417,9 +412,6 @@ void DX12SwapChain::CreateSwapChain(IDXGIFactory4* a_dxgiFactory, DXGI_SWAP_CHAI
 	} else {
 		createNativeSwapChain();
 	}
-#else
-	createNativeSwapChain();
-#endif
 
 	(void)streamline;
 
@@ -431,10 +423,8 @@ void DX12SwapChain::CreateSwapChain(IDXGIFactory4* a_dxgiFactory, DXGI_SWAP_CHAI
 	frameIndex = swapChain->GetCurrentBackBufferIndex();
 	logger::info("[DX12SwapChain] Swap chain ready (frameIndex={}, buffers={})", frameIndex, swapChainDesc.BufferCount);
 
-#if !defined(FALLOUT_PRE_NG)
 	if (useFidelityFXSwapChain && fidelityFX->swapChainContext != nullptr)
 		fidelityFX->SetupFrameGeneration();
-#endif
 
 	swapChainProxy = new DXGISwapChainProxy(swapChain);
 

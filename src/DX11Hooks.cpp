@@ -44,11 +44,12 @@ namespace
 
 	bool ShouldCreateD3D12Proxy()
 	{
-#ifdef FALLOUT_PRE_NG
-		return false;
-#else
-		return true;
-#endif
+		const auto upscaling = Upscaling::GetSingleton();
+
+		return upscaling->UsesFSRUpscaling() ||
+			upscaling->UsesFSRFrameGeneration() ||
+			upscaling->UsesDLSSUpscaling() ||
+			upscaling->UsesDLSSFrameGeneration();
 	}
 
 	template <class T>

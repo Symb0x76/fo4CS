@@ -26,10 +26,8 @@ set(Boost_USE_STATIC_RUNTIME ON)
 xseplugin_resolve_commonlib_root(CommonLibRoot CommonLibName)
 xseplugin_resolve_commonlib_project(CommonLibPath "${CommonLibRoot}")
 
-# FSR 3.0 — D3D11-native combined upscale+FG for PreNG
-if(BUILD_PRE_NG)
-    include(FSR30)
-endif()
+# FSR runtime is loaded dynamically through the DX12 proxy path for both PreNG and main.
+# Keep the build graph aligned with the runtime-loaded amd_fidelityfx_dx12.dll.
 
 if(F4SE_SUPPORT_XBYAK)
     set(COMMONLIBF4_ENABLE_XBYAK ON CACHE BOOL "Enable xbyak support for CommonLibF4" FORCE)
@@ -104,7 +102,6 @@ target_include_directories(Core
     ${CMAKE_CURRENT_SOURCE_DIR}/extern/imgui
     ${CMAKE_CURRENT_SOURCE_DIR}/extern/imgui/backends
     ${CMAKE_CURRENT_SOURCE_DIR}/include
-    "$<$<BOOL:${BUILD_PRE_NG}>:${FFX_30_INCLUDE_DIR}>"
     PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
@@ -348,11 +345,7 @@ if(AIO)
         )
     endif()
     set_target_properties(NuclearGFX PROPERTIES OUTPUT_NAME "NuclearGFX")
-	if(BUILD_PRE_NG)
-		target_link_libraries(NuclearGFX PRIVATE Core ffx_backend_dx11_x64 ffx_fsr3_x64)
-	else()
 		target_link_libraries(NuclearGFX PRIVATE Core)
-	endif()
 endif()
 
 if(COMMUNITY_SHADERS)
@@ -378,11 +371,7 @@ if(COMMUNITY_SHADERS)
         )
     endif()
     target_compile_definitions(CommunityShaders PRIVATE COMMUNITY_SHADERS)
-	if(BUILD_PRE_NG)
-		target_link_libraries(CommunityShaders PRIVATE Core CoreCS ffx_backend_dx11_x64 ffx_fsr3_x64)
-	else()
 		target_link_libraries(CommunityShaders PRIVATE Core CoreCS)
-	endif()
 endif()
 
 if(OVERLAY)

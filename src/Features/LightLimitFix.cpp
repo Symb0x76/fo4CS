@@ -27,9 +27,13 @@
 #include "RE/Bethesda/TESBoundAnimObjects.h"  // TESObjectLIGH
 #endif
 #if defined(FALLOUT_POST_AE)
-#include "RE/N/NiLight.h"
+#include "RE/N/NiAVObject.h"
+#include "RE/N/NiBound.h"
+#include "RE/N/NiColor.h"
 #else
-#include "RE/NetImmerse/NiLight.h"
+#include "RE/NetImmerse/NiAVObject.h"
+#include "RE/NetImmerse/NiBound.h"
+#include "RE/NetImmerse/NiColor.h"
 #endif
 
 #include "SimpleIni.h"
@@ -45,6 +49,23 @@ namespace
 	{
 		return "LightLimitFix\\";
 	}
+
+#pragma warning(push)
+#pragma warning(disable: 4324)
+	struct NiLightView : RE::NiAVObject
+	{
+		RE::NiColor amb;
+		RE::NiColor diff;
+		RE::NiColor spec;
+		float dimmer;
+		alignas(16) RE::NiBound modelBound;
+		void* rendererData;
+	};
+#pragma warning(pop)
+
+	static_assert(sizeof(NiLightView) == 0x170);
+	static_assert(offsetof(NiLightView, diff) == 0x12C);
+	static_assert(offsetof(NiLightView, modelBound) == 0x150);
 }
 
 void LightLimitFix::LoadSettings()
@@ -613,7 +634,7 @@ void LightLimitFix::CollectLightsFromBSLight()
 {
 	for (auto* light : seenLights) {
 		if (!light || frameLights.size() >= kMaxLights) break;
-		auto* niLight = reinterpret_cast<RE::NiLight*>(light);
+		auto* niLight = reinterpret_cast<NiLightView*>(light);
 		LightData data{};
 		data.color.x = niLight->diff.r;
 		data.color.y = niLight->diff.g;
@@ -647,7 +668,7 @@ void LightLimitFix::CollectLightsFromScene()
 		auto* niObj = ref->Get3D();
 		if (!niObj) continue;
 
-		auto* niLight = static_cast<RE::NiLight*>(niObj);
+		auto* niLight = reinterpret_cast<NiLightView*>(niObj);
 		if (!niLight) continue;
 
 		auto* lightKey = reinterpret_cast<RE::BSLight*>(niLight);

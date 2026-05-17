@@ -147,6 +147,21 @@ namespace
 			return true;
 		if (GetModuleHandleW(L"NuclearGFX.dll") != nullptr)
 			return true;
+
+		HMODULE currentModule = nullptr;
+		if (GetModuleHandleExW(
+				GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+				reinterpret_cast<LPCWSTR>(&IsFrameGenPluginVisible),
+				&currentModule)) {
+			std::array<wchar_t, 4096> modulePath{};
+			const auto length = GetModuleFileNameW(currentModule, modulePath.data(), static_cast<DWORD>(modulePath.size()));
+			if (length > 0 && length < modulePath.size()) {
+				auto fileName = std::filesystem::path(modulePath.data(), modulePath.data() + length).filename().wstring();
+				if (_wcsicmp(fileName.c_str(), L"CommunityShaders.dll") == 0)
+					return true;
+			}
+		}
+
 		return false;
 	}
 
@@ -575,11 +590,7 @@ void Upscaling::PostPostLoad()
 
 	renderBackendEnabled = pluginMode == PluginMode::kUpscaler &&
 		((UsesDLSSUpscaling() && Streamline::GetSingleton()->featureDLSS) ||
-#if defined(FALLOUT_PRE_NG)
-		 (UsesFSRUpscaling() && FidelityFX::GetSingleton()->featureFSR));
-#else
 		 (UsesFSRUpscaling() && d3d12Interop && FidelityFX::GetSingleton()->featureFSR));
-#endif
 	InstallHooks();
 }
 

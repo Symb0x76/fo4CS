@@ -935,6 +935,7 @@ float4 PSMain(VSOut input) : SV_Target
 	}
 	void Render(ID3D11Device* a_device, ID3D11DeviceContext* a_context, IDXGISwapChain* a_swapChain)
 	{
+		(void)a_swapChain;
 #if defined(FALLOUT_PRE_NG)
 		std::lock_guard lock(renderMutex);
 		if (!InitializeD3D11(a_device, a_context)) {
@@ -955,7 +956,7 @@ float4 PSMain(VSOut input) : SV_Target
 		}
 
 		ImGui::SetCurrentContext(imguiContext);
-		UpdateD3D11MouseCaptureState(menuOpen || calibrationActive);
+		UpdateD3D11MouseCaptureState(calibrationActive);
 		ImGui::GetIO().MouseDrawCursor = menuOpen;
 		ImGui::GetIO().FontGlobalScale = GetD3D11UIScale();
 		ImGui_ImplDX11_NewFrame();
