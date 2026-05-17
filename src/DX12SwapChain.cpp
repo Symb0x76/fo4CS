@@ -367,9 +367,9 @@ void DX12SwapChain::CreateSwapChain(IDXGIFactory4* a_dxgiFactory, DXGI_SWAP_CHAI
 		swapChainDesc.Flags |= DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING;
 	}
 
+	auto streamline = Streamline::GetSingleton();
 	auto upscaling = Upscaling::GetSingleton();
 	auto fidelityFX = FidelityFX::GetSingleton();
-	auto streamline = Streamline::GetSingleton();
 	const bool useFidelityFXSwapChain = upscaling->UsesFSRFrameGeneration() && fidelityFX->module;
 	IDXGIFactory4* dxgiFactory = a_dxgiFactory;
 	logger::info(

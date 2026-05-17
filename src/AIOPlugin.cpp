@@ -4,6 +4,8 @@
 #include "DX12SwapChain.h"
 #include "HDR.h"
 #include "Upscaler.h"
+#include "Overlay/Overlay.h"
+
 #include <OverlayAPI.h>
 #include <SimpleIni.h>
 #include <imgui.h>
@@ -165,14 +167,7 @@ namespace AIOOverlay
 		cbs.save = SavePanel<PanelId>;
 		cbs.userData = &Upscaling::GetSingleton()->settings;
 
-		HMODULE overlay = GetModuleHandleW(L"Overlay.dll");
-		if (!overlay) return;
-
-		auto registerFn = reinterpret_cast<decltype(&Overlay_RegisterPanel)>(
-			GetProcAddress(overlay, "Overlay_RegisterPanel"));
-		if (!registerFn) return;
-
-		registerFn(name, category, &cbs);
+		Overlay::GetSingleton()->RegisterPanel(name, category, &cbs);
 	}
 
 	void RegisterAll()
@@ -185,21 +180,11 @@ namespace AIOOverlay
 
 	void RegisterHostCallbacks()
 	{
-		HMODULE overlay = GetModuleHandleW(L"Overlay.dll");
-		if (!overlay) return;
-
-		auto initCb = reinterpret_cast<OverlayInitCallback>(
-			GetProcAddress(overlay, "Overlay_OnSwapChainCreated"));
-		auto presentCb = reinterpret_cast<OverlayPresentCallback>(
-			GetProcAddress(overlay, "Overlay_OnPresent"));
-		auto pollCb = reinterpret_cast<OverlayPollCallback>(
-			GetProcAddress(overlay, "Overlay_OnPollHotkey"));
-
 		auto* dx12 = DX12SwapChain::GetSingleton();
-		if (initCb) dx12->RegisterOverlayInitCallback(initCb);
-		if (presentCb) dx12->RegisterOverlayPresentCallback(presentCb);
-		if (pollCb) dx12->RegisterOverlayPollCallback(pollCb);
-		logger::info("[AIO] Overlay callbacks registered via GetProcAddress");
+		dx12->RegisterOverlayInitCallback(Overlay::OnSwapChainCreated);
+		dx12->RegisterOverlayPresentCallback(Overlay::OnPresent);
+		dx12->RegisterOverlayPollCallback(Overlay::OnPollHotkey);
+		logger::info("[AIO] Overlay callbacks registered directly");
 	}
 }
 

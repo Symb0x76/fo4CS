@@ -26,10 +26,8 @@ set(Boost_USE_STATIC_RUNTIME ON)
 xseplugin_resolve_commonlib_root(CommonLibRoot CommonLibName)
 xseplugin_resolve_commonlib_project(CommonLibPath "${CommonLibRoot}")
 
-# FSR 3.0 — D3D11-native combined upscale+FG for PreNG
-if(BUILD_PRE_NG)
-    include(FSR30)
-endif()
+# FSR runtime is loaded dynamically through the DX12 proxy path for both PreNG and main.
+# Keep the build graph aligned with the runtime-loaded amd_fidelityfx_dx12.dll.
 
 if(F4SE_SUPPORT_XBYAK)
     set(COMMONLIBF4_ENABLE_XBYAK ON CACHE BOOL "Enable xbyak support for CommonLibF4" FORCE)
@@ -50,7 +48,6 @@ set(FO4CS_COMMON_DEPENDENCIES
     dxgi.lib
     magic_enum::magic_enum
     d3dcompiler.lib
-    "$<$<BOOL:${BUILD_PRE_NG}>:${FFX_30_LIBRARIES}>"
 )
 
 set(FEATURE_VERSIONS
@@ -104,7 +101,6 @@ target_include_directories(Core
     ${CMAKE_CURRENT_SOURCE_DIR}/extern/imgui
     ${CMAKE_CURRENT_SOURCE_DIR}/extern/imgui/backends
     ${CMAKE_CURRENT_SOURCE_DIR}/include
-    "$<$<BOOL:${BUILD_PRE_NG}>:${FFX_30_INCLUDE_DIR}>"
     PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
@@ -159,6 +155,7 @@ if(CMAKE_GENERATOR MATCHES "Visual Studio")
     set_source_files_properties(${FO4CS_IMGUI_CORE_SOURCES} PROPERTIES COMPILE_OPTIONS "/W0")
 endif()
 
+if(COMMUNITY_SHADERS)
 # ------------------------------------------------------------------
 # CoreCS: CommunityShaders Feature 框架 OBJECT 库
 #   - 仅 community-shaders.dll 链接
@@ -253,6 +250,7 @@ endif()
 
 target_precompile_headers(CoreCS PRIVATE include/PCH.h)
 target_link_libraries(CoreCS PUBLIC ${FO4CS_COMMON_DEPENDENCIES})
+endif()
 
 if(BUILD_PRE_NG)
     set(FO4CS_RUNTIME_FLAVOR "PreNG")

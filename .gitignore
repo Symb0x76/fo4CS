@@ -1,9 +1,11 @@
 # Builds
 /build
 /dist
+/bin
 
 # References
 /vendor
+/scripts
 
 # AI
 /.claude

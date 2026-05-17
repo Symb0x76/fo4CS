@@ -1,5 +1,8 @@
 #include "Upscaler.h"
 
+#include "RE/CameraData.h"
+#include "RE/SingletonAccessors.h"
+
 #include <algorithm>
 #include <cmath>
 #include <d3dcompiler.h>
@@ -8,6 +11,7 @@
 #include <string_view>
 #include <vector>
 
+#include "Diagnostics/HangTrace.h"
 #include "DX12SwapChain.h"
 #include "FidelityFX.h"
 #include "Streamline.h"
@@ -40,25 +44,6 @@ namespace
 		kMain = 2
 	};
 
-	[[nodiscard]] RE::BSGraphics::State* State_GetSingleton()
-	{
-#if defined(FALLOUT_POST_NG)
-		REL::Relocation<RE::BSGraphics::State*> singleton{ REL::ID(2704621) };
-#else
-		REL::Relocation<RE::BSGraphics::State*> singleton{ REL::ID(600795) };
-#endif
-		return singleton.get();
-	}
-
-	[[nodiscard]] RE::BSGraphics::RenderTargetManager* RenderTargetManager_GetSingleton()
-	{
-#if defined(FALLOUT_POST_NG)
-		REL::Relocation<RE::BSGraphics::RenderTargetManager*> singleton{ REL::ID(2666735) };
-#else
-		REL::Relocation<RE::BSGraphics::RenderTargetManager*> singleton{ REL::ID(1508457) };
-#endif
-		return singleton.get();
-	}
 
 	float GetUpscaleRatio(uint qualityMode)
 	{
@@ -170,6 +155,8 @@ namespace
 
 	void TraceRenderBackendStage(std::string_view stage)
 	{
+		fo4cs::Diagnostics::WriteHangTraceLine(stage);
+
 		auto upscaling = Upscaling::GetSingleton();
 		if (!upscaling->debugTraceCurrentPresent) {
 			return;
@@ -184,20 +171,40 @@ namespace
 		logger::debug("[Upscaler] Render backend stage: {}", stage);
 	}
 
-	struct SamplerStates
+	void RestoreNativeRenderState(RE::BSGraphics::RenderTargetManager* a_renderTargetManager, RE::BSGraphics::State* a_gameViewport)
 	{
-		ID3D11SamplerState* a[320];
+		fo4cs::Diagnostics::WriteHangTraceLine("RestoreNativeRenderState:begin");
+		auto* upscaling = Upscaling::GetSingleton();
+		upscaling->upscaleMethodNoMenu = Upscaling::UpscaleMethod::kDisabled;
+		upscaling->upscaleMethod = Upscaling::UpscaleMethod::kDisabled;
+		upscaling->postLoadingSkipUpscale = true;
 
-		static SamplerStates* GetSingleton()
-		{
-#if defined(FALLOUT_POST_NG)
-			return reinterpret_cast<SamplerStates*>(REL::ID(2704455).address());
-#else
-			return reinterpret_cast<SamplerStates*>(REL::ID(44312).address());
-#endif
+		if (a_gameViewport) {
+			fo4cs::Diagnostics::WriteHangTraceLine("RestoreNativeRenderState:viewport-reset:begin");
+			a_gameViewport->offsetX = 0.0f;
+			a_gameViewport->offsetY = 0.0f;
+			fo4cs::Diagnostics::WriteHangTraceLine("RestoreNativeRenderState:viewport-reset:end");
 		}
-	};
+
+		if (a_renderTargetManager) {
+			fo4cs::Diagnostics::WriteHangTraceLine("RestoreNativeRenderState:rtm-reset:begin");
+			a_renderTargetManager->dynamicWidthRatio = 1.0f;
+			a_renderTargetManager->dynamicHeightRatio = 1.0f;
+			a_renderTargetManager->isDynamicResolutionCurrentlyActivated = false;
+			fo4cs::Diagnostics::WriteHangTraceLine("RestoreNativeRenderState:rtm-reset:end");
+		}
+
+		fo4cs::Diagnostics::WriteHangTraceLine("RestoreNativeRenderState:UpdateSamplerStates:begin");
+		upscaling->UpdateSamplerStates(0.0f);
+		fo4cs::Diagnostics::WriteHangTraceLine("RestoreNativeRenderState:UpdateSamplerStates:end");
+		fo4cs::Diagnostics::WriteHangTraceLine("RestoreNativeRenderState:UpdateRenderTargets:begin");
+		upscaling->UpdateRenderTargets(1.0f, 1.0f);
+		fo4cs::Diagnostics::WriteHangTraceLine("RestoreNativeRenderState:UpdateRenderTargets:end");
+		fo4cs::Diagnostics::WriteHangTraceLine("RestoreNativeRenderState:end");
+	}
+
 }
+
 
 void Upscaling::OnD3D11DeviceCreated(ID3D11Device* a_device, IDXGIAdapter* a_adapter)
 {
@@ -205,11 +212,7 @@ void Upscaling::OnD3D11DeviceCreated(ID3D11Device* a_device, IDXGIAdapter* a_ada
 	(void)a_adapter;
 	renderBackendEnabled =
 		(UsesDLSSUpscaling() && d3d12Interop && Streamline::GetSingleton()->featureDLSS) ||
-#if defined(FALLOUT_PRE_NG)
-		(UsesFSRUpscaling() && FidelityFX::GetSingleton()->featureFSR);  // D3D11-native, no D3D12 interop
-#else
 		(UsesFSRUpscaling() && d3d12Interop && FidelityFX::GetSingleton()->featureFSR);
-#endif
 }
 
 Upscaling::UpscaleMethod Upscaling::GetUpscaleMethod(bool a_checkMenu) const
@@ -230,13 +233,9 @@ Upscaling::UpscaleMethod Upscaling::GetUpscaleMethod(bool a_checkMenu) const
 	auto method = GetPreferredUpscaleMethod();
 	if (method == UpscaleMethod::kFSR) {
 		static bool loggedUnavailableFSR = false;
-#if defined(FALLOUT_PRE_NG)
-		if (!FidelityFX::GetSingleton()->featureFSR) {
-#else
 		if (!d3d12Interop || !FidelityFX::GetSingleton()->featureFSR) {
-#endif
 			if (!loggedUnavailableFSR) {
-				logger::warn("[Upscaler] FSR requires the D3D12 proxy and FidelityFX runtime; disabling FSR");
+				logger::warn("[Upscaler] FSR is unavailable; disabling FSR");
 				loggedUnavailableFSR = true;
 			}
 			return UpscaleMethod::kDisabled;
@@ -528,10 +527,10 @@ void Upscaling::UpdateSamplerStates(float a_currentMipBias)
 
 	auto rendererData = fo4cs::GetRendererData();
 	auto device = reinterpret_cast<ID3D11Device*>(rendererData->device);
-	auto samplerStates = SamplerStates::GetSingleton();
+	auto samplerStates = fo4cs::RE::GetSamplerStateArray();
 
 	for (int i = 0; i < 320; i++) {
-		originalSamplerStates[i] = samplerStates->a[i];
+		originalSamplerStates[i] = samplerStates[i];
 		if (!originalSamplerStates[i])
 			continue;
 
@@ -549,19 +548,19 @@ void Upscaling::UpdateSamplerStates(float a_currentMipBias)
 
 void Upscaling::OverrideSamplerStates()
 {
-	auto samplerStates = SamplerStates::GetSingleton();
+	auto samplerStates = fo4cs::RE::GetSamplerStateArray();
 	for (int i = 0; i < 320; i++) {
 		if (biasedSamplerStates[i])
-			samplerStates->a[i] = biasedSamplerStates[i];
+			samplerStates[i] = biasedSamplerStates[i];
 	}
 }
 
 void Upscaling::ResetSamplerStates()
 {
-	auto samplerStates = SamplerStates::GetSingleton();
+	auto samplerStates = fo4cs::RE::GetSamplerStateArray();
 	for (int i = 0; i < 320; i++) {
 		if (originalSamplerStates[i])
-			samplerStates->a[i] = originalSamplerStates[i];
+			samplerStates[i] = originalSamplerStates[i];
 	}
 }
 
@@ -569,8 +568,8 @@ void Upscaling::CopyDepth()
 {
 	auto rendererData = fo4cs::GetRendererData();
 	auto context = reinterpret_cast<ID3D11DeviceContext*>(rendererData->context);
-	auto gameViewport = State_GetSingleton();
-	auto renderTargetManager = RenderTargetManager_GetSingleton();
+	auto gameViewport = fo4cs::RE::GetGraphicsState();
+	auto renderTargetManager = fo4cs::RE::GetRenderTargetManager();
 
 	auto screenSize = float2(float(gameViewport->screenWidth), float(gameViewport->screenHeight));
 	auto renderSize = float2(screenSize.x * renderTargetManager->dynamicWidthRatio, screenSize.y * renderTargetManager->dynamicHeightRatio);
@@ -777,19 +776,12 @@ ConstantBuffer* Upscaling::GetUpscalingCB()
 
 void Upscaling::UpdateAndBindUpscalingCB(ID3D11DeviceContext* a_context, float2 a_screenSize, float2 a_renderSize)
 {
-#if defined(FALLOUT_POST_NG)
-	static auto cameraNear = (float*)REL::ID(2712882).address();
-	static auto cameraFar = (float*)REL::ID(2712883).address();
-#else
-	static auto cameraNear = (float*)REL::ID(57985).address();
-	static auto cameraFar = (float*)REL::ID(958877).address();
-#endif
 	UpscalingCB data{};
 	data.ScreenSize[0] = static_cast<uint>(a_screenSize.x);
 	data.ScreenSize[1] = static_cast<uint>(a_screenSize.y);
 	data.RenderSize[0] = static_cast<uint>(a_renderSize.x);
 	data.RenderSize[1] = static_cast<uint>(a_renderSize.y);
-	data.CameraData = float4(*cameraFar, *cameraNear, *cameraFar - *cameraNear, *cameraFar * *cameraNear);
+	data.CameraData = float4(fo4cs::RE::GetCameraFar(), fo4cs::RE::GetCameraNear(), fo4cs::RE::GetCameraFar() - fo4cs::RE::GetCameraNear(), fo4cs::RE::GetCameraFar() * fo4cs::RE::GetCameraNear());
 
 	auto cb = GetUpscalingCB();
 	cb->Update(data);
@@ -799,59 +791,103 @@ void Upscaling::UpdateAndBindUpscalingCB(ID3D11DeviceContext* a_context, float2 
 
 void Upscaling::UpdateGameSettings()
 {
-#if defined(FALLOUT_POST_NG)
-	static auto enableTAA = (bool*)REL::ID(2704658).address();
-#else
-	static auto enableTAA = (bool*)REL::ID(460417).address();
-#endif
-	*enableTAA = true;
+	*fo4cs::RE::GetTAAEnableFlag() = true;
 }
 
 void Upscaling::UpdateUpscaling()
 {
+	fo4cs::Diagnostics::WriteHangTraceLine("UpdateUpscaling:enter");
 	if (pluginMode != PluginMode::kUpscaler)
+	{
+		fo4cs::Diagnostics::WriteHangTraceLine("UpdateUpscaling:exit:not-upscaler-mode");
 		return;
+	}
+
+	fo4cs::Diagnostics::WriteHangTraceLine("UpdateUpscaling:IsLoadingMenuOpen:begin");
+	if (IsLoadingMenuOpen()) {
+		fo4cs::Diagnostics::WriteHangTraceLine("UpdateUpscaling:IsLoadingMenuOpen:true");
+		upscaleMethodNoMenu = UpscaleMethod::kDisabled;
+		upscaleMethod = UpscaleMethod::kDisabled;
+		postLoadingSkipUpscale = true;
+		fo4cs::Diagnostics::WriteHangTraceLine("UpdateUpscaling:exit:loading-menu");
+		return;
+	}
+	fo4cs::Diagnostics::WriteHangTraceLine("UpdateUpscaling:IsLoadingMenuOpen:false");
 
 	TraceRenderBackendStage("UpdateUpscaling");
-	auto gameViewport = State_GetSingleton();
-	auto renderTargetManager = RenderTargetManager_GetSingleton();
+	fo4cs::Diagnostics::WriteHangTraceLine("UpdateUpscaling:GetGraphicsState:begin");
+	auto gameViewport = fo4cs::RE::GetGraphicsState();
+	fo4cs::Diagnostics::WriteHangTraceLine("UpdateUpscaling:GetGraphicsState:end");
+	fo4cs::Diagnostics::WriteHangTraceLine("UpdateUpscaling:GetRenderTargetManager:begin");
+	auto renderTargetManager = fo4cs::RE::GetRenderTargetManager();
+	fo4cs::Diagnostics::WriteHangTraceLine("UpdateUpscaling:GetRenderTargetManager:end");
 	if (!gameViewport || !renderTargetManager) {
 		logger::warn("[Upscaler] Render backend globals are unavailable; disabling upscaling for this update");
 		upscaleMethodNoMenu = UpscaleMethod::kDisabled;
 		upscaleMethod = UpscaleMethod::kDisabled;
+		fo4cs::Diagnostics::WriteHangTraceLine("UpdateUpscaling:exit:missing-globals");
 		return;
 	}
 
+	fo4cs::Diagnostics::WriteHangTraceLine("UpdateUpscaling:read-screen-size:begin");
+	auto screenWidth = gameViewport->screenWidth;
+	auto screenHeight = gameViewport->screenHeight;
+	fo4cs::Diagnostics::WriteHangTraceLine("UpdateUpscaling:read-screen-size:end");
+	if (screenWidth == 0 || screenHeight == 0 || screenWidth > 16384 || screenHeight > 16384) {
+		logger::warn("[Upscaler] Invalid viewport size {}x{}; disabling upscaling for this update", screenWidth, screenHeight);
+		upscaleMethodNoMenu = UpscaleMethod::kDisabled;
+		upscaleMethod = UpscaleMethod::kDisabled;
+		fo4cs::Diagnostics::WriteHangTraceLine("UpdateUpscaling:exit:invalid-screen-size");
+		return;
+	}
+
+	fo4cs::Diagnostics::WriteHangTraceLine("UpdateUpscaling:GetUpscaleMethod:begin");
 	upscaleMethodNoMenu = GetUpscaleMethod(false);
 	upscaleMethod = GetUpscaleMethod(true);
+	fo4cs::Diagnostics::WriteHangTraceLine("UpdateUpscaling:GetUpscaleMethod:end");
+
 
 	float resolutionScale = upscaleMethodNoMenu == UpscaleMethod::kDisabled ? 1.0f : 1.0f / GetUpscaleRatio(settings.qualityMode);
 	float currentMipBias = std::log2f(resolutionScale);
 	if (upscaleMethodNoMenu != UpscaleMethod::kDisabled)
 		currentMipBias -= 1.0f;
 
+	fo4cs::Diagnostics::WriteHangTraceLine("UpdateUpscaling:UpdateSamplerStates:begin");
 	UpdateSamplerStates(currentMipBias);
+	fo4cs::Diagnostics::WriteHangTraceLine("UpdateUpscaling:UpdateSamplerStates:end");
+	fo4cs::Diagnostics::WriteHangTraceLine("UpdateUpscaling:UpdateRenderTargets:begin");
 	UpdateRenderTargets(resolutionScale, resolutionScale);
+	fo4cs::Diagnostics::WriteHangTraceLine("UpdateUpscaling:UpdateRenderTargets:end");
+	fo4cs::Diagnostics::WriteHangTraceLine("UpdateUpscaling:UpdateGameSettings:begin");
 	UpdateGameSettings();
+	fo4cs::Diagnostics::WriteHangTraceLine("UpdateUpscaling:UpdateGameSettings:end");
 
 	if (upscaleMethod == UpscaleMethod::kDisabled)
 		resolutionScale = 1.0f;
 
 	if (upscaleMethod != UpscaleMethod::kDisabled) {
-		auto screenWidth = gameViewport->screenWidth;
-		auto screenHeight = gameViewport->screenHeight;
-		auto renderWidth = static_cast<uint>(static_cast<float>(screenWidth) * resolutionScale);
-		auto phaseCount = std::max(1, static_cast<int>(8.0f * std::pow(static_cast<float>(screenWidth) / static_cast<float>(std::max(1u, renderWidth)), 2.0f)));
+		const auto width = screenWidth;
+		const auto height = screenHeight;
+		auto renderWidth = static_cast<uint>(static_cast<float>(width) * resolutionScale);
+		auto phaseCount = std::max(1, static_cast<int>(8.0f * std::pow(static_cast<float>(width) / static_cast<float>(std::max(1u, renderWidth)), 2.0f)));
 		GetJitterOffset(&jitter.x, &jitter.y, gameViewport->frameCount, phaseCount);
-		gameViewport->offsetX = 2.0f * -jitter.x / static_cast<float>(screenWidth);
-		gameViewport->offsetY = 2.0f * jitter.y / static_cast<float>(screenHeight);
+		gameViewport->offsetX = 2.0f * -jitter.x / static_cast<float>(width);
+		gameViewport->offsetY = 2.0f * jitter.y / static_cast<float>(height);
 	}
 
 	renderTargetManager->dynamicWidthRatio = resolutionScale;
 	renderTargetManager->dynamicHeightRatio = resolutionScale;
 	renderTargetManager->isDynamicResolutionCurrentlyActivated = renderTargetManager->dynamicWidthRatio != 1.0f || renderTargetManager->dynamicHeightRatio != 1.0f;
 
+	fo4cs::Diagnostics::WriteHangTraceLine("UpdateUpscaling:CheckResources:begin");
 	CheckResources();
+	fo4cs::Diagnostics::WriteHangTraceLine("UpdateUpscaling:CheckResources:end");
+	if (!renderBackendEnabled || upscaleMethodNoMenu == UpscaleMethod::kDisabled) {
+		fo4cs::Diagnostics::WriteHangTraceLine("UpdateUpscaling:RestoreNativeRenderState:disabled:begin");
+		RestoreNativeRenderState(renderTargetManager, gameViewport);
+		fo4cs::Diagnostics::WriteHangTraceLine("UpdateUpscaling:RestoreNativeRenderState:disabled:end");
+	}
+	fo4cs::Diagnostics::WriteHangTraceLine("UpdateUpscaling:exit");
 }
 
 void Upscaling::Upscale()
@@ -882,8 +918,8 @@ void Upscaling::Upscale()
 	}
 	context->CopyResource(upscalingTexture->resource.get(), frameBufferResource);
 
-	auto gameViewport = State_GetSingleton();
-	auto renderTargetManager = RenderTargetManager_GetSingleton();
+	auto gameViewport = fo4cs::RE::GetGraphicsState();
+	auto renderTargetManager = fo4cs::RE::GetRenderTargetManager();
 	auto screenSize = float2(float(gameViewport->screenWidth), float(gameViewport->screenHeight));
 	auto renderSize = float2(screenSize.x * renderTargetManager->dynamicWidthRatio, screenSize.y * renderTargetManager->dynamicHeightRatio);
 
@@ -956,18 +992,6 @@ void Upscaling::Upscale()
 			context->CopyResource(upscalerInputShared[frameIndex]->resource.get(), frameBufferResource);
 			CopyBuffersToSharedResources();
 
-#if defined(FALLOUT_PRE_NG)
-			const bool dispatched = FidelityFX::GetSingleton()->Upscale(
-				context,
-				upscalerInputShared[frameIndex]->resource.get(),
-				upscalerOutputShared[frameIndex]->resource.get(),
-				depthBufferShared[frameIndex]->resource.get(),
-				motionVectorBufferShared[frameIndex]->resource.get(),
-				jitter,
-				renderSize,
-				screenSize,
-				settings.qualityMode);
-#else
 			auto commandList = dx12SwapChain->BeginInteropCommandList();
 			const bool dispatched = FidelityFX::GetSingleton()->Upscale(
 				commandList,
@@ -980,7 +1004,6 @@ void Upscaling::Upscale()
 				screenSize,
 				settings.qualityMode);
 			dx12SwapChain->ExecuteInteropCommandListAndWait();
-#endif
 
 			if (dispatched) {
 				context->CopyResource(frameBufferResource, upscalerOutputShared[frameIndex]->resource.get());
@@ -1007,13 +1030,7 @@ void Upscaling::CreateUpscalingResources()
 
 	const bool needsDLSSSharedResources = UsesDLSSUpscaling() && Streamline::GetSingleton()->featureDLSS;
 	const bool needsFSRSharedResources = UsesFSRUpscaling() && FidelityFX::GetSingleton()->featureFSR;
-#if defined(FALLOUT_PRE_NG)
-	// FSR 3.0 works on D3D11 native — no D3D12 interop needed.
-	// DLSS still requires D3D12; if only DLSS, check interop as before.
-	if ((!needsDLSSSharedResources && !needsFSRSharedResources) || (!needsFSRSharedResources && !d3d12Interop))
-#else
 	if ((!needsDLSSSharedResources && !needsFSRSharedResources) || !d3d12Interop)
-#endif
 		return;
 
 	auto dx12SwapChain = DX12SwapChain::GetSingleton();
@@ -1074,21 +1091,17 @@ void Upscaling::CreateUpscalingResources()
 	}
 
 	if (needsFSRSharedResources) {
-#if defined(FALLOUT_PRE_NG)
-		FidelityFX::GetSingleton()->CreateFSR3Context(
-			reinterpret_cast<ID3D11Device*>(fo4cs::GetRendererData()->device),
-			colorDesc.Width,
-			colorDesc.Height,
-			colorDesc.Width,
-			colorDesc.Height);
-#else
-		FidelityFX::GetSingleton()->SetupUpscaling(
+		if (!FidelityFX::GetSingleton()->SetupUpscaling(
 			dx12SwapChain->d3d12Device.get(),
 			colorDesc.Width,
 			colorDesc.Height,
 			colorDesc.Width,
-			colorDesc.Height);
-#endif
+			colorDesc.Height)) {
+			logger::error("[Upscaler] FSR upscaling context creation failed; disabling upscaling backend");
+			upscaleMethodNoMenu = UpscaleMethod::kDisabled;
+			upscaleMethod = UpscaleMethod::kDisabled;
+			renderBackendEnabled = false;
+		}
 	}
 }
 
@@ -1120,9 +1133,13 @@ namespace
 		static void thunk(RE::BSGraphics::RenderTargetManager* This, RE::NiPoint3* a2, RE::NiPoint3* a3, RE::NiPoint3* a4, RE::NiPoint3* a5)
 		{
 			TraceRenderBackendStage("hook:UpdateDynamicResolution:game");
+			fo4cs::Diagnostics::WriteHangTraceLine("hook:UpdateDynamicResolution:game:begin");
 			func(This, a2, a3, a4, a5);
+			fo4cs::Diagnostics::WriteHangTraceLine("hook:UpdateDynamicResolution:game:end");
 			TraceRenderBackendStage("hook:UpdateDynamicResolution:fo4cs");
+			fo4cs::Diagnostics::WriteHangTraceLine("hook:UpdateDynamicResolution:fo4cs:begin");
 			Upscaling::GetSingleton()->UpdateUpscaling();
+			fo4cs::Diagnostics::WriteHangTraceLine("hook:UpdateDynamicResolution:fo4cs:end");
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
