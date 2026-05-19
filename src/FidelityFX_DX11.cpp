@@ -261,6 +261,11 @@ void FidelityFX_DX11::DestroySharedResources()
 
 #if defined(FALLOUT_PRE_NG)
 
+bool PreNG_FrameGen_IsActive()
+{
+	return FidelityFX_DX11::GetSingleton()->IsReady();
+}
+
 void PreNG_FrameGen_PresentCallback(IDXGISwapChain* a_swapChain)
 {
 	static uint64_t s_frameID = 0;
@@ -280,6 +285,16 @@ void PreNG_FrameGen_PresentCallback(IDXGISwapChain* a_swapChain)
 
 	if (!fi->IsReady() || !upscaling->setupBuffers)
 		return;
+
+	// --- Frame pacing (mirrors DX12SwapChain::Present logic) ---
+	// GameFrameLimiter: fixes engine 55fps cap bug when HighFPSPhysicsFix is absent
+	if (!upscaling->highFPSPhysicsFixLoaded)
+		upscaling->GameFrameLimiter();
+
+	// FrameLimiter: caps game to half refresh rate when FrameGen is active,
+	// allowing FrameGen to fill gaps for true frame doubling.
+	bool const useFrameGen = true;
+	upscaling->FrameLimiter(useFrameGen);
 
 	auto* rendererData = fo4cs::GetRendererData();
 	auto* context = reinterpret_cast<ID3D11DeviceContext*>(rendererData->context);
@@ -328,6 +343,9 @@ void PreNG_FrameGen_PresentCallback(IDXGISwapChain* a_swapChain)
 	float cameraFar = fo4cs::RE::GetCameraFar();
 
 	uint64_t frameID = s_frameID++;
+	static bool s_firstFrame = true;
+	bool const reset = s_firstFrame;
+	s_firstFrame = false;
 
 	fi->Prepare(context, depthTex, mvTex, jitter, renderSize, deltaMs, cameraNear, cameraFar, frameID);
 
@@ -335,7 +353,7 @@ void PreNG_FrameGen_PresentCallback(IDXGISwapChain* a_swapChain)
 	if (upscaling->HUDLessBufferShared[0] && upscaling->HUDLessBufferShared[0]->resource)
 		hudLessRes = upscaling->HUDLessBufferShared[0]->resource.get();
 
-	fi->Dispatch(context, main.texture, hudLessRes, backBufferTex.get(), deltaMs, false, frameID);
+	fi->Dispatch(context, main.texture, hudLessRes, backBufferTex.get(), deltaMs, reset, frameID);
 }
 
 void PreNG_FrameGen_InitForSwapChain(ID3D11Device* a_device, IDXGISwapChain* a_swapChain)

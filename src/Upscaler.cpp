@@ -1086,11 +1086,20 @@ void Upscaling::TimerSleepQPC(int64_t targetQPC)
 	} while (currentQPC.QuadPart < targetQPC);
 }
 
+// Forward-declared in FidelityFX_DX11.cpp (avoids FFX SDK header conflict with FidelityFX.h)
+#if defined(FALLOUT_PRE_NG)
+extern bool PreNG_FrameGen_IsActive();
+#else
+static bool PreNG_FrameGen_IsActive() { return false; }
+#endif
+
 void Upscaling::FrameLimiter(bool a_useFrameGeneration)
 {
 	static LARGE_INTEGER lastFrame = {};
 
-	if (d3d12Interop && settings.frameLimitMode) {
+	// Works for both D3D12 proxy (PostNG/PostAE) and D3D11 native (PreNG).
+	bool const frameGenActive = d3d12Interop || PreNG_FrameGen_IsActive();
+	if (frameGenActive && settings.frameLimitMode) {
 
 		// Stick within VRR bounds
 		double bestRefreshRate = refreshRate - (refreshRate * refreshRate) / 3600.0;
