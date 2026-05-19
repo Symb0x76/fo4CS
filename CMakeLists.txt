@@ -158,6 +158,48 @@ if(BUILD_PRE_NG)
 	)
 endif()
 
+# ------------------------------------------------------------------
+# DX11 FSR SDK shader compilation — auto-built as a pre-build step
+# ------------------------------------------------------------------
+if(BUILD_PRE_NG)
+	set(FFX_SDK_SRC "${CMAKE_CURRENT_SOURCE_DIR}/extern/Fidelity-SDK-DX11-PreNG/sdk")
+	set(FFX_SDK_BUILD "${CMAKE_CURRENT_SOURCE_DIR}/build/ffx-dx11-sdk")
+	set(FFX_SHADER_STAMP "${FFX_SDK_BUILD}/shaders_generated.stamp")
+
+	if(CMAKE_GENERATOR_PLATFORM)
+		set(FFX_SDK_CONFIGURE_ARGS -A "${CMAKE_GENERATOR_PLATFORM}")
+	else()
+		set(FFX_SDK_CONFIGURE_ARGS "")
+	endif()
+
+	add_custom_command(
+		OUTPUT ${FFX_SHADER_STAMP}
+		COMMAND ${CMAKE_COMMAND} -E make_directory "${FFX_SDK_BUILD}"
+		COMMAND ${CMAKE_COMMAND}
+			-S "${FFX_SDK_SRC}"
+			-B "${FFX_SDK_BUILD}"
+			-G "${CMAKE_GENERATOR}"
+			${FFX_SDK_CONFIGURE_ARGS}
+			-DFFX_API_DX11=ON
+			-DFFX_API_DX12=OFF
+			-DFFX_API_VK=OFF
+			-DFFX_BUILD_AS_DLL=OFF
+			-DFFX_FSR3=ON
+			-DFFX_FSR=ON
+			-DFFX_AUTO_COMPILE_SHADERS=ON
+		COMMAND ${CMAKE_COMMAND}
+			--build "${FFX_SDK_BUILD}"
+			--target ffx_backend_dx11_x64
+			--config "$<CONFIG>"
+		COMMAND ${CMAKE_COMMAND} -E touch "${FFX_SHADER_STAMP}"
+		COMMENT "Building DX11 FSR SDK shader permutation headers..."
+		WORKING_DIRECTORY "${FFX_SDK_SRC}"
+	)
+
+	add_custom_target(ffx_dx11_shaders DEPENDS ${FFX_SHADER_STAMP})
+	add_dependencies(Core ffx_dx11_shaders)
+endif()
+
 target_compile_features(Core PRIVATE cxx_std_23)
 
 target_include_directories(Core
