@@ -162,6 +162,8 @@ endif()
 #   - Feature 基类 + 生命周期 + ShaderCache + Deferred + Features
 # ------------------------------------------------------------------
 add_library(CoreCS OBJECT
+    src/Core/BSShaderHooks.cpp
+    src/Core/BSShaderHooks.h
     src/Core/CommunityShaders.cpp
     src/Core/CommunityShaders.h
     src/Core/Deferred.cpp
@@ -203,10 +205,17 @@ if(COMMUNITY_SHADERS)
         src/Features/Reflex.cpp
         src/Features/HDRDisplay.cpp
         src/Features/Overlay.cpp
-        src/Overlay/Overlay.cpp src/Overlay/Overlay.h
     )
     target_include_directories(CoreCS PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/extern/Streamline/include
+    )
+    # src/Overlay/Overlay.cpp must be compiled in Core (not CoreCS)
+    # to avoid same-basename collision with src/Features/Overlay.cpp
+    target_sources(Core PRIVATE
+        src/Overlay/Overlay.cpp src/Overlay/Overlay.h
+    )
+    target_include_directories(Core PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
     )
 endif()
 

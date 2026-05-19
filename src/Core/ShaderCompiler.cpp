@@ -101,19 +101,19 @@ namespace CommunityShaders
 		sourceRoot = std::move(a_root);
 	}
 
-	std::vector<std::byte> ShaderCompiler::CompileFromFile(std::string_view a_shaderFileName)
+	std::optional<std::vector<std::byte>> ShaderCompiler::CompileFromFile(std::string_view a_shaderFileName)
 	{
 		auto fullPath = sourceRoot / std::string(a_shaderFileName);
 		std::error_code ec;
 		if (!std::filesystem::exists(fullPath, ec) || !std::filesystem::is_regular_file(fullPath, ec)) {
 			logger::warn("[ShaderCompiler] Source not found: {}", fullPath.string());
-			return {};
+			return std::nullopt;
 		}
 
 		std::ifstream file(fullPath, std::ios::binary);
 		if (!file.is_open()) {
 			logger::warn("[ShaderCompiler] Cannot open: {}", fullPath.string());
-			return {};
+			return std::nullopt;
 		}
 
 		std::stringstream ss;
@@ -121,7 +121,7 @@ namespace CommunityShaders
 		auto source = ss.str();
 		if (source.empty()) {
 			logger::warn("[ShaderCompiler] Empty source: {}", fullPath.string());
-			return {};
+			return std::nullopt;
 		}
 
 		auto target = InferTarget(a_shaderFileName);
@@ -133,19 +133,71 @@ namespace CommunityShaders
 
 		if (!blob) {
 			logger::error("[ShaderCompiler] Compilation failed for {} ({}):\n{}", a_shaderFileName, target, errorMsg);
-			return {};
+			return std::nullopt;
 		}
 
 		logger::info("[ShaderCompiler] Compiled {} ({}): {} bytes", a_shaderFileName, target, blob->GetBufferSize());
 
 		auto* ptr = static_cast<const std::byte*>(blob->GetBufferPointer());
-		return { ptr, ptr + blob->GetBufferSize() };
+		return std::vector<std::byte>{ ptr, ptr + blob->GetBufferSize() };
+	}
+
+	std::optional<std::vector<std::byte>> ShaderCompiler::CompileFromFile(
+		std::string_view a_shaderFileName,
+		std::string_view a_target,
+		const D3D_SHADER_MACRO* a_defines,
+		std::string_view a_entryPoint)
+	{
+		auto fullPath = sourceRoot / std::string(a_shaderFileName);
+		std::error_code ec;
+		if (!std::filesystem::exists(fullPath, ec) || !std::filesystem::is_regular_file(fullPath, ec)) {
+			logger::warn("[ShaderCompiler] Source not found: {}", fullPath.string());
+			return std::nullopt;
+		}
+
+		std::ifstream file(fullPath, std::ios::binary);
+		if (!file.is_open()) {
+			logger::warn("[ShaderCompiler] Cannot open: {}", fullPath.string());
+			return std::nullopt;
+		}
+
+		std::stringstream ss;
+		ss << file.rdbuf();
+		auto source = ss.str();
+		if (source.empty()) {
+			logger::warn("[ShaderCompiler] Empty source: {}", fullPath.string());
+			return std::nullopt;
+		}
+
+		std::vector<std::filesystem::path> includeDirs = { sourceRoot, sourceRoot / "Common" };
+		std::string errorMsg;
+		auto blob = CompileHLSL(source, a_entryPoint, a_target, a_defines, includeDirs, &errorMsg);
+
+		if (!blob) {
+			logger::error("[ShaderCompiler] Compilation failed for {} ({}):\n{}", a_shaderFileName, a_target, errorMsg);
+			return std::nullopt;
+		}
+
+		logger::info("[ShaderCompiler] Compiled {} ({}): {} bytes", a_shaderFileName, a_target, blob->GetBufferSize());
+		auto* ptr = static_cast<const std::byte*>(blob->GetBufferPointer());
+		return std::vector<std::byte>{ ptr, ptr + blob->GetBufferSize() };
 	}
 
 	winrt::com_ptr<ID3DBlob> ShaderCompiler::CompileHLSL(
 		std::string_view a_source,
 		std::string_view a_entryPoint,
 		std::string_view a_target,
+		const std::vector<std::filesystem::path>& a_includeDirs,
+		std::string* a_error)
+	{
+		return CompileHLSL(a_source, a_entryPoint, a_target, nullptr, a_includeDirs, a_error);
+	}
+
+	winrt::com_ptr<ID3DBlob> ShaderCompiler::CompileHLSL(
+		std::string_view a_source,
+		std::string_view a_entryPoint,
+		std::string_view a_target,
+		const D3D_SHADER_MACRO* a_defines,
 		const std::vector<std::filesystem::path>& a_includeDirs,
 		std::string* a_error)
 	{
@@ -164,7 +216,7 @@ namespace CommunityShaders
 		HRESULT hr = D3DCompile(
 			a_source.data(), a_source.size(),
 			nullptr,  // source name
-			nullptr,  // defines
+			a_defines,
 			&includeHandler,
 			std::string(a_entryPoint).c_str(),
 			std::string(a_target).c_str(),

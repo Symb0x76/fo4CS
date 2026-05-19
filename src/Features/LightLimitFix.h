@@ -3,6 +3,7 @@
 #include <d3d11.h>
 #include <set>
 #include <vector>
+#include <winrt/base.h>
 
 #include "Core/Feature.h"
 
@@ -12,8 +13,6 @@
 // FO4 Adaptation Notes (vs Skyrim CS):
 //   - BSShader::SetupGeometry is at vfunc index 7 (FO4 added SetupMaterialSecondary)
 //   - FO4 uses BSShaderManager::ShaderEnum (kLighting=8, kEffect=0, kWater=0xA)
-//   - RE types for BSRenderPass light arrays are not yet exposed in CommonLibF4;
-//     the SetupGeometry hook body is stubbed pending CommonLibF4 extension.
 
 struct LightLimitFix : Feature
 {
@@ -141,28 +140,26 @@ struct LightLimitFix : Feature
 	void SaveSettings() override;
 	void RestoreDefaultSettings() override;
 	void DrawSettings() override;
-	void ClearShaderCache();
+	[[nodiscard]] bool HasResources() const { return clusterBuildingCS && clusterCullingCS; }
 	void PostPostLoad() override;
 	void DataLoaded() override;
 	void Prepass() override;
 	void Reset() override;
 
 	// --- SetupGeometry hooks ---
-	// BSRenderPass layout (from IDA decompilation):
-	//   +0x10: BSShaderProperty*  (→ fadeNode at +0x48 → lightData at +0x140 → lightList at +0x10)
 	void SetupGeometryBefore(RE::BSRenderPass* a_pass);
 	void SetupGeometryAfter(RE::BSRenderPass* a_pass);
 
-	// Per-frame light accumulation (cleared each Prepass before compute dispatch)
+	// Per-frame light accumulation
 	void CollectLightsFromPass(RE::BSRenderPass* a_pass);
 	void CollectLightsFromScene();
 	void CollectLightsFromBSLight();
-	void CollectLightCB();  // read game's per-draw light CB (PS slot 2)
+	void CollectLightCB();
 	std::vector<LightData> frameLights;
 	std::set<RE::BSLight*> seenLights;
-	std::vector<RE::BSLight*> seenThisPass;   // per-pass BSLight list for CB extraction
-	std::set<std::uint64_t> seenCBHashes;     // dedup lights from CB reads
-	std::uint32_t diagFrameCounter = 0;       // throttled diagnostic logging
+	std::vector<RE::BSLight*> seenThisPass;
+	std::set<std::uint64_t> seenCBHashes;
+	std::uint32_t diagFrameCounter = 0;
 
 	struct Hooks
 	{
@@ -182,32 +179,25 @@ struct LightLimitFix : Feature
 	};
 
 private:
-	// --- GPU Resources ---
-	ID3D11ComputeShader* clusterBuildingCS = nullptr;
-	ID3D11ComputeShader* clusterCullingCS = nullptr;
-
-	ID3D11Buffer* lightBuildingCB = nullptr;
-	ID3D11Buffer* lightCullingCB = nullptr;
-
-	ID3D11Buffer* lightsBuffer = nullptr;
-	ID3D11ShaderResourceView* lightsSRV = nullptr;
-
-	ID3D11Buffer* clustersBuffer = nullptr;
-	ID3D11ShaderResourceView* clustersSRV = nullptr;
-	ID3D11UnorderedAccessView* clustersUAV = nullptr;
-
-	ID3D11Buffer* lightIndexCounterBuffer = nullptr;
-	ID3D11ShaderResourceView* lightIndexCounterSRV = nullptr;
-	ID3D11UnorderedAccessView* lightIndexCounterUAV = nullptr;
-
-	ID3D11Buffer* lightIndexListBuffer = nullptr;
-	ID3D11ShaderResourceView* lightIndexListSRV = nullptr;
-	ID3D11UnorderedAccessView* lightIndexListUAV = nullptr;
-
-	ID3D11Buffer* lightGridBuffer = nullptr;
-	ID3D11ShaderResourceView* lightGridSRV = nullptr;
-	ID3D11UnorderedAccessView* lightGridUAV = nullptr;
+	// --- GPU Resources (RAII: winrt::com_ptr auto-releases on destruction) ---
+	winrt::com_ptr<ID3D11ComputeShader>          clusterBuildingCS;
+	winrt::com_ptr<ID3D11ComputeShader>          clusterCullingCS;
+	winrt::com_ptr<ID3D11Buffer>                 lightBuildingCB;
+	winrt::com_ptr<ID3D11Buffer>                 lightCullingCB;
+	winrt::com_ptr<ID3D11Buffer>                 lightsBuffer;
+	winrt::com_ptr<ID3D11ShaderResourceView>     lightsSRV;
+	winrt::com_ptr<ID3D11Buffer>                 clustersBuffer;
+	winrt::com_ptr<ID3D11ShaderResourceView>     clustersSRV;
+	winrt::com_ptr<ID3D11UnorderedAccessView>    clustersUAV;
+	winrt::com_ptr<ID3D11Buffer>                 lightIndexCounterBuffer;
+	winrt::com_ptr<ID3D11ShaderResourceView>     lightIndexCounterSRV;
+	winrt::com_ptr<ID3D11UnorderedAccessView>    lightIndexCounterUAV;
+	winrt::com_ptr<ID3D11Buffer>                 lightIndexListBuffer;
+	winrt::com_ptr<ID3D11ShaderResourceView>     lightIndexListSRV;
+	winrt::com_ptr<ID3D11UnorderedAccessView>    lightIndexListUAV;
+	winrt::com_ptr<ID3D11Buffer>                 lightGridBuffer;
+	winrt::com_ptr<ID3D11ShaderResourceView>     lightGridSRV;
+	winrt::com_ptr<ID3D11UnorderedAccessView>    lightGridUAV;
 
 	std::uint32_t clusterSize[3] = { 16, 16, 32 };
-	bool resourcesCreated = false;
 };

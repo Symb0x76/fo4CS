@@ -5,7 +5,7 @@ REM "=== Plugin Selection ==="
 REM "Default AIO (NuclearGFX.dll). Set environment variables to switch to individual plugin targets:"
 REM "e.g. set AIO=OFF && set UPSCALER=ON && BuildReleasePostNG.bat"
 if not defined COMMUNITY_SHADERS set COMMUNITY_SHADERS=ON
-if not defined AIO set AIO=ON
+if not defined AIO set AIO=OFF
 if not defined FRAMEGEN set FRAMEGEN=OFF
 if not defined HDR set HDR=OFF
 if not defined REFLEX set REFLEX=OFF

@@ -4,7 +4,6 @@
 
 #include "Core/CommunityShaders.h"
 #include "Core/Globals.h"
-#include "Core/ShaderCache.h"
 #include "Core/ShaderCompiler.h"
 #include "Core/State.h"
 #if defined(FALLOUT_POST_AE)
@@ -22,9 +21,9 @@
 #include "RE/T/TESDataHandler.h"
 #include "RE/T/TESObjectLIGH.h"
 #else
-#include "RE/Bethesda/TESObjectREFRs.h"  // PreNG uses plural
+#include "RE/Bethesda/TESObjectREFRs.h"
 #include "RE/Bethesda/TESDataHandler.h"
-#include "RE/Bethesda/TESBoundAnimObjects.h"  // TESObjectLIGH
+#include "RE/Bethesda/TESBoundAnimObjects.h"
 #endif
 #if defined(FALLOUT_POST_AE)
 #include "RE/N/NiAVObject.h"
@@ -153,24 +152,24 @@ void LightLimitFix::SetupResources()
 		return;
 	}
 
-	ClearShaderCache();
+	// com_ptr auto-releases previous resources on reassignment — no manual ClearShaderCache needed
 
 	auto shaderPath = GetShaderPath();
 
-	auto compileOrLoad = [&](const char* a_name, ID3D11ComputeShader*& a_out) {
+	auto compileOrLoad = [&](const char* a_name, winrt::com_ptr<ID3D11ComputeShader>& a_out) {
 		auto compiled = CommunityShaders::ShaderCompiler::GetSingleton()->CompileFromFile(
 			shaderPath + a_name);
-		if (compiled.empty()) {
+		if (!compiled) {
 			logger::warn("[LightLimitFix] Failed to compile: {}{}", shaderPath, a_name);
 			return;
 		}
-		device->CreateComputeShader(compiled.data(), compiled.size(), nullptr, &a_out);
+		device->CreateComputeShader(compiled->data(), compiled->size(), nullptr, a_out.put());
 	};
 
 	compileOrLoad("clusterBuildingCS.hlsl", clusterBuildingCS);
 	compileOrLoad("clusterCullingCS.hlsl", clusterCullingCS);
 
-	if (!clusterBuildingCS || !clusterCullingCS) {
+	if (!HasResources()) {
 		logger::info("[LightLimitFix] GPU resources pending — shaders not yet available");
 		return;
 	}
@@ -182,7 +181,7 @@ void LightLimitFix::SetupResources()
 		desc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
 		desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
 		desc.ByteWidth = sizeof(LightBuildingCB);
-		device->CreateBuffer(&desc, nullptr, &lightBuildingCB);
+		device->CreateBuffer(&desc, nullptr, lightBuildingCB.put());
 	}
 	{
 		D3D11_BUFFER_DESC desc{};
@@ -190,7 +189,7 @@ void LightLimitFix::SetupResources()
 		desc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
 		desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
 		desc.ByteWidth = sizeof(LightCullingCB);
-		device->CreateBuffer(&desc, nullptr, &lightCullingCB);
+		device->CreateBuffer(&desc, nullptr, lightCullingCB.put());
 	}
 
 	// Lights structured buffer
@@ -201,16 +200,16 @@ void LightLimitFix::SetupResources()
 		desc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
 		desc.StructureByteStride = sizeof(LightData);
 		desc.ByteWidth = kMaxLights * sizeof(LightData);
-		device->CreateBuffer(&desc, nullptr, &lightsBuffer);
+		device->CreateBuffer(&desc, nullptr, lightsBuffer.put());
 
 		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc{};
 		srvDesc.Format = DXGI_FORMAT_UNKNOWN;
 		srvDesc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
 		srvDesc.Buffer.NumElements = kMaxLights;
-		device->CreateShaderResourceView(lightsBuffer, &srvDesc, &lightsSRV);
+		device->CreateShaderResourceView(lightsBuffer.get(), &srvDesc, lightsSRV.put());
 	}
 
-	// Clusters structured buffer (RW from building CS, read by culling CS)
+	// Clusters structured buffer
 	{
 		std::uint32_t clusterCount = clusterSize[0] * clusterSize[1] * clusterSize[2];
 
@@ -220,22 +219,22 @@ void LightLimitFix::SetupResources()
 		desc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
 		desc.StructureByteStride = sizeof(ClusterAABB);
 		desc.ByteWidth = clusterCount * sizeof(ClusterAABB);
-		device->CreateBuffer(&desc, nullptr, &clustersBuffer);
+		device->CreateBuffer(&desc, nullptr, clustersBuffer.put());
 
 		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc{};
 		srvDesc.Format = DXGI_FORMAT_UNKNOWN;
 		srvDesc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
 		srvDesc.Buffer.NumElements = clusterCount;
-		device->CreateShaderResourceView(clustersBuffer, &srvDesc, &clustersSRV);
+		device->CreateShaderResourceView(clustersBuffer.get(), &srvDesc, clustersSRV.put());
 
 		D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc{};
 		uavDesc.Format = DXGI_FORMAT_UNKNOWN;
 		uavDesc.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
 		uavDesc.Buffer.NumElements = clusterCount;
-		device->CreateUnorderedAccessView(clustersBuffer, &uavDesc, &clustersUAV);
+		device->CreateUnorderedAccessView(clustersBuffer.get(), &uavDesc, clustersUAV.put());
 	}
 
-	// Light index counter (atomic append offset)
+	// Light index counter
 	{
 		D3D11_BUFFER_DESC desc{};
 		desc.Usage = D3D11_USAGE_DEFAULT;
@@ -243,22 +242,22 @@ void LightLimitFix::SetupResources()
 		desc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
 		desc.StructureByteStride = sizeof(std::uint32_t);
 		desc.ByteWidth = sizeof(std::uint32_t);
-		device->CreateBuffer(&desc, nullptr, &lightIndexCounterBuffer);
+		device->CreateBuffer(&desc, nullptr, lightIndexCounterBuffer.put());
 
 		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc{};
 		srvDesc.Format = DXGI_FORMAT_UNKNOWN;
 		srvDesc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
 		srvDesc.Buffer.NumElements = 1;
-		device->CreateShaderResourceView(lightIndexCounterBuffer, &srvDesc, &lightIndexCounterSRV);
+		device->CreateShaderResourceView(lightIndexCounterBuffer.get(), &srvDesc, lightIndexCounterSRV.put());
 
 		D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc{};
 		uavDesc.Format = DXGI_FORMAT_UNKNOWN;
 		uavDesc.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
 		uavDesc.Buffer.NumElements = 1;
-		device->CreateUnorderedAccessView(lightIndexCounterBuffer, &uavDesc, &lightIndexCounterUAV);
+		device->CreateUnorderedAccessView(lightIndexCounterBuffer.get(), &uavDesc, lightIndexCounterUAV.put());
 	}
 
-	// Light index list (appended per-cluster light indices)
+	// Light index list
 	{
 		std::uint32_t clusterCount = clusterSize[0] * clusterSize[1] * clusterSize[2];
 
@@ -268,22 +267,22 @@ void LightLimitFix::SetupResources()
 		desc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
 		desc.StructureByteStride = sizeof(std::uint32_t);
 		desc.ByteWidth = clusterCount * kClusterMaxLights * sizeof(std::uint32_t);
-		device->CreateBuffer(&desc, nullptr, &lightIndexListBuffer);
+		device->CreateBuffer(&desc, nullptr, lightIndexListBuffer.put());
 
 		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc{};
 		srvDesc.Format = DXGI_FORMAT_UNKNOWN;
 		srvDesc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
 		srvDesc.Buffer.NumElements = clusterCount * kClusterMaxLights;
-		device->CreateShaderResourceView(lightIndexListBuffer, &srvDesc, &lightIndexListSRV);
+		device->CreateShaderResourceView(lightIndexListBuffer.get(), &srvDesc, lightIndexListSRV.put());
 
 		D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc{};
 		uavDesc.Format = DXGI_FORMAT_UNKNOWN;
 		uavDesc.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
 		uavDesc.Buffer.NumElements = clusterCount * kClusterMaxLights;
-		device->CreateUnorderedAccessView(lightIndexListBuffer, &uavDesc, &lightIndexListUAV);
+		device->CreateUnorderedAccessView(lightIndexListBuffer.get(), &uavDesc, lightIndexListUAV.put());
 	}
 
-	// Light grid (per-cluster offset + count)
+	// Light grid
 	{
 		std::uint32_t clusterCount = clusterSize[0] * clusterSize[1] * clusterSize[2];
 
@@ -293,47 +292,23 @@ void LightLimitFix::SetupResources()
 		desc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
 		desc.StructureByteStride = sizeof(LightGrid);
 		desc.ByteWidth = clusterCount * sizeof(LightGrid);
-		device->CreateBuffer(&desc, nullptr, &lightGridBuffer);
+		device->CreateBuffer(&desc, nullptr, lightGridBuffer.put());
 
 		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc{};
 		srvDesc.Format = DXGI_FORMAT_UNKNOWN;
 		srvDesc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
 		srvDesc.Buffer.NumElements = clusterCount;
-		device->CreateShaderResourceView(lightGridBuffer, &srvDesc, &lightGridSRV);
+		device->CreateShaderResourceView(lightGridBuffer.get(), &srvDesc, lightGridSRV.put());
 
 		D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc{};
 		uavDesc.Format = DXGI_FORMAT_UNKNOWN;
 		uavDesc.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
 		uavDesc.Buffer.NumElements = clusterCount;
-		device->CreateUnorderedAccessView(lightGridBuffer, &uavDesc, &lightGridUAV);
+		device->CreateUnorderedAccessView(lightGridBuffer.get(), &uavDesc, lightGridUAV.put());
 	}
 
-	resourcesCreated = true;
 	logger::info("[LightLimitFix] GPU resources created ({} clusters, {} max lights)",
 	             clusterSize[0] * clusterSize[1] * clusterSize[2], kMaxLights);
-}
-
-void LightLimitFix::ClearShaderCache()
-{
-	if (clusterBuildingCS) { clusterBuildingCS->Release(); clusterBuildingCS = nullptr; }
-	if (clusterCullingCS) { clusterCullingCS->Release(); clusterCullingCS = nullptr; }
-	if (lightBuildingCB) { lightBuildingCB->Release(); lightBuildingCB = nullptr; }
-	if (lightCullingCB) { lightCullingCB->Release(); lightCullingCB = nullptr; }
-	if (lightsBuffer) { lightsBuffer->Release(); lightsBuffer = nullptr; }
-	if (lightsSRV) { lightsSRV->Release(); lightsSRV = nullptr; }
-	if (clustersBuffer) { clustersBuffer->Release(); clustersBuffer = nullptr; }
-	if (clustersSRV) { clustersSRV->Release(); clustersSRV = nullptr; }
-	if (clustersUAV) { clustersUAV->Release(); clustersUAV = nullptr; }
-	if (lightIndexCounterBuffer) { lightIndexCounterBuffer->Release(); lightIndexCounterBuffer = nullptr; }
-	if (lightIndexCounterSRV) { lightIndexCounterSRV->Release(); lightIndexCounterSRV = nullptr; }
-	if (lightIndexCounterUAV) { lightIndexCounterUAV->Release(); lightIndexCounterUAV = nullptr; }
-	if (lightIndexListBuffer) { lightIndexListBuffer->Release(); lightIndexListBuffer = nullptr; }
-	if (lightIndexListSRV) { lightIndexListSRV->Release(); lightIndexListSRV = nullptr; }
-	if (lightIndexListUAV) { lightIndexListUAV->Release(); lightIndexListUAV = nullptr; }
-	if (lightGridBuffer) { lightGridBuffer->Release(); lightGridBuffer = nullptr; }
-	if (lightGridSRV) { lightGridSRV->Release(); lightGridSRV = nullptr; }
-	if (lightGridUAV) { lightGridUAV->Release(); lightGridUAV = nullptr; }
-	resourcesCreated = false;
 }
 
 void LightLimitFix::DataLoaded()
@@ -349,33 +324,45 @@ void LightLimitFix::DataLoaded()
 
 void LightLimitFix::PostPostLoad()
 {
-#if defined(FALLOUT_PRE_NG)
-	logger::warn("[LightLimitFix] PreNG runtime hooks disabled; ShaderDB replacement is still placeholder-only and the GPU prepass crashes during save-load");
-#else
 	Hooks::Install();
-#endif
 }
 
 void LightLimitFix::Prepass()
 {
 #if defined(FALLOUT_PRE_NG)
-	return;
-#else
-	if (!resourcesCreated) return;
+	++diagFrameCounter;
+
+	if (diagFrameCounter < 5) {
+		if (diagFrameCounter == 1)
+			logger::info("[LightLimitFix] gate: waiting for frame 5 (current: {})", diagFrameCounter);
+		return;
+	}
+
+	if (!HasResources()) {
+		if (diagFrameCounter == 5)
+			logger::warn("[LightLimitFix] gate: resources not created at frame {}", diagFrameCounter);
+		return;
+	}
 
 	auto* rendererData = fo4cs::GetRendererData();
-	if (!rendererData) return;
+	if (!rendererData || !rendererData->context) {
+		if (diagFrameCounter % 300 == 0)
+			logger::warn("[LightLimitFix] gate: D3D context unavailable at frame {}", diagFrameCounter);
+		return;
+	}
 	auto* context = reinterpret_cast<ID3D11DeviceContext*>(rendererData->context);
-	if (!context) return;
 
-	// --- Read camera matrices from game state ---
 	const auto& gState = RE::BSGraphics::State::GetSingleton();
 	const auto& camView = gState.cameraState.camViewData;
-	// camView.viewMat and camView.projMat are __m128[4] (row-major XMMATRIX)
-	// HLSL cbuffer uses column-major — we transpose before storing.
-	// Use SSE intrinsics to avoid DirectXMath dependency.
+	if (camView.projMat[0].m128_f32[0] == 0.0f &&
+	    camView.projMat[0].m128_f32[1] == 0.0f &&
+	    camView.projMat[0].m128_f32[2] == 0.0f) {
+		if (diagFrameCounter % 300 == 0)
+			logger::warn("[LightLimitFix] gate: camera proj uninitialized at frame {}", diagFrameCounter);
+		return;
+	}
 
-	// Read projection inverse for cluster building (unproject screen→view)
+	// Camera matrices
 	DirectX::XMFLOAT4X4 projInvTransposed;
 	{
 		DirectX::XMMATRIX proj = DirectX::XMLoadFloat4x4(
@@ -383,8 +370,6 @@ void LightLimitFix::Prepass()
 		DirectX::XMMATRIX invProj = DirectX::XMMatrixInverse(nullptr, proj);
 		DirectX::XMStoreFloat4x4(&projInvTransposed, DirectX::XMMatrixTranspose(invProj));
 	}
-
-	// Read view matrix for cluster culling (world→view transform)
 	DirectX::XMFLOAT4X4 viewTransposed;
 	{
 		DirectX::XMMATRIX view = DirectX::XMLoadFloat4x4(
@@ -392,23 +377,21 @@ void LightLimitFix::Prepass()
 		DirectX::XMStoreFloat4x4(&viewTransposed, DirectX::XMMatrixTranspose(view));
 	}
 
-
-		// Collect lights: prefer BSLight* pointers from last frame's SetupGeometry
-		// (targeted, only lights actually rendered). Fall back to scene traversal
-		// for the first frame when nothing has been tracked yet.
-		if (!seenLights.empty()) {
-			CollectLightsFromBSLight();
-		} else {
-			CollectLightsFromScene();
-		}
+	// Light collection
+	if (!seenLights.empty())
+		CollectLightsFromBSLight();
+	else
+		CollectLightsFromScene();
 
 	currentLightCount = static_cast<std::uint32_t>(frameLights.size());
+
+	// ── GPU dispatch ─────────────────────────────────────────
+
 	if (currentLightCount > 0) {
-		context->UpdateSubresource(lightsBuffer, 0, nullptr, frameLights.data(),
-		                           static_cast<UINT>(frameLights.size() * sizeof(LightData)), 0);
+		context->UpdateSubresource(lightsBuffer.get(), 0, nullptr, frameLights.data(),
+			static_cast<UINT>(frameLights.size() * sizeof(LightData)), 0);
 	}
 
-	// Diagnostic: log every 300 frames (~5 sec) to avoid spam
 	if (diagFrameCounter % 300 == 0) {
 		logger::info("[LightLimitFix] frame={} lights={} clusters={}x{}x{} near={:.1f} far={:.0f}",
 		             diagFrameCounter, currentLightCount,
@@ -416,20 +399,18 @@ void LightLimitFix::Prepass()
 		             CameraNear, CameraFar);
 	}
 
-	// Reset collections for the new frame's SetupGeometry passes
 	seenLights.clear();
 	seenCBHashes.clear();
 	frameLights.clear();
 
-	// --- Clear light index counter ---
 	const std::uint32_t zero = 0;
-	context->UpdateSubresource(lightIndexCounterBuffer, 0, nullptr, &zero, sizeof(zero), 0);
+	context->UpdateSubresource(lightIndexCounterBuffer.get(), 0, nullptr, &zero, sizeof(zero), 0);
 
-	// --- Cluster building pass ---
+	// Cluster building pass
 	{
 		D3D11_MAPPED_SUBRESOURCE mapped;
-		context->Map(lightBuildingCB, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
-		auto cb = static_cast<LightBuildingCB*>(mapped.pData);
+		context->Map(lightBuildingCB.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
+		auto* cb = static_cast<LightBuildingCB*>(mapped.pData);
 		cb->LightsNear = CameraNear;
 		cb->LightsFar = CameraFar;
 		cb->pad0[0] = cb->pad0[1] = 0;
@@ -438,26 +419,26 @@ void LightLimitFix::Prepass()
 		cb->ClusterSize[2] = clusterSize[2];
 		cb->ClusterSize[3] = 0;
 		std::memcpy(&cb->CameraProjInverse, &projInvTransposed, sizeof(projInvTransposed));
-		context->Unmap(lightBuildingCB, 0);
+		context->Unmap(lightBuildingCB.get(), 0);
 
-		context->CSSetShader(clusterBuildingCS, nullptr, 0);
-		context->CSSetConstantBuffers(0, 1, &lightBuildingCB);
-		ID3D11UnorderedAccessView* buildingUAVs[] = { clustersUAV };
+		context->CSSetShader(clusterBuildingCS.get(), nullptr, 0);
+		ID3D11Buffer* cbPtr = lightBuildingCB.get();
+		context->CSSetConstantBuffers(0, 1, &cbPtr);
+		ID3D11UnorderedAccessView* buildingUAVs[] = { clustersUAV.get() };
 		context->CSSetUnorderedAccessViews(0, 1, buildingUAVs, nullptr);
 		context->Dispatch(clusterSize[0], clusterSize[1], clusterSize[2]);
 	}
 
-	// --- Unbind UAVs before culling pass ---
 	{
 		ID3D11UnorderedAccessView* nullUAV = nullptr;
 		context->CSSetUnorderedAccessViews(0, 1, &nullUAV, nullptr);
 	}
 
-	// --- Cluster culling pass ---
+	// Cluster culling pass
 	{
 		D3D11_MAPPED_SUBRESOURCE mapped;
-		context->Map(lightCullingCB, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
-		auto cb = static_cast<LightCullingCB*>(mapped.pData);
+		context->Map(lightCullingCB.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
+		auto* cb = static_cast<LightCullingCB*>(mapped.pData);
 		cb->LightCount = currentLightCount;
 		cb->pad[0] = cb->pad[1] = cb->pad[2] = 0;
 		cb->ClusterSize[0] = clusterSize[0];
@@ -465,16 +446,17 @@ void LightLimitFix::Prepass()
 		cb->ClusterSize[2] = clusterSize[2];
 		cb->ClusterSize[3] = 0;
 		std::memcpy(&cb->CameraView, &viewTransposed, sizeof(viewTransposed));
-		context->Unmap(lightCullingCB, 0);
+		context->Unmap(lightCullingCB.get(), 0);
 
-		ID3D11ShaderResourceView* cullingSRVs[] = { clustersSRV, lightsSRV };
+		ID3D11ShaderResourceView* cullingSRVs[] = { clustersSRV.get(), lightsSRV.get() };
 		context->CSSetShaderResources(0, 2, cullingSRVs);
 
-		ID3D11UnorderedAccessView* cullingUAVs[] = { lightIndexCounterUAV, lightIndexListUAV, lightGridUAV };
+		ID3D11UnorderedAccessView* cullingUAVs[] = { lightIndexCounterUAV.get(), lightIndexListUAV.get(), lightGridUAV.get() };
 		context->CSSetUnorderedAccessViews(0, 3, cullingUAVs, nullptr);
 
-		context->CSSetShader(clusterCullingCS, nullptr, 0);
-		context->CSSetConstantBuffers(0, 1, &lightCullingCB);
+		context->CSSetShader(clusterCullingCS.get(), nullptr, 0);
+		ID3D11Buffer* cullCBPtr = lightCullingCB.get();
+		context->CSSetConstantBuffers(0, 1, &cullCBPtr);
 
 		context->Dispatch(
 			(clusterSize[0] + NUMTHREAD_X - 1) / NUMTHREAD_X,
@@ -482,7 +464,7 @@ void LightLimitFix::Prepass()
 			(clusterSize[2] + NUMTHREAD_Z - 1) / NUMTHREAD_Z);
 	}
 
-	// --- Unbind compute resources ---
+	// Unbind compute resources
 	{
 		ID3D11ShaderResourceView* nullSRVs[2]{};
 		context->CSSetShaderResources(0, 2, nullSRVs);
@@ -491,15 +473,141 @@ void LightLimitFix::Prepass()
 		context->CSSetShader(nullptr, nullptr, 0);
 	}
 
-	// Bind clustered light grid SRVs for pixel shader consumption.
-	// Slots t35-t37 match the register(t35) declarations in LightingPS.hlsl.
-	// Gate: skip first 3 frames after save load to avoid GPU pipeline stalls
-	// while the game initializes render state. Only bind when lights exist.
+	// Bind PS SRVs (t35-t37)
 	if (diagFrameCounter >= 3 && currentLightCount > 0) {
 		ID3D11ShaderResourceView* views[3]{
-			lightsSRV,
-			lightIndexListSRV,
-			lightGridSRV
+			lightsSRV.get(),
+			lightIndexListSRV.get(),
+			lightGridSRV.get()
+		};
+		context->PSSetShaderResources(35, ARRAYSIZE(views), views);
+
+		if (diagFrameCounter % 300 == 0) {
+			logger::info("[LightLimitFix] SRVs bound to PS slots t35-t37 ({} lights, {} clusters)",
+				currentLightCount, clusterSize[0] * clusterSize[1] * clusterSize[2]);
+		}
+	}
+#else
+	if (!HasResources()) return;
+
+	auto* rendererData = fo4cs::GetRendererData();
+	if (!rendererData) return;
+	auto* context = reinterpret_cast<ID3D11DeviceContext*>(rendererData->context);
+	if (!context) return;
+
+	const auto& gState = RE::BSGraphics::State::GetSingleton();
+	const auto& camView = gState.cameraState.camViewData;
+
+	DirectX::XMFLOAT4X4 projInvTransposed;
+	{
+		DirectX::XMMATRIX proj = DirectX::XMLoadFloat4x4(
+			reinterpret_cast<const DirectX::XMFLOAT4X4*>(camView.projMat));
+		DirectX::XMMATRIX invProj = DirectX::XMMatrixInverse(nullptr, proj);
+		DirectX::XMStoreFloat4x4(&projInvTransposed, DirectX::XMMatrixTranspose(invProj));
+	}
+
+	DirectX::XMFLOAT4X4 viewTransposed;
+	{
+		DirectX::XMMATRIX view = DirectX::XMLoadFloat4x4(
+			reinterpret_cast<const DirectX::XMFLOAT4X4*>(camView.viewMat));
+		DirectX::XMStoreFloat4x4(&viewTransposed, DirectX::XMMatrixTranspose(view));
+	}
+
+	if (!seenLights.empty()) {
+		CollectLightsFromBSLight();
+	} else {
+		CollectLightsFromScene();
+	}
+
+	currentLightCount = static_cast<std::uint32_t>(frameLights.size());
+	if (currentLightCount > 0) {
+		context->UpdateSubresource(lightsBuffer.get(), 0, nullptr, frameLights.data(),
+		                           static_cast<UINT>(frameLights.size() * sizeof(LightData)), 0);
+	}
+
+	if (diagFrameCounter % 300 == 0) {
+		logger::info("[LightLimitFix] frame={} lights={} clusters={}x{}x{} near={:.1f} far={:.0f}",
+		             diagFrameCounter, currentLightCount,
+		             clusterSize[0], clusterSize[1], clusterSize[2],
+		             CameraNear, CameraFar);
+	}
+
+	seenLights.clear();
+	seenCBHashes.clear();
+	frameLights.clear();
+
+	const std::uint32_t zero = 0;
+	context->UpdateSubresource(lightIndexCounterBuffer.get(), 0, nullptr, &zero, sizeof(zero), 0);
+
+	{
+		D3D11_MAPPED_SUBRESOURCE mapped;
+		context->Map(lightBuildingCB.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
+		auto* cb = static_cast<LightBuildingCB*>(mapped.pData);
+		cb->LightsNear = CameraNear;
+		cb->LightsFar = CameraFar;
+		cb->pad0[0] = cb->pad0[1] = 0;
+		cb->ClusterSize[0] = clusterSize[0];
+		cb->ClusterSize[1] = clusterSize[1];
+		cb->ClusterSize[2] = clusterSize[2];
+		cb->ClusterSize[3] = 0;
+		std::memcpy(&cb->CameraProjInverse, &projInvTransposed, sizeof(projInvTransposed));
+		context->Unmap(lightBuildingCB.get(), 0);
+
+		context->CSSetShader(clusterBuildingCS.get(), nullptr, 0);
+		ID3D11Buffer* cbPtr = lightBuildingCB.get();
+		context->CSSetConstantBuffers(0, 1, &cbPtr);
+		ID3D11UnorderedAccessView* buildingUAVs[] = { clustersUAV.get() };
+		context->CSSetUnorderedAccessViews(0, 1, buildingUAVs, nullptr);
+		context->Dispatch(clusterSize[0], clusterSize[1], clusterSize[2]);
+	}
+
+	{
+		ID3D11UnorderedAccessView* nullUAV = nullptr;
+		context->CSSetUnorderedAccessViews(0, 1, &nullUAV, nullptr);
+	}
+
+	{
+		D3D11_MAPPED_SUBRESOURCE mapped;
+		context->Map(lightCullingCB.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
+		auto* cb = static_cast<LightCullingCB*>(mapped.pData);
+		cb->LightCount = currentLightCount;
+		cb->pad[0] = cb->pad[1] = cb->pad[2] = 0;
+		cb->ClusterSize[0] = clusterSize[0];
+		cb->ClusterSize[1] = clusterSize[1];
+		cb->ClusterSize[2] = clusterSize[2];
+		cb->ClusterSize[3] = 0;
+		std::memcpy(&cb->CameraView, &viewTransposed, sizeof(viewTransposed));
+		context->Unmap(lightCullingCB.get(), 0);
+
+		ID3D11ShaderResourceView* cullingSRVs[] = { clustersSRV.get(), lightsSRV.get() };
+		context->CSSetShaderResources(0, 2, cullingSRVs);
+
+		ID3D11UnorderedAccessView* cullingUAVs[] = { lightIndexCounterUAV.get(), lightIndexListUAV.get(), lightGridUAV.get() };
+		context->CSSetUnorderedAccessViews(0, 3, cullingUAVs, nullptr);
+
+		context->CSSetShader(clusterCullingCS.get(), nullptr, 0);
+		ID3D11Buffer* cullCBPtr = lightCullingCB.get();
+		context->CSSetConstantBuffers(0, 1, &cullCBPtr);
+
+		context->Dispatch(
+			(clusterSize[0] + NUMTHREAD_X - 1) / NUMTHREAD_X,
+			(clusterSize[1] + NUMTHREAD_Y - 1) / NUMTHREAD_Y,
+			(clusterSize[2] + NUMTHREAD_Z - 1) / NUMTHREAD_Z);
+	}
+
+	{
+		ID3D11ShaderResourceView* nullSRVs[2]{};
+		context->CSSetShaderResources(0, 2, nullSRVs);
+		ID3D11UnorderedAccessView* nullUAVs[3]{};
+		context->CSSetUnorderedAccessViews(0, 3, nullUAVs, nullptr);
+		context->CSSetShader(nullptr, nullptr, 0);
+	}
+
+	if (diagFrameCounter >= 3 && currentLightCount > 0) {
+		ID3D11ShaderResourceView* views[3]{
+			lightsSRV.get(),
+			lightIndexListSRV.get(),
+			lightGridSRV.get()
 		};
 		context->PSSetShaderResources(35, ARRAYSIZE(views), views);
 
@@ -513,7 +621,7 @@ void LightLimitFix::Prepass()
 
 void LightLimitFix::Reset()
 {
-	if (!resourcesCreated) return;
+	if (!HasResources()) return;
 
 	auto* rendererData = fo4cs::GetRendererData();
 	if (!rendererData) return;
@@ -537,8 +645,6 @@ void LightLimitFix::CollectLightsFromPass(RE::BSRenderPass* a_pass)
 	auto* lightData = reinterpret_cast<RE::BSShaderPropertyLightData*>(reinterpret_cast<std::uintptr_t>(fadeNode) + 0x140);
 	if (lightData->lightList.empty()) return;
 
-	// Track which BSLight objects this pass sees.
-	// Real light data is extracted from the D3D11 CB by CollectLightCB().
 	for (auto* light : lightData->lightList) {
 		if (!light || seenLights.contains(light)) continue;
 		seenLights.insert(light);
@@ -548,31 +654,19 @@ void LightLimitFix::CollectLightsFromPass(RE::BSRenderPass* a_pass)
 
 void LightLimitFix::CollectLightCB()
 {
-	// Read the per-draw light constant buffer written by the game's SetupGeometry.
-	// Slot 2 = PS register b2 (verified via IDA decompilation of buffer map functions).
-	//
-	// CB layout (192 bytes, 4 lights, 3 float4 per light):
-	//   [0..15]:  pos.x,  pos.y,  pos.z,  radius       (float4)
-	//   [16..31]: col.r,  col.g,  col.b,  intensity    (float4)
-	//   [32..47]: dir.x,  dir.y,  dir.z,  spotCutoff   (float4)
-	//   ...repeat 4x...
-
 	auto* rendererData = fo4cs::GetRendererData();
 	auto* ctx = reinterpret_cast<ID3D11DeviceContext*>(rendererData->context);
 	auto* device = reinterpret_cast<ID3D11Device*>(rendererData->device);
 	if (!ctx || !device) return;
 
-	// Get the PS constant buffer at slot 2
 	ID3D11Buffer* lightCB = nullptr;
 	ctx->PSGetConstantBuffers(2, 1, &lightCB);
 	if (!lightCB) return;
 
-	// Get buffer description for size
 	D3D11_BUFFER_DESC desc;
 	lightCB->GetDesc(&desc);
 	if (desc.ByteWidth < 48) { lightCB->Release(); return; }
 
-	// Create staging buffer for CPU readback
 	D3D11_BUFFER_DESC stagingDesc{};
 	stagingDesc.Usage = D3D11_USAGE_STAGING;
 	stagingDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
@@ -587,7 +681,6 @@ void LightLimitFix::CollectLightCB()
 	ctx->CopyResource(stagingCB, lightCB);
 	lightCB->Release();
 
-	// Map staging buffer
 	D3D11_MAPPED_SUBRESOURCE mapped;
 	if (FAILED(ctx->Map(stagingCB, 0, D3D11_MAP_READ, 0, &mapped))) {
 		stagingCB->Release();
@@ -599,16 +692,14 @@ void LightLimitFix::CollectLightCB()
 	if (lightCount > 4) lightCount = 4;
 
 	for (std::uint32_t i = 0; i < lightCount && frameLights.size() < kMaxLights; i++) {
-		const float* l = rawData + i * 12;  // 3 float4 = 12 floats per light
+		const float* l = rawData + i * 12;
 
-		// Skip if position is zero (unused slot)
 		if (l[0] == 0.0f && l[1] == 0.0f && l[2] == 0.0f) continue;
 
-		// Build a lookup key from the CB data (position+color hash)
 		auto cbHash = static_cast<std::uint64_t>(l[0] * 1000.0f) ^
 		              (static_cast<std::uint64_t>(l[1] * 1000.0f) << 20) ^
 		              (static_cast<std::uint64_t>(l[4] * 255.0f) << 40);
-		
+
 		if (seenCBHashes.contains(cbHash)) continue;
 		seenCBHashes.insert(cbHash);
 
@@ -652,8 +743,6 @@ void LightLimitFix::CollectLightsFromBSLight()
 
 void LightLimitFix::CollectLightsFromScene()
 {
-	// Collect point lights from placed TESObjectLIGH references via scene graph traversal.
-	// Works for both PreNG and PostAE — NiLight layout is structurally identical.
 	auto* dh = RE::TESDataHandler::GetSingleton();
 	if (!dh) return;
 
@@ -697,17 +786,7 @@ void LightLimitFix::SetupGeometryBefore(RE::BSRenderPass* /*a_pass*/)
 
 void LightLimitFix::SetupGeometryAfter(RE::BSRenderPass* a_pass)
 {
-	// Collect BSLight pointers from the pass
 	CollectLightsFromPass(a_pass);
-	// For PreNG (no NiLight headers): read game's light CB for actual data
-// PreNG: CollectLightCB disabled — per-draw GPU readback (CreateBuffer/CopyResource/Map)
-// causes TDR timeout and GSOD on Windows Insider builds.
-// TODO: implement scene-traversal light collection for PreNG once NiLight headers are available.
-#if 0 // defined(FALLOUT_PRE_NG) — disabled 2026-05-11 due to GSOD
-	if (!seenThisPass.empty()) {
-		CollectLightCB();
-	}
-#endif
 }
 
 namespace RE::VTABLE
@@ -716,13 +795,9 @@ namespace RE::VTABLE
 
 void LightLimitFix::Hooks::Install()
 {
-#if defined(FALLOUT_PRE_NG)
-	logger::warn("[LightLimitFix] PreNG SetupGeometry hooks skipped");
-#else
 	stl::write_vfunc<0x7, BSLightingShader_SetupGeometry>(RE::VTABLE::BSLightingShader[0]);
 	stl::write_vfunc<0x7, BSEffectShader_SetupGeometry>(RE::VTABLE::BSEffectShader[0]);
 	logger::info("[LightLimitFix] Installed SetupGeometry hooks (vfunc index 7)");
-#endif
 }
 
 void LightLimitFix::Hooks::BSLightingShader_SetupGeometry::thunk(
