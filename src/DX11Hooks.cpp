@@ -8,6 +8,17 @@
 #include "FidelityFX.h"
 #include "Streamline.h"
 
+// PreNG D3D11-native FrameGen (implemented in FidelityFX_DX11.cpp).
+// Forward-declared here to avoid including FidelityFX_DX11.h and its FFX SDK
+// headers, which would conflict with FidelityFX.h's D3D12 FFX structs.
+#if defined(FALLOUT_PRE_NG)
+extern void PreNG_FrameGen_PresentCallback(IDXGISwapChain*);
+extern void PreNG_FrameGen_InitForSwapChain(ID3D11Device*, IDXGISwapChain*);
+#else
+static void PreNG_FrameGen_PresentCallback(IDXGISwapChain*) {}
+static void PreNG_FrameGen_InitForSwapChain(ID3D11Device*, IDXGISwapChain*) {}
+#endif
+
 #include "ENB/ENBSeriesAPI.h"
 
 bool enbLoaded = false;
@@ -87,12 +98,27 @@ HRESULT WINAPI hk_IDXGIFactory_CreateSwapChain(IDXGIFactory2* This, _In_ ID3D11D
 		auto ret = ptrCreateSwapChain(reinterpret_cast<IDXGIFactory*>(This), a_device, pDesc, ppSwapChain);
 		if (SUCCEEDED(ret) && ppSwapChain && *ppSwapChain) {
 			InstallSwapChainPresentHook(*ppSwapChain);
+			PreNG_FrameGen_InitForSwapChain(a_device, *ppSwapChain);
 			Upscaling::GetSingleton()->OnD3D11DeviceCreated(a_device, nullptr);
 			DX11Hooks::NotifyD3D11DeviceCreated(a_device);
 		}
 		return ret;
 	}
 
+#if defined(FALLOUT_PRE_NG)
+	// PreNG: use D3D11-native FrameGen, skip the D3D12 proxy path below
+	{
+		auto ret = ptrCreateSwapChain(reinterpret_cast<IDXGIFactory*>(This), a_device, pDesc, ppSwapChain);
+		if (SUCCEEDED(ret) && ppSwapChain && *ppSwapChain) {
+			InstallSwapChainPresentHook(*ppSwapChain);
+			PreNG_FrameGen_InitForSwapChain(a_device, *ppSwapChain);
+			Upscaling::GetSingleton()->OnD3D11DeviceCreated(a_device, nullptr);
+			DX11Hooks::NotifyD3D11DeviceCreated(a_device);
+		}
+		return ret;
+	}
+#endif
+#if !defined(FALLOUT_PRE_NG)
 	if (DX12SwapChain::GetSingleton()->swapChain) {
 		logger::debug("[FrameGen] D3D12 proxy already exists, delegating to original CreateSwapChain");
 		return ptrCreateSwapChain(reinterpret_cast<IDXGIFactory*>(This), a_device, pDesc, ppSwapChain);
@@ -143,6 +169,7 @@ HRESULT WINAPI hk_IDXGIFactory_CreateSwapChain(IDXGIFactory2* This, _In_ ID3D11D
 		}
 		return result;
 	}
+#endif
 }
 
 HRESULT WINAPI hk_IDXGIFactory2_CreateSwapChainForHwnd(
@@ -405,6 +432,7 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 	}
 	if (SUCCEEDED(ret) && ppSwapChain && *ppSwapChain) {
 		InstallSwapChainPresentHook(*ppSwapChain);
+		PreNG_FrameGen_InitForSwapChain(*ppDevice, *ppSwapChain);
 	}
 
 	return ret;
