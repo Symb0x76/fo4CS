@@ -322,8 +322,33 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 {
 	logger::info("[FrameGen] D3D11CreateDeviceAndSwapChain hook fired (windowed={}, enb={})", pSwapChainDesc->Windowed, enbLoaded);
 	auto upscaling = Upscaling::GetSingleton();
+#if !defined(FALLOUT_PRE_NG)
 	const auto originalFeatureLevels = pFeatureLevels;
+#endif
+#if !defined(FALLOUT_PRE_NG)
 	const auto originalFeatureLevelCount = FeatureLevels;
+#endif
+
+#if defined(FALLOUT_PRE_NG)
+	// PreNG: use D3D11-native FrameGen, skip the D3D12 proxy entirely
+	{
+		auto ret = ptrD3D11CreateDeviceAndSwapChain(
+			pAdapter, DriverType, Software, Flags,
+			pFeatureLevels, FeatureLevels, SDKVersion,
+			pSwapChainDesc, ppSwapChain,
+			ppDevice, pFeatureLevel, ppImmediateContext);
+		if (SUCCEEDED(ret) && ppDevice && *ppDevice) {
+			upscaling->OnD3D11DeviceCreated(*ppDevice, nullptr);
+			DX11Hooks::NotifyD3D11DeviceCreated(*ppDevice);
+		}
+		if (SUCCEEDED(ret) && ppSwapChain && *ppSwapChain) {
+			InstallSwapChainPresentHook(*ppSwapChain);
+			PreNG_FrameGen_InitForSwapChain(*ppDevice, *ppSwapChain);
+		}
+		return ret;
+	}
+#endif
+#if !defined(FALLOUT_PRE_NG)
 
 	if (pSwapChainDesc->Windowed && ShouldCreateD3D12Proxy()) {
 		logger::debug("[FrameGen] Using D3D12 proxy");
@@ -404,6 +429,7 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 		}
 	}
 
+
 	auto ret = ptrD3D11CreateDeviceAndSwapChain(
 		pAdapter,
 		DriverType,
@@ -436,7 +462,9 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 	}
 
 	return ret;
+#endif
 }
+
 
 void DX11Hooks::Install()
 {
