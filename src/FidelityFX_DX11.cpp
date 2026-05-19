@@ -49,13 +49,19 @@ bool FidelityFX_DX11::Initialize(
 	}
 
 	FfxFrameInterpolationContextDescription desc{};
+	// Depth flags reflect Fallout 4 PreNG: reversed-z with infinite far plane.
+	// Do NOT set ENABLE_HDR_COLOR_INPUT — FO4 outputs SDR sRGB.
 	desc.flags = FFX_FRAMEINTERPOLATION_ENABLE_DEPTH_INVERTED
-		| FFX_FRAMEINTERPOLATION_ENABLE_DEPTH_INFINITE
-		| FFX_FRAMEINTERPOLATION_ENABLE_HDR_COLOR_INPUT;
+		| FFX_FRAMEINTERPOLATION_ENABLE_DEPTH_INFINITE;
 	desc.maxRenderSize = { renderWidth, renderHeight };
 	desc.displaySize = { displayWidth, displayHeight };
 	desc.backBufferFormat = ffxGetSurfaceFormatDX11(backBufferFormat);
 	desc.backendInterface = m_backendInterface;
+
+	logger::debug("[FidelityFX_DX11] Creating FFX context: flags=0x{:X}, maxRender={}x{}, display={}x{}, fmt={}",
+		desc.flags, desc.maxRenderSize.width, desc.maxRenderSize.height,
+		desc.displaySize.width, desc.displaySize.height, static_cast<uint32_t>(desc.backBufferFormat));
+	logger::default_logger()->flush();
 
 	err = ffxFrameInterpolationContextCreate(&m_fiContext, &desc);
 	if (err != FFX_OK) {
@@ -381,6 +387,7 @@ void PreNG_FrameGen_InitForSwapChain(ID3D11Device* a_device, IDXGISwapChain* a_s
 
 	logger::info("[FrameGen] PreNG InitForSwapChain ({}x{} display, {}x{} render, fmt={})",
 		displayW, displayH, renderW, renderH, static_cast<uint32_t>(scDesc.BufferDesc.Format));
+	logger::default_logger()->flush();
 
 	fi->Initialize(a_device, displayW, displayH, renderW, renderH, scDesc.BufferDesc.Format);
 
