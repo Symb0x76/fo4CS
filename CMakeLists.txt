@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.21)
 project(
     fo4CS
     VERSION 1.3.4
-    LANGUAGES CXX
+    LANGUAGES C CXX
 )
 
 list(APPEND CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake")
@@ -26,8 +26,8 @@ set(Boost_USE_STATIC_RUNTIME ON)
 xseplugin_resolve_commonlib_root(CommonLibRoot CommonLibName)
 xseplugin_resolve_commonlib_project(CommonLibPath "${CommonLibRoot}")
 
-# FSR runtime is loaded dynamically through the DX12 proxy path for both PreNG and main.
-# Keep the build graph aligned with the runtime-loaded amd_fidelityfx_dx12.dll.
+# FSR runtime: DX12 proxy (PostNG/PostAE) uses amd_fidelityfx_dx12.dll dynamically.
+# PreNG uses Fidelity-SDK-DX11-PreNG (native D3D11 backend, static link).
 
 if(F4SE_SUPPORT_XBYAK)
     set(COMMONLIBF4_ENABLE_XBYAK ON CACHE BOOL "Enable xbyak support for CommonLibF4" FORCE)
@@ -49,6 +49,9 @@ set(FO4CS_COMMON_DEPENDENCIES
     magic_enum::magic_enum
     d3dcompiler.lib
 )
+
+# DX11-native FSR FrameGen: sources are compiled directly into Core (see target_sources below)
+# No static libs needed — direct compilation ensures consistent struct layouts and CRT linkage.
 
 set(FEATURE_VERSIONS
     "		{\"LightLimitFix\"sv, {0,1,0}}"
@@ -82,6 +85,8 @@ add_library(Core OBJECT
     src/DX12SwapChain.h
     src/FidelityFX.cpp
     src/FidelityFX.h
+    src/FidelityFX_DX11.cpp
+    src/FidelityFX_DX11.h
     src/HDR.cpp
     src/HDRCalibration.cpp
     src/HDRCalibration.h
@@ -93,6 +98,66 @@ add_library(Core OBJECT
     src/UpscalerRenderBackend.cpp
 )
 
+# DX11-native FSR backend: compile directly into Core to avoid static-lib compatibility issues.
+# Shader blobs are pre-compiled in the SDK's blob_accessors directory.
+if(BUILD_PRE_NG)
+	target_sources(Core PRIVATE
+		# DX11 native backend
+		extern/Fidelity-SDK-DX11-PreNG/sdk/src/backends/dx11/ffx_dx11.cpp
+		extern/Fidelity-SDK-DX11-PreNG/sdk/src/backends/dx11/DXBCChecksum.c
+		extern/Fidelity-SDK-DX11-PreNG/sdk/src/backends/dx11/md5.c
+		# Shared backend code + shader blob accessors
+		extern/Fidelity-SDK-DX11-PreNG/sdk/src/backends/shared/ffx_shader_blobs.cpp
+		extern/Fidelity-SDK-DX11-PreNG/sdk/src/backends/shared/ffx_shader_blobs.h
+		extern/Fidelity-SDK-DX11-PreNG/sdk/src/backends/shared/blob_accessors/ffx_frameinterpolation_shaderblobs.cpp
+		extern/Fidelity-SDK-DX11-PreNG/sdk/src/backends/shared/blob_accessors/ffx_frameinterpolation_shaderblobs.h
+		extern/Fidelity-SDK-DX11-PreNG/sdk/src/backends/shared/blob_accessors/ffx_opticalflow_shaderblobs.cpp
+		extern/Fidelity-SDK-DX11-PreNG/sdk/src/backends/shared/blob_accessors/ffx_opticalflow_shaderblobs.h
+		extern/Fidelity-SDK-DX11-PreNG/sdk/src/backends/shared/blob_accessors/ffx_fsr3upscaler_shaderblobs.cpp
+		extern/Fidelity-SDK-DX11-PreNG/sdk/src/backends/shared/blob_accessors/ffx_fsr3upscaler_shaderblobs.h
+		extern/Fidelity-SDK-DX11-PreNG/sdk/src/backends/shared/blob_accessors/ffx_fsr2_shaderblobs.cpp
+		extern/Fidelity-SDK-DX11-PreNG/sdk/src/backends/shared/blob_accessors/ffx_fsr2_shaderblobs.h
+		extern/Fidelity-SDK-DX11-PreNG/sdk/src/backends/shared/blob_accessors/ffx_fsr1_shaderblobs.cpp
+		extern/Fidelity-SDK-DX11-PreNG/sdk/src/backends/shared/blob_accessors/ffx_fsr1_shaderblobs.h
+		# FrameInterpolation effect
+		extern/Fidelity-SDK-DX11-PreNG/sdk/src/components/frameinterpolation/ffx_frameinterpolation.cpp
+		# OpticalFlow effect (dependency of FrameInterpolation)
+		extern/Fidelity-SDK-DX11-PreNG/sdk/src/components/opticalflow/ffx_opticalflow.cpp
+		# Shared utilities
+		extern/Fidelity-SDK-DX11-PreNG/sdk/src/shared/ffx_assert.cpp
+		extern/Fidelity-SDK-DX11-PreNG/sdk/src/shared/ffx_object_management.cpp
+		extern/Fidelity-SDK-DX11-PreNG/sdk/src/shared/ffx_object_management.h
+	)
+	target_compile_definitions(Core PRIVATE FFX_FSR FFX_FSR3)
+	# Suppress warnings in SDK-generated and SDK source files
+	set(FFX_DX11_SOURCES
+		extern/Fidelity-SDK-DX11-PreNG/sdk/src/backends/dx11/ffx_dx11.cpp
+		extern/Fidelity-SDK-DX11-PreNG/sdk/src/backends/dx11/DXBCChecksum.c
+		extern/Fidelity-SDK-DX11-PreNG/sdk/src/backends/dx11/md5.c
+		extern/Fidelity-SDK-DX11-PreNG/sdk/src/backends/shared/ffx_shader_blobs.cpp
+		extern/Fidelity-SDK-DX11-PreNG/sdk/src/backends/shared/blob_accessors/ffx_frameinterpolation_shaderblobs.cpp
+		extern/Fidelity-SDK-DX11-PreNG/sdk/src/backends/shared/blob_accessors/ffx_opticalflow_shaderblobs.cpp
+		extern/Fidelity-SDK-DX11-PreNG/sdk/src/backends/shared/blob_accessors/ffx_fsr3upscaler_shaderblobs.cpp
+		extern/Fidelity-SDK-DX11-PreNG/sdk/src/backends/shared/blob_accessors/ffx_fsr2_shaderblobs.cpp
+		extern/Fidelity-SDK-DX11-PreNG/sdk/src/backends/shared/blob_accessors/ffx_fsr1_shaderblobs.cpp
+		extern/Fidelity-SDK-DX11-PreNG/sdk/src/components/frameinterpolation/ffx_frameinterpolation.cpp
+		extern/Fidelity-SDK-DX11-PreNG/sdk/src/components/opticalflow/ffx_opticalflow.cpp
+		extern/Fidelity-SDK-DX11-PreNG/sdk/src/shared/ffx_assert.cpp
+		extern/Fidelity-SDK-DX11-PreNG/sdk/src/shared/ffx_object_management.cpp
+	)
+	set_source_files_properties(${FFX_DX11_SOURCES} PROPERTIES
+		SKIP_PRECOMPILE_HEADERS ON
+		COMPILE_OPTIONS "/W0"
+	)
+	target_include_directories(Core PRIVATE
+		${CMAKE_CURRENT_SOURCE_DIR}/extern/Fidelity-SDK-DX11-PreNG/sdk/src/backends/shared
+		${CMAKE_CURRENT_SOURCE_DIR}/extern/Fidelity-SDK-DX11-PreNG/sdk/src/shared
+		${CMAKE_CURRENT_SOURCE_DIR}/extern/Fidelity-SDK-DX11-PreNG/sdk/src/components
+		# Generated shader permutation headers from the DX11 SDK shader compiler
+		${CMAKE_CURRENT_SOURCE_DIR}/build/ffx-dx11-sdk/src/backends/shaders/dx11
+	)
+endif()
+
 target_compile_features(Core PRIVATE cxx_std_23)
 
 target_include_directories(Core
@@ -100,6 +165,7 @@ target_include_directories(Core
     ${CMAKE_CURRENT_SOURCE_DIR}/extern/Streamline/include
     ${CMAKE_CURRENT_SOURCE_DIR}/extern/imgui
     ${CMAKE_CURRENT_SOURCE_DIR}/extern/imgui/backends
+    ${CMAKE_CURRENT_SOURCE_DIR}/extern/Fidelity-SDK-DX11-PreNG/sdk/include
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
