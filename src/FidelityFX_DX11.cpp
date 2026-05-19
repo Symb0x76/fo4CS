@@ -318,8 +318,9 @@ void PreNG_FrameGen_PresentCallback(IDXGISwapChain* a_swapChain)
 
 	auto* depthTex = reinterpret_cast<ID3D11Texture2D*>(depthRT.texture);
 	auto* mvTex = reinterpret_cast<ID3D11Texture2D*>(mvRT.texture);
+	auto* mainTex = reinterpret_cast<ID3D11Texture2D*>(main.texture);
 
-	if (!depthTex || !mvTex)
+	if (!depthTex || !mvTex || !mainTex)
 		return;
 
 	auto* gameViewport = fo4cs::RE::GetGraphicsState();
@@ -370,8 +371,16 @@ void PreNG_FrameGen_InitForSwapChain(ID3D11Device* a_device, IDXGISwapChain* a_s
 
 	uint32_t displayW = scDesc.BufferDesc.Width;
 	uint32_t displayH = scDesc.BufferDesc.Height;
-	uint32_t renderW = static_cast<uint32_t>(displayW * rtManager->dynamicWidthRatio);
-	uint32_t renderH = static_cast<uint32_t>(displayH * rtManager->dynamicHeightRatio);
+	float ratioW = rtManager->dynamicWidthRatio;
+	float ratioH = rtManager->dynamicHeightRatio;
+	// dynamicWidthRatio/HeightRatio may be 0 during early init — fall back to 1.0
+	if (ratioW <= 0.0f) ratioW = 1.0f;
+	if (ratioH <= 0.0f) ratioH = 1.0f;
+	uint32_t renderW = std::max(1u, static_cast<uint32_t>(displayW * ratioW));
+	uint32_t renderH = std::max(1u, static_cast<uint32_t>(displayH * ratioH));
+
+	logger::info("[FrameGen] PreNG InitForSwapChain ({}x{} display, {}x{} render, fmt={})",
+		displayW, displayH, renderW, renderH, static_cast<uint32_t>(scDesc.BufferDesc.Format));
 
 	fi->Initialize(a_device, displayW, displayH, renderW, renderH, scDesc.BufferDesc.Format);
 
