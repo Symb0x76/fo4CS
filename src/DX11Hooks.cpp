@@ -332,18 +332,25 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 #if defined(FALLOUT_PRE_NG)
 	// PreNG: use D3D11-native FrameGen, skip the D3D12 proxy entirely
 	{
+		logger::debug("[FrameGen] PreNG: delegating to original D3D11CreateDeviceAndSwapChain...");
 		auto ret = ptrD3D11CreateDeviceAndSwapChain(
 			pAdapter, DriverType, Software, Flags,
 			pFeatureLevels, FeatureLevels, SDKVersion,
 			pSwapChainDesc, ppSwapChain,
 			ppDevice, pFeatureLevel, ppImmediateContext);
+		logger::debug("[FrameGen] PreNG: original returned hr=0x{:X}, ppDevice={}, ppSC={}, devValid={}, scValid={}", static_cast<uint32_t>(ret), reinterpret_cast<uintptr_t>(ppDevice), reinterpret_cast<uintptr_t>(ppSwapChain), ppDevice && *ppDevice, ppSwapChain && *ppSwapChain);
 		if (SUCCEEDED(ret) && ppDevice && *ppDevice) {
 			upscaling->OnD3D11DeviceCreated(*ppDevice, nullptr);
 			DX11Hooks::NotifyD3D11DeviceCreated(*ppDevice);
 		}
 		if (SUCCEEDED(ret) && ppSwapChain && *ppSwapChain) {
 			InstallSwapChainPresentHook(*ppSwapChain);
-			PreNG_FrameGen_InitForSwapChain(*ppDevice, *ppSwapChain);
+			if (ppDevice && *ppDevice) {
+				PreNG_FrameGen_InitForSwapChain(*ppDevice, *ppSwapChain);
+			}
+			else {
+				logger::warn("[FrameGen] PreNG: ppDevice is null, skipping FrameGen init");
+			}
 		}
 		return ret;
 	}
