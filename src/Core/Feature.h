@@ -54,10 +54,10 @@ struct Feature : IMenuItem
 	[[nodiscard]] virtual bool DrawFailLoadMessage() const { return true; }
 	[[nodiscard]] virtual std::pair<std::string, std::vector<std::string>> GetFeatureSummary() { return {}; }
 
-	// Settings persistence: Data/F4SE/Plugins/aioGraphics/{ShortName}.ini
+	// Settings persistence: Data/F4SE/Plugins/CommunityShaders/{ShortName}.ini
 	[[nodiscard]] virtual std::filesystem::path GetSettingsPath()
 	{
-		return std::filesystem::path("Data\\F4SE\\Plugins\\aioGraphics") / (GetShortName() + ".ini");
+		return std::filesystem::path("Data\\F4SE\\Plugins\\CommunityShaders") / (GetShortName() + ".ini");
 	}
 
 	virtual void SetupResources() {}
