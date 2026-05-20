@@ -63,7 +63,20 @@ bool FidelityFX_DX11::Initialize(
 		desc.displaySize.width, desc.displaySize.height, static_cast<uint32_t>(desc.backBufferFormat));
 	logger::default_logger()->flush();
 
-	err = ffxFrameInterpolationContextCreate(&m_fiContext, &desc);
+	try {
+		err = ffxFrameInterpolationContextCreate(&m_fiContext, &desc);
+	} catch (const std::exception& e) {
+		logger::error("[FidelityFX_DX11] C++ exception from ffxFrameInterpolationContextCreate: {}",
+			e.what());
+		logger::default_logger()->flush();
+		Shutdown();
+		return false;
+	} catch (...) {
+		logger::error("[FidelityFX_DX11] Unknown C++ exception from ffxFrameInterpolationContextCreate");
+		logger::default_logger()->flush();
+		Shutdown();
+		return false;
+	}
 	if (err != FFX_OK) {
 		logger::error("[FidelityFX_DX11] Failed to create frame interpolation context: {}",
 			static_cast<int>(err));
