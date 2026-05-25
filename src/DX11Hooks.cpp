@@ -1,6 +1,7 @@
 #include "DX11Hooks.h"
 
 #include <d3d11.h>
+#include <iterator>
 #pragma comment(lib, "d3d11.lib")
 
 #include "Upscaler.h"
@@ -33,7 +34,8 @@ using PresentFn = HRESULT(STDMETHODCALLTYPE*)(IDXGISwapChain*, UINT, UINT);
 PresentFn ptrPresent;
 bool g_swapChainVTableHooked = false;
 DX11Hooks::DeviceCreatedCallback g_deviceCreatedCallback = nullptr;
-DX11Hooks::PresentCallback g_presentCallback = nullptr;
+DX11Hooks::PresentCallback g_presentCallbacks[4]{};
+uint32_t g_presentCallbackCount = 0;
 
 namespace
 {
@@ -74,8 +76,10 @@ namespace
 
 	HRESULT STDMETHODCALLTYPE hk_IDXGISwapChain_Present(IDXGISwapChain* a_swapChain, UINT a_syncInterval, UINT a_flags)
 	{
-		if (g_presentCallback) {
-			g_presentCallback(a_swapChain);
+		for (uint32_t i = g_presentCallbackCount; i > 0; --i) {
+			if (auto callback = g_presentCallbacks[i - 1]) {
+				callback(a_swapChain);
+			}
 		}
 
 		return ptrPresent(a_swapChain, a_syncInterval, a_flags);
@@ -322,8 +326,40 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 {
 	logger::info("[FrameGen] D3D11CreateDeviceAndSwapChain hook fired (windowed={}, enb={})", pSwapChainDesc->Windowed, enbLoaded);
 	auto upscaling = Upscaling::GetSingleton();
+#if !defined(FALLOUT_PRE_NG)
 	const auto originalFeatureLevels = pFeatureLevels;
+#endif
+#if !defined(FALLOUT_PRE_NG)
 	const auto originalFeatureLevelCount = FeatureLevels;
+#endif
+
+#if defined(FALLOUT_PRE_NG)
+	// PreNG: use D3D11-native FrameGen, skip the D3D12 proxy entirely
+	{
+		logger::debug("[FrameGen] PreNG: delegating to original D3D11CreateDeviceAndSwapChain...");
+		auto ret = ptrD3D11CreateDeviceAndSwapChain(
+			pAdapter, DriverType, Software, Flags,
+			pFeatureLevels, FeatureLevels, SDKVersion,
+			pSwapChainDesc, ppSwapChain,
+			ppDevice, pFeatureLevel, ppImmediateContext);
+		logger::debug("[FrameGen] PreNG: original returned hr=0x{:X}, ppDevice={}, ppSC={}, devValid={}, scValid={}", static_cast<uint32_t>(ret), reinterpret_cast<uintptr_t>(ppDevice), reinterpret_cast<uintptr_t>(ppSwapChain), ppDevice && *ppDevice, ppSwapChain && *ppSwapChain);
+		if (SUCCEEDED(ret) && ppDevice && *ppDevice) {
+			upscaling->OnD3D11DeviceCreated(*ppDevice, nullptr);
+			DX11Hooks::NotifyD3D11DeviceCreated(*ppDevice);
+		}
+		if (SUCCEEDED(ret) && ppSwapChain && *ppSwapChain) {
+			InstallSwapChainPresentHook(*ppSwapChain);
+			if (ppDevice && *ppDevice) {
+				PreNG_FrameGen_InitForSwapChain(*ppDevice, *ppSwapChain);
+			}
+			else {
+				logger::warn("[FrameGen] PreNG: ppDevice is null, skipping FrameGen init");
+			}
+		}
+		return ret;
+	}
+#endif
+#if !defined(FALLOUT_PRE_NG)
 
 	if (pSwapChainDesc->Windowed && ShouldCreateD3D12Proxy()) {
 		logger::debug("[FrameGen] Using D3D12 proxy");
@@ -404,6 +440,7 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 		}
 	}
 
+
 	auto ret = ptrD3D11CreateDeviceAndSwapChain(
 		pAdapter,
 		DriverType,
@@ -436,7 +473,9 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 	}
 
 	return ret;
+#endif
 }
+
 
 void DX11Hooks::Install()
 {
@@ -479,7 +518,23 @@ void DX11Hooks::SetDeviceCreatedCallback(DeviceCreatedCallback a_callback)
 
 void DX11Hooks::SetPresentCallback(PresentCallback a_callback)
 {
-	g_presentCallback = a_callback;
+	if (!a_callback) {
+		return;
+	}
+
+	for (uint32_t i = 0; i < g_presentCallbackCount; ++i) {
+		if (g_presentCallbacks[i] == a_callback) {
+			return;
+		}
+	}
+
+	if (g_presentCallbackCount >= std::size(g_presentCallbacks)) {
+		logger::warn("[CommunityShaders] D3D11 Present callback list is full; ignoring callback");
+		return;
+	}
+
+	g_presentCallbacks[g_presentCallbackCount++] = a_callback;
+	logger::debug("[CommunityShaders] D3D11 Present callback registered (count={})", g_presentCallbackCount);
 }
 
 void DX11Hooks::NotifyD3D11DeviceCreated(ID3D11Device* a_device)

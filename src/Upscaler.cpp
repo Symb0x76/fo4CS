@@ -17,6 +17,14 @@
 #include "Streamline.h"
 
 void InstallUpscalerRenderBackendHooks();
+namespace
+{
+	uint64_t NextHUDLessFrameID()
+	{
+		static uint64_t nextFrameID = 0;
+		return ++nextFrameID;
+	}
+}
 
 enum class RenderTarget
 {
@@ -590,7 +598,11 @@ void Upscaling::PostPostLoad()
 
 	renderBackendEnabled = pluginMode == PluginMode::kUpscaler &&
 		((UsesDLSSUpscaling() && Streamline::GetSingleton()->featureDLSS) ||
-		 (UsesFSRUpscaling() && d3d12Interop && FidelityFX::GetSingleton()->featureFSR));
+		 (UsesFSRUpscaling() && FidelityFX::GetSingleton()->featureFSR
+#if !defined(FALLOUT_PRE_NG)
+		  && d3d12Interop
+#endif
+		 ));
 	InstallHooks();
 }
 
@@ -611,7 +623,18 @@ void Upscaling::CreateFrameGenerationResources()
 	auto& motionVector = rendererData->renderTargets[(uint)RenderTarget::kMotionVectors];
 	auto& depth = rendererData->depthStencilTargets[(uint)DepthStencilTarget::kMain];
 	if (!main.texture || !main.srView || !main.rtView || !motionVector.texture || !depth.srViewDepth) {
-		logger::warn("[Upscaler] Main render target unavailable in CreateFrameGenerationResources; deferring");
+		static bool loggedPendingTargets = false;
+		if (!loggedPendingTargets) {
+			logger::warn(
+				"[FrameGen] Render targets unavailable in CreateFrameGenerationResources; deferring "
+				"(mainTex={}, mainSRV={}, mainRTV={}, motionTex={}, depthSRV={})",
+				main.texture != nullptr,
+				main.srView != nullptr,
+				main.rtView != nullptr,
+				motionVector.texture != nullptr,
+				depth.srViewDepth != nullptr);
+			loggedPendingTargets = true;
+		}
 		setupBuffers = false;
 		return;
 	}
@@ -784,6 +807,8 @@ void Upscaling::CreateFrameGenerationResources()
 		context->ClearRenderTargetView(reticleColorAndAlphaBufferShared[index]->rtv.get(), clearColor);
 		context->ClearRenderTargetView(depthBufferShared[index]->rtv.get(), clearColor);
 		context->ClearRenderTargetView(motionVectorBufferShared[index]->rtv.get(), clearColor);
+		hudLessFrameValid[index] = false;
+		hudLessFrameIDs[index] = 0;
 	}
 
 	copyDepthToSharedBufferCS = (ID3D11ComputeShader*)CompileFrameGenerationShader(L"CopyDepthToSharedBufferCS.hlsl", "cs_5_0");
@@ -792,6 +817,12 @@ void Upscaling::CreateFrameGenerationResources()
 	buildReticleUIColorAndAlphaCS = (ID3D11ComputeShader*)CompileFrameGenerationShader(L"BuildReticleUIColorAndAlphaCS.hlsl", "cs_5_0");
 	patchHUDLessReticleCS = (ID3D11ComputeShader*)CompileFrameGenerationShader(L"PatchHUDLessReticleCS.hlsl", "cs_5_0");
 	denoiseUIAlphaCS = (ID3D11ComputeShader*)CompileFrameGenerationShader(L"DenoiseUIAlphaCS.hlsl", "cs_5_0");
+	logger::info("[FrameGen] Shared resources created (render={}x{}, hud={}x{}, copyDepthCS={})",
+		depthBufferShared[0]->desc.Width,
+		depthBufferShared[0]->desc.Height,
+		HUDLessBufferShared[0]->desc.Width,
+		HUDLessBufferShared[0]->desc.Height,
+		copyDepthToSharedBufferCS != nullptr);
 }
 
 void Upscaling::PreAlpha()
@@ -807,20 +838,132 @@ void Upscaling::PreAlpha()
 
 	context->CopyResource(reinterpret_cast<ID3D11Texture2D*>(colorMain.texture), reinterpret_cast<ID3D11Texture2D*>(colorPostAlpha.texture));
 
-	// DLSS-G HUDLess: capture from kFrameBuffer at PreAlpha time.
-	// At this point post-processing (bloom, tonemapping) is complete but
-	// reticle and UI have not been drawn yet.  This guarantees that
-	// FinalColor - HUDLess = UI contribution only (no post-process noise).
+	CaptureHUDLessFrame();
+}
+
+
+bool Upscaling::CaptureHUDLessFrame()
+{
+	if (IsLoadingMenuOpen())
+		return false;
+
+#if defined(FALLOUT_PRE_NG)
+	constexpr uint32_t frameIndex = 0;
+#else
 	if (!d3d12Interop)
-		return;
+		return false;
+	const auto frameIndex = DX12SwapChain::GetSingleton()->frameIndex;
+#endif
 	if (!setupBuffers)
 		CreateFrameGenerationResources();
 	if (!setupBuffers)
-		return;
+		return false;
 
-	auto& frameBuffer = rendererData->renderTargets[(uint)RenderTarget::kFrameBuffer];
-	const auto frameIndex = DX12SwapChain::GetSingleton()->frameIndex;
-	context->CopyResource(HUDLessBufferShared[frameIndex]->resource.get(), reinterpret_cast<ID3D11Texture2D*>(frameBuffer.texture));
+	auto rendererData = fo4cs::GetRendererData();
+	if (!rendererData)
+		return false;
+	auto context = reinterpret_cast<ID3D11DeviceContext*>(rendererData->context);
+	if (!context)
+		return false;
+
+	if (!HUDLessBufferShared[frameIndex] || !HUDLessBufferShared[frameIndex]->resource) {
+		static bool loggedMissingHUDLessSource = false;
+		if (!loggedMissingHUDLessSource) {
+			logger::warn("[FrameGen] HUDLess capture waiting for shared target (hudLess={})",
+				HUDLessBufferShared[frameIndex] != nullptr);
+			loggedMissingHUDLessSource = true;
+		}
+		return false;
+	}
+
+	auto* frameBufferTexture = [&]() -> ID3D11Texture2D* {
+		struct Candidate
+		{
+			RenderTarget target;
+			const char* name;
+		};
+		constexpr Candidate candidates[] = {
+			{ RenderTarget::kFrameBuffer, "kFrameBuffer" },
+			{ RenderTarget::kMain, "kMain" },
+			{ RenderTarget::kMainTemp, "kMainTemp" },
+			{ RenderTarget::kMainPreAlpha, "kMainPreAlpha" },
+		};
+
+		D3D11_TEXTURE2D_DESC hudLessDesc{};
+		HUDLessBufferShared[frameIndex]->resource->GetDesc(&hudLessDesc);
+
+		static bool loggedCandidateState = false;
+		for (const auto& candidate : candidates) {
+			auto& renderTarget = rendererData->renderTargets[static_cast<uint>(candidate.target)];
+			auto* texture = reinterpret_cast<ID3D11Texture2D*>(renderTarget.texture);
+			if (!texture) {
+				continue;
+			}
+
+			D3D11_TEXTURE2D_DESC sourceDesc{};
+			texture->GetDesc(&sourceDesc);
+			if (!loggedCandidateState) {
+				logger::info("[FrameGen] HUDLess candidate {}: {}x{} fmt={} target={}x{} fmt={}",
+					candidate.name,
+					sourceDesc.Width,
+					sourceDesc.Height,
+					static_cast<uint32_t>(sourceDesc.Format),
+					hudLessDesc.Width,
+					hudLessDesc.Height,
+					static_cast<uint32_t>(hudLessDesc.Format));
+			}
+
+			if (sourceDesc.Width == hudLessDesc.Width &&
+				sourceDesc.Height == hudLessDesc.Height &&
+				sourceDesc.Format == hudLessDesc.Format) {
+				if (!loggedCandidateState) {
+					logger::info("[FrameGen] HUDLess capture source selected: {}", candidate.name);
+					loggedCandidateState = true;
+				}
+				return texture;
+			}
+		}
+
+		if (!loggedCandidateState) {
+			logger::warn("[FrameGen] HUDLess capture has no compatible PreNG source target");
+			loggedCandidateState = true;
+		}
+		return nullptr;
+	}();
+	if (!frameBufferTexture) {
+		return false;
+	}
+#if defined(FALLOUT_PRE_NG)
+	D3D11_TEXTURE2D_DESC sourceDesc{};
+	D3D11_TEXTURE2D_DESC hudLessDesc{};
+	frameBufferTexture->GetDesc(&sourceDesc);
+	HUDLessBufferShared[frameIndex]->resource->GetDesc(&hudLessDesc);
+	if (sourceDesc.Width != hudLessDesc.Width || sourceDesc.Height != hudLessDesc.Height || sourceDesc.Format != hudLessDesc.Format) {
+		static bool loggedHUDLessMismatch = false;
+		if (!loggedHUDLessMismatch) {
+			logger::warn("[FrameGen] HUDLess capture source mismatch (src={}x{} fmt={}, dst={}x{} fmt={})",
+				sourceDesc.Width,
+				sourceDesc.Height,
+				static_cast<uint32_t>(sourceDesc.Format),
+				hudLessDesc.Width,
+				hudLessDesc.Height,
+				static_cast<uint32_t>(hudLessDesc.Format));
+			loggedHUDLessMismatch = true;
+		}
+		return false;
+	}
+#endif
+
+	context->CopyResource(HUDLessBufferShared[frameIndex]->resource.get(), frameBufferTexture);
+	hudLessFrameIDs[frameIndex] = NextHUDLessFrameID();
+	hudLessFrameValid[frameIndex] = true;
+
+	static bool loggedFirstHUDLessCapture = false;
+	if (!loggedFirstHUDLessCapture) {
+		logger::info("[FrameGen] First HUDLess frame captured (index={}, id={})", frameIndex, hudLessFrameIDs[frameIndex]);
+		loggedFirstHUDLessCapture = true;
+	}
+	return true;
 }
 
 void Upscaling::PostAlpha()
@@ -932,7 +1075,7 @@ void Upscaling::CopyBuffersToSharedResources()
 	auto dx12SwapChain = DX12SwapChain::GetSingleton();
 	const auto frameIndex = dx12SwapChain->frameIndex;
 #endif
-	if (!motionVectorBufferShared[frameIndex] || !depthBufferShared[frameIndex])
+	if (!motionVectorBufferShared[frameIndex] || !depthBufferShared[frameIndex] || !copyDepthToSharedBufferCS)
 		return;
 
 	context->OMSetRenderTargets(0, nullptr, nullptr);
@@ -980,6 +1123,8 @@ bool Upscaling::BuildUIColorAndAlphaResource(ID3D11Texture2D* a_finalFrame)
 
 	auto dx12SwapChain = DX12SwapChain::GetSingleton();
 	const auto frameIndex = dx12SwapChain->frameIndex;
+	if (!hudLessFrameValid[frameIndex] || hudLessFrameIDs[frameIndex] == 0)
+		return false;
 	if (!HUDLessBufferShared[frameIndex] || !uiColorAndAlphaBufferShared[frameIndex] || !reticleColorAndAlphaBufferShared[frameIndex] || !buildUIColorAndAlphaCS)
 		return false;
 
@@ -1205,28 +1350,96 @@ void Upscaling::PostDisplay()
 	if (IsLoadingMenuOpen())
 		return;
 
+#if !defined(FALLOUT_PRE_NG)
 	if (!d3d12Interop)
 		return;
+#endif
 
 	if (!setupBuffers)
 		CreateFrameGenerationResources();
 	if (!setupBuffers)
 		return;
 	auto rendererData = fo4cs::GetRendererData();
-
+	if (!rendererData) {
+		return;
+	}
 
 	auto& swapChain = rendererData->renderTargets[(uint)RenderTarget::kFrameBuffer];
-	ID3D11Resource* swapChainResource = nullptr;
-	reinterpret_cast<ID3D11RenderTargetView*>(swapChain.rtView)->GetResource(&swapChainResource);
+	auto* swapChainRTV = reinterpret_cast<ID3D11RenderTargetView*>(swapChain.rtView);
+	if (!swapChainRTV) {
+		static bool loggedMissingSwapChainRTV = false;
+		if (!loggedMissingSwapChainRTV) {
+			logger::warn("[FrameGen] HUDLess post-display capture waiting for frame buffer RTV");
+			loggedMissingSwapChainRTV = true;
+		}
+		return;
+	}
 
+	winrt::com_ptr<ID3D11Resource> swapChainResource;
+	swapChainRTV->GetResource(swapChainResource.put());
+	if (!swapChainResource) {
+		static bool loggedMissingSwapChainResource = false;
+		if (!loggedMissingSwapChainResource) {
+			logger::warn("[FrameGen] HUDLess post-display capture waiting for frame buffer resource");
+			loggedMissingSwapChainResource = true;
+		}
+		return;
+	}
+
+#if defined(FALLOUT_PRE_NG)
+	constexpr uint32_t frameIndex = 0;
+#else
 	auto dx12SwapChain = DX12SwapChain::GetSingleton();
+	const auto frameIndex = dx12SwapChain->frameIndex;
+#endif
+	if (!HUDLessBufferShared[frameIndex] || !HUDLessBufferShared[frameIndex]->resource) {
+		return;
+	}
 
 	auto context = reinterpret_cast<ID3D11DeviceContext*>(rendererData->context);
-	const auto frameIndex = dx12SwapChain->frameIndex;
-	context->CopyResource(HUDLessBufferShared[frameIndex]->resource.get(), swapChainResource);
-	if (swapChainResource)
-		swapChainResource->Release();
+	if (!context) {
+		return;
+	}
 
+	D3D11_TEXTURE2D_DESC sourceDesc{};
+	D3D11_TEXTURE2D_DESC hudLessDesc{};
+	winrt::com_ptr<ID3D11Texture2D> sourceTexture;
+	if (FAILED(swapChainResource->QueryInterface(IID_PPV_ARGS(sourceTexture.put()))) || !sourceTexture) {
+		static bool loggedPostDisplayNotTexture = false;
+		if (!loggedPostDisplayNotTexture) {
+			logger::warn("[FrameGen] HUDLess post-display source is not a Texture2D");
+			loggedPostDisplayNotTexture = true;
+		}
+		return;
+	}
+	sourceTexture->GetDesc(&sourceDesc);
+	HUDLessBufferShared[frameIndex]->resource->GetDesc(&hudLessDesc);
+	if (sourceDesc.Width != hudLessDesc.Width || sourceDesc.Height != hudLessDesc.Height || sourceDesc.Format != hudLessDesc.Format) {
+		static bool loggedPostDisplayMismatch = false;
+		if (!loggedPostDisplayMismatch) {
+			logger::warn("[FrameGen] HUDLess post-display source mismatch (src={}x{} fmt={}, dst={}x{} fmt={})",
+				sourceDesc.Width,
+				sourceDesc.Height,
+				static_cast<uint32_t>(sourceDesc.Format),
+				hudLessDesc.Width,
+				hudLessDesc.Height,
+				static_cast<uint32_t>(hudLessDesc.Format));
+			loggedPostDisplayMismatch = true;
+		}
+		return;
+	}
+
+	context->CopyResource(HUDLessBufferShared[frameIndex]->resource.get(), swapChainResource.get());
+	hudLessFrameIDs[frameIndex] = NextHUDLessFrameID();
+	hudLessFrameValid[frameIndex] = true;
+
+	static bool loggedFirstPostDisplayHUDLessCapture = false;
+	if (!loggedFirstPostDisplayHUDLessCapture) {
+		logger::info("[FrameGen] First HUDLess post-display frame captured (index={}, id={})",
+			frameIndex,
+			hudLessFrameIDs[frameIndex]);
+		loggedFirstPostDisplayHUDLessCapture = true;
+	}
 }
 
 void Upscaling::Reset()
@@ -1249,6 +1462,8 @@ void Upscaling::Reset()
 
 	FLOAT clearColor[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
 	context->ClearRenderTargetView(HUDLessBufferShared[dx12SwapChain->frameIndex]->rtv.get(), clearColor);
+	hudLessFrameValid[dx12SwapChain->frameIndex] = false;
+	hudLessFrameIDs[dx12SwapChain->frameIndex] = 0;
 	if (uiColorAndAlphaBufferShared[dx12SwapChain->frameIndex])
 		context->ClearRenderTargetView(uiColorAndAlphaBufferShared[dx12SwapChain->frameIndex]->rtv.get(), clearColor);
 	if (reticleColorAndAlphaBufferShared[dx12SwapChain->frameIndex])

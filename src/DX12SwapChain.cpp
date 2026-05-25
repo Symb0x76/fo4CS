@@ -689,6 +689,10 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
 		else
 			d3d11Context->CopyResource(swapChainBufferWrapped[frameIndex]->resource11, finalFrame);
 
+		const bool uiColorAndAlphaReady =
+			upscaling->UsesDLSSFrameGeneration() &&
+			upscaling->BuildUIColorAndAlphaResource(swapChainBufferWrapped[frameIndex]->resource11);
+
 		trace("wait-d3d11-to-d3d12");
 		DX::ThrowIfFailed(d3d11Context->Signal(d3d11Fence.get(), fenceValue));
 		DX::ThrowIfFailed(commandQueue->Wait(d3d12Fence.get(), fenceValue));
@@ -817,7 +821,7 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
 		if (useDLSSFrameGeneration) {
 			const bool dlssgTagged = streamline->TagResourcesAndConfigure(
 				upscaling->HUDLessBufferShared12[frameIndex].get(),
-				nullptr,
+				uiColorAndAlphaReady ? upscaling->uiColorAndAlphaBufferShared12[frameIndex].get() : nullptr,
 				upscaling->depthBufferShared12[frameIndex].get(),
 				upscaling->motionVectorBufferShared12[frameIndex].get(),
 				useFrameGenerationThisFrame);

@@ -3,6 +3,7 @@
 #include "Buffer.h"
 
 #include <array>
+#include <cstdint>
 #include <memory>
 #include <vector>
 
@@ -88,6 +89,8 @@ public:
 
 	bool setupBuffers = false;
 	bool postLoadingSkipUpscale = false;
+	std::array<bool, 2> hudLessFrameValid{};
+	std::array<std::uint64_t, 2> hudLessFrameIDs{};
 
 	void LoadSettings();
 	void LoadFrameGenerationSettings();
@@ -103,6 +106,7 @@ public:
 
 	void CreateFrameGenerationResources();
 	void PreAlpha();
+	bool CaptureHUDLessFrame();
 	void PostAlpha();
 	void CopyBuffersToSharedResources();
 	bool BuildUIColorAndAlphaResource(ID3D11Texture2D* a_finalFrame);
@@ -148,7 +152,7 @@ public:
 	void OverrideSamplerStates();
 	void ResetSamplerStates();
 	void UpdateGameSettings();
-	void CreateUpscalingResources();
+	bool CreateUpscalingResources();
 	void DestroyUpscalingResources();
 	void PatchSSRShader();
 

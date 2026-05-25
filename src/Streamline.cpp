@@ -722,12 +722,8 @@ bool Streamline::ConfigureDLSSG(
 	options.depthBufferFormat = static_cast<uint32_t>(depthDesc.Format);
 	options.hudLessBufferFormat = static_cast<uint32_t>(hudlessDesc.Format);
 	options.uiBufferFormat = static_cast<uint32_t>(uiDesc.Format);
-	// OptiScaler-style: HUDLess provides a clean scene reference for optical
-	// flow without needing explicit UI separation.  Recomposition is kept off
-	// — the generated frames retain the game's own UI through normal
-	// interpolation while motion vectors are computed against the HUD-less
-	// scene, reducing the interference UI motion has on the algorithm.
-	options.enableUserInterfaceRecomposition = sl::Boolean::eFalse;
+	options.enableUserInterfaceRecomposition =
+		uiColorAndAlpha ? sl::Boolean::eTrue : sl::Boolean::eFalse;
 
 	const bool unchanged =
 		dlssgOptionsValid &&
