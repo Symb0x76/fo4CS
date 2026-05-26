@@ -85,7 +85,6 @@ add_library(Core OBJECT
     src/DX12SwapChain.h
     src/FidelityFX.cpp
     src/FidelityFX.h
-    src/FidelityFX_DX11.cpp
     src/FidelityFX_DX11.h
     src/HDR.cpp
     src/HDRCalibration.cpp
@@ -103,6 +102,7 @@ add_library(Core OBJECT
 if(BUILD_PRE_NG)
 	target_sources(Core PRIVATE
 		# DX11 native backend
+		src/FidelityFX_DX11.cpp
 		extern/Fidelity-SDK-DX11-PreNG/sdk/src/backends/dx11/ffx_dx11.cpp
 		extern/Fidelity-SDK-DX11-PreNG/sdk/src/backends/dx11/DXBCChecksum.c
 		extern/Fidelity-SDK-DX11-PreNG/sdk/src/backends/dx11/md5.c
@@ -121,6 +121,8 @@ if(BUILD_PRE_NG)
 		extern/Fidelity-SDK-DX11-PreNG/sdk/src/backends/shared/blob_accessors/ffx_fsr1_shaderblobs.h
 		# FrameInterpolation effect
 		extern/Fidelity-SDK-DX11-PreNG/sdk/src/components/frameinterpolation/ffx_frameinterpolation.cpp
+		# FSR3 Upscaler effect
+		extern/Fidelity-SDK-DX11-PreNG/sdk/src/components/fsr3upscaler/ffx_fsr3upscaler.cpp
 		# OpticalFlow effect (dependency of FrameInterpolation)
 		extern/Fidelity-SDK-DX11-PreNG/sdk/src/components/opticalflow/ffx_opticalflow.cpp
 		# Shared utilities
@@ -141,6 +143,7 @@ if(BUILD_PRE_NG)
 		extern/Fidelity-SDK-DX11-PreNG/sdk/src/backends/shared/blob_accessors/ffx_fsr2_shaderblobs.cpp
 		extern/Fidelity-SDK-DX11-PreNG/sdk/src/backends/shared/blob_accessors/ffx_fsr1_shaderblobs.cpp
 		extern/Fidelity-SDK-DX11-PreNG/sdk/src/components/frameinterpolation/ffx_frameinterpolation.cpp
+		extern/Fidelity-SDK-DX11-PreNG/sdk/src/components/fsr3upscaler/ffx_fsr3upscaler.cpp
 		extern/Fidelity-SDK-DX11-PreNG/sdk/src/components/opticalflow/ffx_opticalflow.cpp
 		extern/Fidelity-SDK-DX11-PreNG/sdk/src/shared/ffx_assert.cpp
 		extern/Fidelity-SDK-DX11-PreNG/sdk/src/shared/ffx_object_management.cpp

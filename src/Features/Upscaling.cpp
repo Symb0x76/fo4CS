@@ -49,11 +49,13 @@ void FeatureUpscaling::SetupResources()
 	auto* device = CommunityShaders::Runtime::GetSingleton()->GetDevice();
 	if (!device) return;
 
-	upscaling->CreateUpscalingResources();
+	if (upscaling->CreateUpscalingResources()) {
+		logger::info("[Feature::Upscaling] Resources created");
+	} else {
+		logger::debug("[Feature::Upscaling] Resources deferred until render targets are available");
+	}
 	// Frame generation resources are created by FeatureFrameGeneration::PostPostLoad()
 	// when render targets are available (not yet during device creation).
-
-	logger::info("[Feature::Upscaling] Resources created");
 }
 
 void FeatureUpscaling::Prepass()

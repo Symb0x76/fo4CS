@@ -13,6 +13,7 @@
 #include <SimpleIni.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstring>
 #include <filesystem>
@@ -43,7 +44,10 @@ namespace CommunityShaders::Menu
 		ID3D11DeviceContext* context = nullptr;
 		float d3d11DpiScale = 1.0f;
 		int lastHDRModeApplied = -1;
+		float lastHDRMetadataPeak = -1.0f;
+		float lastHDRMetadataPaperWhite = -1.0f;
 		bool loggedHDRCalibrationActive = false;
+		int forcedCursorShowCount = 0;
 		ID3D11VertexShader* calibrationVS = nullptr;
 		ID3D11PixelShader* calibrationPS = nullptr;
 		ID3D11Buffer* calibrationCB = nullptr;
@@ -59,14 +63,73 @@ namespace CommunityShaders::Menu
 		bool loggedColorSpacePassActive = false;
 		std::mutex renderMutex;
 
+		void RestoreD3D11CursorShowCount()
+		{
+			while (forcedCursorShowCount > 0) {
+				ShowCursor(FALSE);
+				--forcedCursorShowCount;
+			}
+		}
+
+		void ForceD3D11HardwareCursorVisible()
+		{
+			int showResult = -1;
+			do {
+				showResult = ShowCursor(TRUE);
+				++forcedCursorShowCount;
+			} while (showResult < 0 && forcedCursorShowCount < 8);
+
+			SetCursor(LoadCursorW(nullptr, IDC_ARROW));
+		}
+
 		void UpdateD3D11MouseCaptureState(bool a_overlayVisible)
 		{
 			if (!a_overlayVisible) {
+				RestoreD3D11CursorShowCount();
 				return;
 			}
 
 			ReleaseCapture();
 			ClipCursor(nullptr);
+			if (hwnd) {
+				SetActiveWindow(hwnd);
+				SetFocus(hwnd);
+			}
+			if (forcedCursorShowCount == 0) {
+				ForceD3D11HardwareCursorVisible();
+			} else {
+				SetCursor(LoadCursorW(nullptr, IDC_ARROW));
+			}
+		}
+
+		void UpdateD3D11PolledMouseInput()
+		{
+			if (!hwnd) {
+				return;
+			}
+
+			auto& io = ImGui::GetIO();
+			POINT cursor{};
+			if (GetCursorPos(&cursor)) {
+				ScreenToClient(hwnd, &cursor);
+				io.AddMousePosEvent(static_cast<float>(cursor.x), static_cast<float>(cursor.y));
+			}
+
+			static std::array<bool, 5> previousButtons{};
+			constexpr std::array<int, 5> buttonKeys{
+				VK_LBUTTON,
+				VK_RBUTTON,
+				VK_MBUTTON,
+				VK_XBUTTON1,
+				VK_XBUTTON2
+			};
+			for (int i = 0; i < static_cast<int>(buttonKeys.size()); ++i) {
+				const bool down = (GetAsyncKeyState(buttonKeys[static_cast<std::size_t>(i)]) & 0x8000) != 0;
+				if (down != previousButtons[static_cast<std::size_t>(i)]) {
+					io.AddMouseButtonEvent(i, down);
+					previousButtons[static_cast<std::size_t>(i)] = down;
+				}
+			}
 		}
 
 		constexpr const char* kCalibrationShader = R"(
@@ -178,6 +241,7 @@ cbuffer HDRColorSpaceCB : register(b0)
     float paperWhiteNits;
     float scRGBReferenceNits;
     uint hdrMode;
+    uint sourceIsLinear;
     float padding;
 };
 
@@ -237,7 +301,7 @@ float3 LinearToPQ(float3 linearNits)
 float4 PSMain(VSOut input) : SV_Target
 {
     float4 source = SourceTexture.SampleLevel(LinearSampler, input.uv, 0);
-    float3 linearColor = sRGBToLinear(saturate(source.rgb));
+    float3 linearColor = sourceIsLinear != 0 ? saturate(source.rgb) : sRGBToLinear(saturate(source.rgb));
 
     if (hdrMode == 1)
     {
@@ -269,7 +333,8 @@ float4 PSMain(VSOut input) : SV_Target
 			float paperWhiteNits;
 			float scRGBReferenceNits;
 			std::uint32_t hdrMode;
-			float padding[2]{};
+			std::uint32_t sourceIsLinear;
+			float padding{};
 		};
 
 		float GetD3D11UIScale()
@@ -778,7 +843,7 @@ float4 PSMain(VSOut input) : SV_Target
 
 			if (!loggedColorSpacePassActive) {
 				loggedColorSpacePassActive = true;
-				logger::info("[HDR] D3D11 color mapping active (main mapping: sRGB -> linear -> Rec.2020/PQ)");
+				logger::info("[HDR] D3D11 color mapping active (source transfer selected per frame -> Rec.2020/PQ)");
 			}
 
 			context->CopyResource(colorSpaceSource, backBuffer);
@@ -792,6 +857,7 @@ float4 PSMain(VSOut input) : SV_Target
 				constants.paperWhiteNits = std::clamp(upscaling->settings.paperWhiteLuminance, 20.0f, 2000.0f);
 				constants.scRGBReferenceNits = std::clamp(upscaling->settings.scRGBReferenceLuminance, 20.0f, 1000.0f);
 				constants.hdrMode = static_cast<std::uint32_t>(upscaling->settings.hdrMode);
+				constants.sourceIsLinear = 0u;
 				std::memcpy(mapped.pData, &constants, sizeof(constants));
 				context->Unmap(colorSpaceCB, 0);
 			}
@@ -876,6 +942,46 @@ float4 PSMain(VSOut input) : SV_Target
 			rtv->Release();
 		}
 
+		UINT16 NitsToDXGIHDRValue(float a_nits)
+		{
+			return static_cast<UINT16>(std::clamp(a_nits, 0.0f, 65535.0f));
+		}
+
+		void ApplyD3D11HDR10Metadata(IDXGISwapChain* a_swapChain, float a_peakNits, float a_paperWhiteNits)
+		{
+			IDXGISwapChain4* swapChain4 = nullptr;
+			if (FAILED(a_swapChain->QueryInterface(IID_PPV_ARGS(&swapChain4))) || !swapChain4) {
+				static bool loggedMissingMetadataInterface = false;
+				if (!loggedMissingMetadataInterface) {
+					logger::warn("[HDR] D3D11 swap chain does not support HDR10 metadata");
+					loggedMissingMetadataInterface = true;
+				}
+				return;
+			}
+
+			DXGI_HDR_METADATA_HDR10 metadata{};
+			metadata.RedPrimary[0] = 34000;
+			metadata.RedPrimary[1] = 16000;
+			metadata.GreenPrimary[0] = 13250;
+			metadata.GreenPrimary[1] = 34500;
+			metadata.BluePrimary[0] = 7500;
+			metadata.BluePrimary[1] = 3000;
+			metadata.WhitePoint[0] = 15635;
+			metadata.WhitePoint[1] = 16450;
+			metadata.MaxMasteringLuminance = static_cast<UINT>(std::clamp(a_peakNits, 80.0f, 10000.0f) * 10000.0f);
+			metadata.MinMasteringLuminance = 0;
+			metadata.MaxContentLightLevel = NitsToDXGIHDRValue(a_peakNits);
+			metadata.MaxFrameAverageLightLevel = NitsToDXGIHDRValue(a_paperWhiteNits);
+
+			const auto result = swapChain4->SetHDRMetaData(DXGI_HDR_METADATA_TYPE_HDR10, sizeof(metadata), &metadata);
+			swapChain4->Release();
+			if (SUCCEEDED(result)) {
+				logger::info("[HDR] D3D11 HDR10 metadata set (peak={}, paperWhite={})", a_peakNits, a_paperWhiteNits);
+			} else {
+				logger::warn("[HDR] Failed to set D3D11 HDR10 metadata (hr=0x{:08X})", static_cast<uint32_t>(result));
+			}
+		}
+
 		void ApplyD3D11HDRState(IDXGISwapChain* a_swapChain)
 		{
 			if (!a_swapChain) {
@@ -884,7 +990,11 @@ float4 PSMain(VSOut input) : SV_Target
 
 			auto* upscaling = Upscaling::GetSingleton();
 			const int hdrMode = upscaling->settings.hdrMode;
-			if (hdrMode == lastHDRModeApplied) {
+			const float peakNits = std::clamp(upscaling->settings.peakLuminance, 80.0f, 10000.0f);
+			const float paperWhiteNits = std::clamp(upscaling->settings.paperWhiteLuminance, 20.0f, 2000.0f);
+			const bool metadataDirty = hdrMode == 2 &&
+				(peakNits != lastHDRMetadataPeak || paperWhiteNits != lastHDRMetadataPaperWhite);
+			if (hdrMode == lastHDRModeApplied && !metadataDirty) {
 				return;
 			}
 
@@ -920,6 +1030,76 @@ float4 PSMain(VSOut input) : SV_Target
 			}
 			swapChain3->Release();
 			lastHDRModeApplied = hdrMode;
+			if (hdrMode == 2) {
+				ApplyD3D11HDR10Metadata(a_swapChain, peakNits, paperWhiteNits);
+				lastHDRMetadataPeak = peakNits;
+				lastHDRMetadataPaperWhite = paperWhiteNits;
+			}
+		}
+
+		void RenderD3D11ImGuiDrawData(IDXGISwapChain* a_swapChain)
+		{
+			if (!a_swapChain || !context) {
+				return;
+			}
+
+			ID3D11Texture2D* backBuffer = nullptr;
+			auto result = a_swapChain->GetBuffer(0, IID_PPV_ARGS(&backBuffer));
+			if (FAILED(result) || !backBuffer) {
+				static bool loggedBackBufferFailure = false;
+				if (!loggedBackBufferFailure) {
+					logger::warn("[CommunityShaders::Menu] D3D11 overlay waiting for backbuffer (hr=0x{:08X})",
+						static_cast<uint32_t>(result));
+					loggedBackBufferFailure = true;
+				}
+				return;
+			}
+
+			D3D11_TEXTURE2D_DESC backBufferDesc{};
+			backBuffer->GetDesc(&backBufferDesc);
+
+			ID3D11RenderTargetView* rtv = nullptr;
+			result = device->CreateRenderTargetView(backBuffer, nullptr, &rtv);
+			backBuffer->Release();
+			if (FAILED(result) || !rtv) {
+				static bool loggedRTVFailure = false;
+				if (!loggedRTVFailure) {
+					logger::warn("[CommunityShaders::Menu] Failed to create D3D11 overlay RTV (hr=0x{:08X})",
+						static_cast<uint32_t>(result));
+					loggedRTVFailure = true;
+				}
+				return;
+			}
+
+			ID3D11RenderTargetView* oldRTV = nullptr;
+			ID3D11DepthStencilView* oldDSV = nullptr;
+			context->OMGetRenderTargets(1, &oldRTV, &oldDSV);
+
+			UINT oldViewportCount = D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE;
+			D3D11_VIEWPORT oldViewports[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE]{};
+			context->RSGetViewports(&oldViewportCount, oldViewports);
+
+			D3D11_VIEWPORT viewport{};
+			viewport.Width = static_cast<float>(backBufferDesc.Width);
+			viewport.Height = static_cast<float>(backBufferDesc.Height);
+			viewport.MinDepth = 0.0f;
+			viewport.MaxDepth = 1.0f;
+
+			context->OMSetRenderTargets(1, &rtv, nullptr);
+			context->RSSetViewports(1, &viewport);
+			ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+
+			if (oldViewportCount > 0) {
+				context->RSSetViewports(oldViewportCount, oldViewports);
+			}
+			context->OMSetRenderTargets(1, &oldRTV, oldDSV);
+			if (oldRTV) {
+				oldRTV->Release();
+			}
+			if (oldDSV) {
+				oldDSV->Release();
+			}
+			rtv->Release();
 		}
 #endif
 	}
@@ -946,6 +1126,7 @@ float4 PSMain(VSOut input) : SV_Target
 		const bool calibrationActive = Upscaling::GetSingleton()->settings.hdrCalibrationActive;
 		ApplyD3D11HDRColorMapping(a_swapChain);
 		const bool showIntro = IsShowingIntroMessage();
+		UpdateD3D11MouseCaptureState(menuOpen || calibrationActive);
 		if (!menuOpen && !showIntro && !calibrationActive) {
 			return;
 		}
@@ -956,18 +1137,20 @@ float4 PSMain(VSOut input) : SV_Target
 		}
 
 		ImGui::SetCurrentContext(imguiContext);
-		UpdateD3D11MouseCaptureState(calibrationActive);
-		ImGui::GetIO().MouseDrawCursor = menuOpen;
+		ImGui::GetIO().MouseDrawCursor = false;
 		ImGui::GetIO().FontGlobalScale = GetD3D11UIScale();
 		ImGui_ImplDX11_NewFrame();
 		ImGui_ImplWin32_NewFrame();
+		if (menuOpen || calibrationActive) {
+			UpdateD3D11PolledMouseInput();
+		}
 		ImGui::NewFrame();
 
 		DrawHDRCalibrationPattern(a_swapChain);
 		DrawRegisteredPanels();
 
 		ImGui::Render();
-		ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+		RenderD3D11ImGuiDrawData(a_swapChain);
 #else
 		(void)a_device;
 		(void)a_context;

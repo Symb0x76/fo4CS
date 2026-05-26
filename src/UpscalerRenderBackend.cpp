@@ -18,6 +18,12 @@
 
 extern bool enbLoaded;
 
+#if defined(FALLOUT_PRE_NG)
+extern bool PreNG_FSR_Upscaling_Setup(ID3D11Device*, uint32_t, uint32_t, uint32_t, uint32_t);
+extern bool PreNG_FSR_Upscale(ID3D11DeviceContext*, ID3D11Resource*, ID3D11Resource*, ID3D11Resource*, ID3D11Resource*, float2, float2, float2, uint);
+extern void PreNG_FSR_Upscaling_Destroy();
+#endif
+
 namespace
 {
 	const uint renderTargetsPatch[] = { 20, 57, 24, 25, 23, 58, 59, 28, 3, 9, 60, 61, 4, 29, 1, 36, 37, 22, 10, 11, 7, 8, 64, 14, 16 };
@@ -43,7 +49,6 @@ namespace
 	{
 		kMain = 2
 	};
-
 
 	float GetUpscaleRatio(uint qualityMode)
 	{
@@ -212,7 +217,11 @@ void Upscaling::OnD3D11DeviceCreated(ID3D11Device* a_device, IDXGIAdapter* a_ada
 	(void)a_adapter;
 	renderBackendEnabled =
 		(UsesDLSSUpscaling() && d3d12Interop && Streamline::GetSingleton()->featureDLSS) ||
-		(UsesFSRUpscaling() && d3d12Interop && FidelityFX::GetSingleton()->featureFSR);
+		(UsesFSRUpscaling() && FidelityFX::GetSingleton()->featureFSR
+#if !defined(FALLOUT_PRE_NG)
+			&& d3d12Interop
+#endif
+		);
 }
 
 Upscaling::UpscaleMethod Upscaling::GetUpscaleMethod(bool a_checkMenu) const
@@ -233,7 +242,12 @@ Upscaling::UpscaleMethod Upscaling::GetUpscaleMethod(bool a_checkMenu) const
 	auto method = GetPreferredUpscaleMethod();
 	if (method == UpscaleMethod::kFSR) {
 		static bool loggedUnavailableFSR = false;
-		if (!d3d12Interop || !FidelityFX::GetSingleton()->featureFSR) {
+#if defined(FALLOUT_PRE_NG)
+		const bool fsrInteropReady = true;
+#else
+		const bool fsrInteropReady = d3d12Interop;
+#endif
+		if (!fsrInteropReady || !FidelityFX::GetSingleton()->featureFSR) {
 			if (!loggedUnavailableFSR) {
 				logger::warn("[Upscaler] FSR is unavailable; disabling FSR");
 				loggedUnavailableFSR = true;
@@ -403,7 +417,9 @@ void Upscaling::UpdateRenderTargets(float a_currentWidthRatio, float a_currentHe
 {
 	static float previousWidthRatio = 0.0f;
 	static float previousHeightRatio = 0.0f;
-	if (previousWidthRatio == a_currentWidthRatio && previousHeightRatio == a_currentHeightRatio)
+	const bool upscalingTextureRequired = upscaleMethodNoMenu != UpscaleMethod::kDisabled;
+	if (previousWidthRatio == a_currentWidthRatio && previousHeightRatio == a_currentHeightRatio &&
+		(!upscalingTextureRequired || upscalingTexture))
 		return;
 
 	TraceRenderBackendStage("UpdateRenderTargets");
@@ -657,16 +673,39 @@ void Upscaling::CopyDepth()
 void Upscaling::CheckResources()
 {
 	static auto previousUpscaleMethodNoMenu = UpscaleMethod::kDisabled;
-	if (previousUpscaleMethodNoMenu == upscaleMethodNoMenu)
+
+	const auto hasUpscalingResources = [&]() {
+		if (upscaleMethodNoMenu == UpscaleMethod::kDisabled)
+			return true;
+#if defined(FALLOUT_PRE_NG)
+		if (upscaleMethodNoMenu == UpscaleMethod::kFSR && !d3d12Interop)
+			return upscalingTexture && upscalerInputShared[0] && upscalerOutputShared[0];
+#endif
+		if (!d3d12Interop || !upscalingTexture)
+			return false;
+		auto dx12SwapChain = DX12SwapChain::GetSingleton();
+		const auto frameIndex = dx12SwapChain->frameIndex;
+		return upscalerInputShared[frameIndex] &&
+		       upscalerOutputShared[frameIndex] &&
+		       upscalerInputShared12[frameIndex] &&
+		       upscalerOutputShared12[frameIndex];
+	};
+
+	const bool methodChanged = previousUpscaleMethodNoMenu != upscaleMethodNoMenu;
+	if (!methodChanged && hasUpscalingResources())
 		return;
 
 	TraceRenderBackendStage("CheckResources");
-	if (previousUpscaleMethodNoMenu == UpscaleMethod::kDLSS)
+	if (methodChanged && previousUpscaleMethodNoMenu == UpscaleMethod::kDLSS)
 		Streamline::GetSingleton()->DestroyDLSSResources();
 
 	if (upscaleMethodNoMenu == UpscaleMethod::kDisabled) {
 		DestroyUpscalingResources();
 	} else {
+		if (methodChanged && previousUpscaleMethodNoMenu != UpscaleMethod::kDisabled)
+			DestroyUpscalingResources();
+		if (!setupBuffers)
+			CreateFrameGenerationResources();
 		CreateUpscalingResources();
 	}
 
@@ -1012,30 +1051,85 @@ void Upscaling::Upscale()
 			}
 		}
 	}
+#if defined(FALLOUT_PRE_NG)
+	else if (upscaleMethod == UpscaleMethod::kFSR) {
+		constexpr uint frameIndex = 0;
+		if (!setupBuffers)
+			CreateFrameGenerationResources();
+
+		const bool missingSharedColor = !upscalerInputShared[frameIndex] || !upscalerOutputShared[frameIndex];
+		const bool mismatchedSharedColor =
+			upscalerInputShared[frameIndex] &&
+			(upscalerInputShared[frameIndex]->desc.Width != upscalingTexture->desc.Width ||
+			 upscalerInputShared[frameIndex]->desc.Height != upscalingTexture->desc.Height ||
+			 upscalerInputShared[frameIndex]->desc.Format != upscalingTexture->desc.Format);
+
+		if (missingSharedColor || mismatchedSharedColor)
+			CreateUpscalingResources();
+
+		if (upscalerInputShared[frameIndex] && upscalerOutputShared[frameIndex] &&
+			depthBufferShared[frameIndex] && motionVectorBufferShared[frameIndex]) {
+			static bool loggedPreNGFSRBackBufferInput = false;
+			if (!loggedPreNGFSRBackBufferInput) {
+				logger::info("[Upscaler] PreNG FSR color input source: kFrameBuffer ({}x{} fmt={}, transfer=sRGB)",
+					upscalingTexture->desc.Width,
+					upscalingTexture->desc.Height,
+					static_cast<uint32_t>(upscalingTexture->desc.Format));
+				loggedPreNGFSRBackBufferInput = true;
+			}
+			context->CopyResource(upscalerInputShared[frameIndex]->resource.get(), frameBufferResource);
+			CopyBuffersToSharedResources();
+
+			const bool dispatched = PreNG_FSR_Upscale(
+				context,
+				upscalerInputShared[frameIndex]->resource.get(),
+				upscalerOutputShared[frameIndex]->resource.get(),
+				depthBufferShared[frameIndex]->resource.get(),
+				motionVectorBufferShared[frameIndex]->resource.get(),
+				jitter,
+				renderSize,
+				screenSize,
+				settings.qualityMode);
+
+			if (dispatched) {
+				context->CopyResource(frameBufferResource, upscalerOutputShared[frameIndex]->resource.get());
+				if (settings.qualityMode == 0 && upscalingTexture)
+					CopyNativeAABorder(context, upscalingTexture->resource.get(), frameBufferResource, upscalingTexture->desc.Width, upscalingTexture->desc.Height);
+			}
+		}
+	}
+#endif
 
 	frameBufferResource->Release();
 }
 
-void Upscaling::CreateUpscalingResources()
+bool Upscaling::CreateUpscalingResources()
 {
 	TraceRenderBackendStage("CreateUpscalingResources");
 	auto renderer = fo4cs::GetRendererData();
 	auto& main = renderer->renderTargets[(uint)RenderTarget::kMain];
 	if (!main.texture) {
-		logger::warn("[Upscaler] Main render target is unavailable; skipping upscaling shared resources");
-		return;
+		static bool loggedMissingMain = false;
+		if (!loggedMissingMain) {
+			logger::warn("[Upscaler] Main render target is unavailable; deferring upscaling shared resources");
+			loggedMissingMain = true;
+		}
+		return false;
 	}
-	D3D11_TEXTURE2D_DESC motionVectorDesc{};
-	reinterpret_cast<ID3D11Texture2D*>(main.texture)->GetDesc(&motionVectorDesc);
-
 	const bool needsDLSSSharedResources = UsesDLSSUpscaling() && Streamline::GetSingleton()->featureDLSS;
 	const bool needsFSRSharedResources = UsesFSRUpscaling() && FidelityFX::GetSingleton()->featureFSR;
-	if ((!needsDLSSSharedResources && !needsFSRSharedResources) || !d3d12Interop)
-		return;
+	if (!needsDLSSSharedResources && !needsFSRSharedResources)
+		return false;
 
 	auto dx12SwapChain = DX12SwapChain::GetSingleton();
-	if (!dx12SwapChain->d3d12Device)
-		return;
+#if defined(FALLOUT_PRE_NG)
+	const bool needsNativeD3D11FSR = needsFSRSharedResources && !d3d12Interop;
+#else
+	constexpr bool needsNativeD3D11FSR = false;
+#endif
+	const bool needsD3D12SharedResources = !needsNativeD3D11FSR;
+	if (needsD3D12SharedResources && (!d3d12Interop || !dx12SwapChain->d3d12Device))
+		return false;
 
 	D3D11_TEXTURE2D_DESC colorDesc{};
 	if (upscalingTexture) {
@@ -1045,30 +1139,31 @@ void Upscaling::CreateUpscalingResources()
 		auto frameBufferSRV = reinterpret_cast<ID3D11ShaderResourceView*>(frameBuffer.srView);
 		if (!frameBufferSRV) {
 			logger::debug("[Upscaler] Frame buffer SRV is unavailable; skipping upscaling shared resources");
-			return;
+			return false;
 		}
 
 		winrt::com_ptr<ID3D11Resource> frameBufferResource;
 		frameBufferSRV->GetResource(frameBufferResource.put());
 		if (!frameBufferResource) {
 			logger::debug("[Upscaler] Frame buffer resource is unavailable; skipping upscaling shared resources");
-			return;
+			return false;
 		}
 
 		winrt::com_ptr<ID3D11Texture2D> frameBufferTexture;
 		if (FAILED(frameBufferResource->QueryInterface(IID_PPV_ARGS(frameBufferTexture.put()))) || !frameBufferTexture) {
 			logger::warn("[Upscaler] Frame buffer resource is not a Texture2D; skipping upscaling shared resources");
-			return;
+			return false;
 		}
 
 		frameBufferTexture->GetDesc(&colorDesc);
 	}
 	if (colorDesc.Width == 0 || colorDesc.Height == 0) {
 		logger::warn("[Upscaler] Frame buffer target has invalid size {}x{}; skipping upscaling shared resources", colorDesc.Width, colorDesc.Height);
-		return;
+		return false;
 	}
 	colorDesc.BindFlags |= D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_RENDER_TARGET;
-	colorDesc.MiscFlags = D3D11_RESOURCE_MISC_SHARED | D3D11_RESOURCE_MISC_SHARED_NTHANDLE;
+	colorDesc.MiscFlags = needsD3D12SharedResources ? (D3D11_RESOURCE_MISC_SHARED | D3D11_RESOURCE_MISC_SHARED_NTHANDLE) : 0;
+	D3D11_TEXTURE2D_DESC inputColorDesc = colorDesc;
 
 	const auto openSharedTexture = [&](Texture2D* texture, winrt::com_ptr<ID3D12Resource>& outResource) {
 		winrt::com_ptr<IDXGIResource1> dxgiResource;
@@ -1082,33 +1177,67 @@ void Upscaling::CreateUpscalingResources()
 	for (int index = 0; index < 2; index++) {
 		delete upscalerInputShared[index];
 		delete upscalerOutputShared[index];
-		upscalerInputShared[index] = new Texture2D(colorDesc);
+		upscalerInputShared[index] = new Texture2D(inputColorDesc);
 		upscalerOutputShared[index] = new Texture2D(colorDesc);
 		upscalerInputShared12[index] = nullptr;
 		upscalerOutputShared12[index] = nullptr;
-		openSharedTexture(upscalerInputShared[index], upscalerInputShared12[index]);
-		openSharedTexture(upscalerOutputShared[index], upscalerOutputShared12[index]);
+		if (needsD3D12SharedResources) {
+			openSharedTexture(upscalerInputShared[index], upscalerInputShared12[index]);
+			openSharedTexture(upscalerOutputShared[index], upscalerOutputShared12[index]);
+		}
 	}
 
 	if (needsFSRSharedResources) {
-		if (!FidelityFX::GetSingleton()->SetupUpscaling(
+#if defined(FALLOUT_PRE_NG)
+		const bool fsrSetupSucceeded = needsNativeD3D11FSR ?
+			PreNG_FSR_Upscaling_Setup(
+				reinterpret_cast<ID3D11Device*>(renderer->device),
+				inputColorDesc.Width,
+				inputColorDesc.Height,
+				colorDesc.Width,
+				colorDesc.Height) :
+			FidelityFX::GetSingleton()->SetupUpscaling(
+				dx12SwapChain->d3d12Device.get(),
+				inputColorDesc.Width,
+				inputColorDesc.Height,
+				colorDesc.Width,
+				colorDesc.Height);
+#else
+		const bool fsrSetupSucceeded = FidelityFX::GetSingleton()->SetupUpscaling(
 			dx12SwapChain->d3d12Device.get(),
+			inputColorDesc.Width,
+			inputColorDesc.Height,
 			colorDesc.Width,
-			colorDesc.Height,
-			colorDesc.Width,
-			colorDesc.Height)) {
+			colorDesc.Height);
+#endif
+		if (!fsrSetupSucceeded) {
 			logger::error("[Upscaler] FSR upscaling context creation failed; disabling upscaling backend");
 			upscaleMethodNoMenu = UpscaleMethod::kDisabled;
 			upscaleMethod = UpscaleMethod::kDisabled;
 			renderBackendEnabled = false;
+			return false;
 		}
 	}
+
+	logger::info("[Upscaler] Upscaling shared resources created (input={}x{} fmt={}, output={}x{} fmt={}, fsr={}, dlss={})",
+		inputColorDesc.Width,
+		inputColorDesc.Height,
+		static_cast<uint32_t>(inputColorDesc.Format),
+		colorDesc.Width,
+		colorDesc.Height,
+		static_cast<uint32_t>(colorDesc.Format),
+		needsFSRSharedResources,
+		needsDLSSSharedResources);
+	return true;
 }
 
 void Upscaling::DestroyUpscalingResources()
 {
 	dilatedMotionVectorTexture.reset();
 	FidelityFX::GetSingleton()->DestroyUpscaling();
+#if defined(FALLOUT_PRE_NG)
+	PreNG_FSR_Upscaling_Destroy();
+#endif
 
 	for (int index = 0; index < 2; index++) {
 		delete upscalerInputShared[index];
@@ -1175,6 +1304,10 @@ namespace
 			upscaling->OverrideSamplerStates();
 			func(This);
 			upscaling->ResetSamplerStates();
+#if defined(FALLOUT_PRE_NG)
+			upscaling->CaptureHUDLessFrame();
+			upscaling->CopyBuffersToSharedResources();
+#endif
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
 	};

@@ -1,6 +1,7 @@
 #include "DX11Hooks.h"
 
 #include <d3d11.h>
+#include <iterator>
 #pragma comment(lib, "d3d11.lib")
 
 #include "Upscaler.h"
@@ -33,7 +34,8 @@ using PresentFn = HRESULT(STDMETHODCALLTYPE*)(IDXGISwapChain*, UINT, UINT);
 PresentFn ptrPresent;
 bool g_swapChainVTableHooked = false;
 DX11Hooks::DeviceCreatedCallback g_deviceCreatedCallback = nullptr;
-DX11Hooks::PresentCallback g_presentCallback = nullptr;
+DX11Hooks::PresentCallback g_presentCallbacks[4]{};
+uint32_t g_presentCallbackCount = 0;
 
 namespace
 {
@@ -74,8 +76,10 @@ namespace
 
 	HRESULT STDMETHODCALLTYPE hk_IDXGISwapChain_Present(IDXGISwapChain* a_swapChain, UINT a_syncInterval, UINT a_flags)
 	{
-		if (g_presentCallback) {
-			g_presentCallback(a_swapChain);
+		for (uint32_t i = g_presentCallbackCount; i > 0; --i) {
+			if (auto callback = g_presentCallbacks[i - 1]) {
+				callback(a_swapChain);
+			}
 		}
 
 		return ptrPresent(a_swapChain, a_syncInterval, a_flags);
@@ -514,7 +518,23 @@ void DX11Hooks::SetDeviceCreatedCallback(DeviceCreatedCallback a_callback)
 
 void DX11Hooks::SetPresentCallback(PresentCallback a_callback)
 {
-	g_presentCallback = a_callback;
+	if (!a_callback) {
+		return;
+	}
+
+	for (uint32_t i = 0; i < g_presentCallbackCount; ++i) {
+		if (g_presentCallbacks[i] == a_callback) {
+			return;
+		}
+	}
+
+	if (g_presentCallbackCount >= std::size(g_presentCallbacks)) {
+		logger::warn("[CommunityShaders] D3D11 Present callback list is full; ignoring callback");
+		return;
+	}
+
+	g_presentCallbacks[g_presentCallbackCount++] = a_callback;
+	logger::debug("[CommunityShaders] D3D11 Present callback registered (count={})", g_presentCallbackCount);
 }
 
 void DX11Hooks::NotifyD3D11DeviceCreated(ID3D11Device* a_device)

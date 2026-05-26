@@ -92,7 +92,7 @@ namespace CommunityShaders
 			auto* newPS = CompileReplacementPS(device, *shader, pixelDesc);
 			if (newPS) {
 				entry->shader->Release();
-				entry->shader = newPS;
+				entry->shader = reinterpret_cast<decltype(entry->shader)>(newPS);
 				logger::info("[BSShaderHooks] Replaced PS: type={} desc=0x{:08X}",
 				             shader->shaderType, pixelDesc);
 			}
@@ -147,7 +147,11 @@ namespace CommunityShaders
 
 	void BSShaderHooks::Install()
 	{
+#if defined(FALLOUT_POST_AE)
+		auto imageBase = REX::FModule::GetExecutingModule().GetBaseAddress();
+#else
 		auto imageBase = REL::Module::get().base();
+#endif
 
 #if defined(FALLOUT_PRE_NG)
 		auto vtableAddr = imageBase + kPreNG_VTableOffset;

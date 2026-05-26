@@ -59,7 +59,12 @@ void FidelityFX::LoadFFX()
 		ffxLoadFunctions(&ffxModule, module);
 		featureFSR = true;
 	} else {
+#if defined(FALLOUT_PRE_NG)
+		featureFSR = true;
+		logger::info("[FidelityFX] Using built-in D3D11 FSR runtime for PreNG");
+#else
 		logger::warn("[FidelityFX] amd_fidelityfx_dx12.dll is not loaded");
+#endif
 	}
 }
 
@@ -133,6 +138,11 @@ bool FidelityFX::SetupUpscaling(ID3D12Device* a_device, uint32_t a_maxRenderWidt
 	upscaleMaxRenderHeight = maxRenderHeight;
 	upscaleMaxOutputWidth = outputWidth;
 	upscaleMaxOutputHeight = outputHeight;
+	logger::info("[FidelityFX] FSR upscaler context created (maxRender={}x{}, output={}x{})",
+		maxRenderWidth,
+		maxRenderHeight,
+		outputWidth,
+		outputHeight);
 	return true;
 }
 
@@ -208,6 +218,16 @@ bool FidelityFX::Upscale(
 		return false;
 	}
 
+	static bool loggedFirstDispatch = false;
+	if (!loggedFirstDispatch) {
+		logger::info("[FidelityFX] First FSR upscaling dispatch submitted (render={}x{}, output={}x{}, quality={})",
+			dispatchUpscale.renderSize.width,
+			dispatchUpscale.renderSize.height,
+			dispatchUpscale.upscaleSize.width,
+			dispatchUpscale.upscaleSize.height,
+			a_qualityMode);
+		loggedFirstDispatch = true;
+	}
 	return true;
 }
 

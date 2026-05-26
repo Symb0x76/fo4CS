@@ -37,8 +37,8 @@ inline LRESULT CALLBACK WndProc(HWND a_hwnd, UINT a_msg, WPARAM a_wParam, LPARAM
 			const bool keyboardMessage =
 				a_msg >= WM_KEYFIRST && a_msg <= WM_KEYLAST;
 
-			if ((a_msg == WM_INPUT && io.WantCaptureMouse) ||
-				(mouseMessage && io.WantCaptureMouse) ||
+			if (a_msg == WM_INPUT ||
+				mouseMessage ||
 				(keyboardMessage && io.WantCaptureKeyboard) ||
 				(imguiHandled && (io.WantCaptureMouse || io.WantCaptureKeyboard))) {
 				return true;

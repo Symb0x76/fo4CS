@@ -31,9 +31,15 @@ void FeatureFrameGeneration::SetupResources()
 	if (!loaded || !upscaling) return;
 	if (!upscaling->UsesFSRFrameGeneration()) return;
 
+#if defined(FALLOUT_PRE_NG)
+	// PreNG render targets are not valid during device creation.
+	// Shared resources are created lazily from Prepass/Present once targets exist.
+	return;
+#else
 	if (auto* device = CommunityShaders::Runtime::GetSingleton()->GetDevice()) {
 		upscaling->CreateFrameGenerationResources();
 	}
+#endif
 }
 
 void FeatureFrameGeneration::Prepass()
@@ -41,9 +47,7 @@ void FeatureFrameGeneration::Prepass()
 	if (!loaded || !upscaling) return;
 	if (!upscaling->UsesFSRFrameGeneration()) return;
 
-	if (upscaling->setupBuffers) {
-		upscaling->CopyBuffersToSharedResources();
-	}
+	upscaling->CopyBuffersToSharedResources();
 }
 
 void FeatureFrameGeneration::Reset()
