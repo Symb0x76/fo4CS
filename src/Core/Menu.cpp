@@ -11,7 +11,9 @@
 #include <imgui.h>
 #include <SimpleIni.h>
 
+#include <algorithm>
 #include <array>
+#include <cstdint>
 #include <filesystem>
 #include <mutex>
 #endif
@@ -36,6 +38,8 @@ namespace CommunityShaders::Menu
 		ID3D11Device* device = nullptr;
 		ID3D11DeviceContext* context = nullptr;
 		float d3d11DpiScale = 1.0f;
+		uint32_t d3d11BackBufferWidth = 0;
+		uint32_t d3d11BackBufferHeight = 0;
 		int forcedCursorShowCount = 0;
 		std::mutex renderMutex;
 
@@ -76,6 +80,40 @@ namespace CommunityShaders::Menu
 			} else {
 				SetCursor(LoadCursorW(nullptr, IDC_ARROW));
 			}
+		}
+
+		void UpdateD3D11DisplayMetrics(IDXGISwapChain* a_swapChain)
+		{
+			if (!a_swapChain) {
+				return;
+			}
+
+			ID3D11Texture2D* backBuffer = nullptr;
+			const auto result = a_swapChain->GetBuffer(0, IID_PPV_ARGS(&backBuffer));
+			if (FAILED(result) || !backBuffer) {
+				return;
+			}
+
+			D3D11_TEXTURE2D_DESC backBufferDesc{};
+			backBuffer->GetDesc(&backBufferDesc);
+			backBuffer->Release();
+
+			d3d11BackBufferWidth = backBufferDesc.Width;
+			d3d11BackBufferHeight = backBufferDesc.Height;
+
+			RECT clientRect{};
+			if (!hwnd || !GetClientRect(hwnd, &clientRect)) {
+				return;
+			}
+
+			const auto clientWidth = static_cast<float>(std::max<LONG>(1, clientRect.right - clientRect.left));
+			const auto clientHeight = static_cast<float>(std::max<LONG>(1, clientRect.bottom - clientRect.top));
+
+			auto& io = ImGui::GetIO();
+			io.DisplaySize = ImVec2(clientWidth, clientHeight);
+			io.DisplayFramebufferScale = ImVec2(
+				static_cast<float>(d3d11BackBufferWidth) / clientWidth,
+				static_cast<float>(d3d11BackBufferHeight) / clientHeight);
 		}
 
 		void UpdateD3D11PolledMouseInput()
@@ -382,6 +420,7 @@ namespace CommunityShaders::Menu
 		ImGui::GetIO().FontGlobalScale = GetD3D11UIScale();
 		ImGui_ImplDX11_NewFrame();
 		ImGui_ImplWin32_NewFrame();
+		UpdateD3D11DisplayMetrics(a_swapChain);
 		if (menuOpen) {
 			UpdateD3D11PolledMouseInput();
 		}

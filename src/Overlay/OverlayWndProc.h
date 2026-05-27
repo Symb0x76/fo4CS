@@ -32,6 +32,11 @@ inline LRESULT CALLBACK WndProc(HWND a_hwnd, UINT a_msg, WPARAM a_wParam, LPARAM
 
 		if (g_overlay->IsVisible()) {
 			auto& io = ImGui::GetIO();
+			if (a_msg == WM_SETCURSOR) {
+				SetCursor(LoadCursorW(nullptr, IDC_ARROW));
+				return TRUE;
+			}
+
 			const bool mouseMessage =
 				a_msg >= WM_MOUSEFIRST && a_msg <= WM_MOUSELAST;
 			const bool keyboardMessage =

@@ -1474,8 +1474,18 @@ struct SetUseDynamicResolutionViewportAsDefaultViewport
 	{
 		func(This, a_true);
 		if (!a_true) {
-			Upscaling::GetSingleton()->Upscale();
-			Upscaling::GetSingleton()->PostDisplay();
+			auto* upscaling = Upscaling::GetSingleton();
+#if defined(FALLOUT_PRE_NG)
+			if (!upscaling->HasPreNGPreUIUpscaleForCurrentFrame()) {
+				upscaling->Upscale();
+			}
+			if (!upscaling->HasPreNGPreUIHUDLessForCurrentFrame()) {
+				upscaling->PostDisplay();
+			}
+#else
+			upscaling->Upscale();
+			upscaling->PostDisplay();
+#endif
 		}
 	}
 	static inline REL::Relocation<decltype(thunk)> func;
