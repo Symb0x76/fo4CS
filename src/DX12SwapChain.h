@@ -10,9 +10,6 @@
 #include <d3d12.h>
 
 #include "Buffer.h"
-#include "HDR.h"
-
-class HDRCalibrationOverlay;
 
 // --- Overlay callbacks (registered by Overlay.dll at load time) ---
 using OverlayInitCallback = void (*)(ID3D12Device* device,
@@ -88,8 +85,6 @@ public:
 	IDXGISwapChain4* swapChain;
 
 	DXGI_SWAP_CHAIN_DESC1 swapChainDesc;
-	HDRSettings hdrSettings;
-	HDRCalibrationOverlay* calibrationOverlay = nullptr;
 	OverlayInitCallback overlayInitCallback = nullptr;
 	OverlayPresentCallback overlayPresentCallback = nullptr;
 	OverlayPollCallback overlayPollCallback = nullptr;
@@ -113,13 +108,6 @@ public:
 	winrt::com_ptr<ID3D12Fence> d3d12Fence;
 
 	winrt::com_ptr<ID3D12Resource> swapChainBuffers[2];
-
-	winrt::com_ptr<ID3D12RootSignature> colorSpaceRootSignature;
-	winrt::com_ptr<ID3D12PipelineState> colorSpacePipelineState;
-	winrt::com_ptr<ID3D12Resource> colorSpaceConstantBuffer;
-	std::uint8_t* colorSpaceMappedConstants = nullptr;
-	winrt::com_ptr<ID3D12DescriptorHeap> colorSpaceSrvHeap;
-	winrt::com_ptr<ID3D12DescriptorHeap> colorSpaceRtvHeap;
 
 	UINT frameIndex = 0;
 	UINT64 fenceValue = 1;
@@ -145,14 +133,6 @@ public:
 
 	void WaitForCommandAllocator(UINT a_index);
 
-	void ApplyHDRRuntimeSettings(const HDRSettings& settings);
-	void EnsureColorSpaceResources();
-	void DestroyColorSpaceResources();
-
 	ID3D12GraphicsCommandList4* BeginInteropCommandList();
 	void ExecuteInteropCommandListAndWait();
-
-private:
-	void ApplyHDRSwapChainState();
-	void RecreateBackBufferResources(DXGI_FORMAT a_format);
 };

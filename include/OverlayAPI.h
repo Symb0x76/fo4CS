@@ -2,7 +2,7 @@
 
 // OverlayAPI.h — Public C-API for NuclearGFX Overlay registration
 //
-// Feature DLLs (FrameGen, Upscaler, Reflex, HDR) call these functions
+// Feature DLLs (FrameGen, Upscaler, Reflex) call these functions
 // to register their settings panels with the D3D12 overlay host.
 // Include this header in any plugin that wants to register panels.
 //
@@ -25,7 +25,7 @@ extern "C" {
 
 // --- Panel category for grouping in the settings UI ---
 enum OverlayPanelCategory {
-	kOverlayCategory_Rendering = 0,  // FrameGen, Upscaler, HDR
+	kOverlayCategory_Rendering = 0,  // FrameGen, Upscaler
 	kOverlayCategory_Latency,        // Reflex
 	kOverlayCategory_Debug,          // ShaderDump, logging
 	kOverlayCategory_Overlay,        // Hotkey, UI scale, intro

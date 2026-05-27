@@ -1057,27 +1057,34 @@ void Upscaling::Upscale()
 		if (!setupBuffers)
 			CreateFrameGenerationResources();
 
-		const bool missingSharedColor = !upscalerInputShared[frameIndex] || !upscalerOutputShared[frameIndex];
+		const bool missingSharedColor =
+			!upscalerInputShared[frameIndex] || !upscalerOutputShared[frameIndex];
 		const bool mismatchedSharedColor =
 			upscalerInputShared[frameIndex] &&
 			(upscalerInputShared[frameIndex]->desc.Width != upscalingTexture->desc.Width ||
 			 upscalerInputShared[frameIndex]->desc.Height != upscalingTexture->desc.Height ||
 			 upscalerInputShared[frameIndex]->desc.Format != upscalingTexture->desc.Format);
+		const bool mismatchedSharedOutput =
+			upscalerOutputShared[frameIndex] &&
+			(upscalerOutputShared[frameIndex]->desc.Width != upscalingTexture->desc.Width ||
+			 upscalerOutputShared[frameIndex]->desc.Height != upscalingTexture->desc.Height ||
+			 upscalerOutputShared[frameIndex]->desc.Format != upscalingTexture->desc.Format);
 
-		if (missingSharedColor || mismatchedSharedColor)
+		if (missingSharedColor || mismatchedSharedColor || mismatchedSharedOutput)
 			CreateUpscalingResources();
 
 		if (upscalerInputShared[frameIndex] && upscalerOutputShared[frameIndex] &&
 			depthBufferShared[frameIndex] && motionVectorBufferShared[frameIndex]) {
-			static bool loggedPreNGFSRBackBufferInput = false;
-			if (!loggedPreNGFSRBackBufferInput) {
-				logger::info("[Upscaler] PreNG FSR color input source: kFrameBuffer ({}x{} fmt={}, transfer=sRGB)",
+			static bool loggedPreNGFSRColorSource = false;
+			if (!loggedPreNGFSRColorSource) {
+				logger::info("[Upscaler] PreNG FSR color input source: kFrameBuffer ({}x{} fmt={}, transfer=direct UNORM)",
 					upscalingTexture->desc.Width,
 					upscalingTexture->desc.Height,
 					static_cast<uint32_t>(upscalingTexture->desc.Format));
-				loggedPreNGFSRBackBufferInput = true;
+				loggedPreNGFSRColorSource = true;
 			}
 			context->CopyResource(upscalerInputShared[frameIndex]->resource.get(), frameBufferResource);
+
 			CopyBuffersToSharedResources();
 
 			const bool dispatched = PreNG_FSR_Upscale(
@@ -1131,9 +1138,9 @@ bool Upscaling::CreateUpscalingResources()
 	if (needsD3D12SharedResources && (!d3d12Interop || !dx12SwapChain->d3d12Device))
 		return false;
 
-	D3D11_TEXTURE2D_DESC colorDesc{};
+	D3D11_TEXTURE2D_DESC presentationColorDesc{};
 	if (upscalingTexture) {
-		colorDesc = upscalingTexture->desc;
+		presentationColorDesc = upscalingTexture->desc;
 	} else {
 		auto& frameBuffer = renderer->renderTargets[(uint)RenderTarget::kFrameBuffer];
 		auto frameBufferSRV = reinterpret_cast<ID3D11ShaderResourceView*>(frameBuffer.srView);
@@ -1155,15 +1162,29 @@ bool Upscaling::CreateUpscalingResources()
 			return false;
 		}
 
-		frameBufferTexture->GetDesc(&colorDesc);
+		frameBufferTexture->GetDesc(&presentationColorDesc);
 	}
-	if (colorDesc.Width == 0 || colorDesc.Height == 0) {
-		logger::warn("[Upscaler] Frame buffer target has invalid size {}x{}; skipping upscaling shared resources", colorDesc.Width, colorDesc.Height);
+	if (presentationColorDesc.Width == 0 || presentationColorDesc.Height == 0) {
+		logger::warn("[Upscaler] Frame buffer target has invalid size {}x{}; skipping upscaling shared resources", presentationColorDesc.Width, presentationColorDesc.Height);
 		return false;
 	}
-	colorDesc.BindFlags |= D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_RENDER_TARGET;
-	colorDesc.MiscFlags = needsD3D12SharedResources ? (D3D11_RESOURCE_MISC_SHARED | D3D11_RESOURCE_MISC_SHARED_NTHANDLE) : 0;
-	D3D11_TEXTURE2D_DESC inputColorDesc = colorDesc;
+	presentationColorDesc.BindFlags |= D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_RENDER_TARGET;
+	presentationColorDesc.MiscFlags = needsD3D12SharedResources ? (D3D11_RESOURCE_MISC_SHARED | D3D11_RESOURCE_MISC_SHARED_NTHANDLE) : 0;
+	presentationColorDesc.CPUAccessFlags = 0;
+	presentationColorDesc.Usage = D3D11_USAGE_DEFAULT;
+
+	D3D11_TEXTURE2D_DESC inputColorDesc = presentationColorDesc;
+	D3D11_TEXTURE2D_DESC outputColorDesc = presentationColorDesc;
+#if defined(FALLOUT_PRE_NG)
+	if (needsNativeD3D11FSR) {
+		inputColorDesc = presentationColorDesc;
+		outputColorDesc = presentationColorDesc;
+		inputColorDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
+		outputColorDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
+		inputColorDesc.MiscFlags = 0;
+		outputColorDesc.MiscFlags = 0;
+	}
+#endif
 
 	const auto openSharedTexture = [&](Texture2D* texture, winrt::com_ptr<ID3D12Resource>& outResource) {
 		winrt::com_ptr<IDXGIResource1> dxgiResource;
@@ -1178,7 +1199,7 @@ bool Upscaling::CreateUpscalingResources()
 		delete upscalerInputShared[index];
 		delete upscalerOutputShared[index];
 		upscalerInputShared[index] = new Texture2D(inputColorDesc);
-		upscalerOutputShared[index] = new Texture2D(colorDesc);
+		upscalerOutputShared[index] = new Texture2D(outputColorDesc);
 		upscalerInputShared12[index] = nullptr;
 		upscalerOutputShared12[index] = nullptr;
 		if (needsD3D12SharedResources) {
@@ -1194,21 +1215,21 @@ bool Upscaling::CreateUpscalingResources()
 				reinterpret_cast<ID3D11Device*>(renderer->device),
 				inputColorDesc.Width,
 				inputColorDesc.Height,
-				colorDesc.Width,
-				colorDesc.Height) :
+				outputColorDesc.Width,
+				outputColorDesc.Height) :
 			FidelityFX::GetSingleton()->SetupUpscaling(
 				dx12SwapChain->d3d12Device.get(),
 				inputColorDesc.Width,
 				inputColorDesc.Height,
-				colorDesc.Width,
-				colorDesc.Height);
+				outputColorDesc.Width,
+				outputColorDesc.Height);
 #else
 		const bool fsrSetupSucceeded = FidelityFX::GetSingleton()->SetupUpscaling(
 			dx12SwapChain->d3d12Device.get(),
 			inputColorDesc.Width,
 			inputColorDesc.Height,
-			colorDesc.Width,
-			colorDesc.Height);
+			outputColorDesc.Width,
+			outputColorDesc.Height);
 #endif
 		if (!fsrSetupSucceeded) {
 			logger::error("[Upscaler] FSR upscaling context creation failed; disabling upscaling backend");
@@ -1219,13 +1240,16 @@ bool Upscaling::CreateUpscalingResources()
 		}
 	}
 
-	logger::info("[Upscaler] Upscaling shared resources created (input={}x{} fmt={}, output={}x{} fmt={}, fsr={}, dlss={})",
+	logger::info("[Upscaler] Upscaling shared resources created (input={}x{} fmt={}, output={}x{} fmt={}, final={}x{} fmt={}, fsr={}, dlss={})",
 		inputColorDesc.Width,
 		inputColorDesc.Height,
 		static_cast<uint32_t>(inputColorDesc.Format),
-		colorDesc.Width,
-		colorDesc.Height,
-		static_cast<uint32_t>(colorDesc.Format),
+		outputColorDesc.Width,
+		outputColorDesc.Height,
+		static_cast<uint32_t>(outputColorDesc.Format),
+		presentationColorDesc.Width,
+		presentationColorDesc.Height,
+		static_cast<uint32_t>(presentationColorDesc.Format),
 		needsFSRSharedResources,
 		needsDLSSSharedResources);
 	return true;

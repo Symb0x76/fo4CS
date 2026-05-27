@@ -974,17 +974,8 @@ bool Streamline::Upscale(
 	dlssOptions.outputWidth = std::max(1u, static_cast<uint32_t>(a_displaySize.x));
 	dlssOptions.outputHeight = std::max(1u, static_cast<uint32_t>(a_displaySize.y));
 	auto upscaling = Upscaling::GetSingleton();
-	const bool hdrEnabled = upscaling->settings.hdrMode > 0;
-	dlssOptions.colorBuffersHDR = hdrEnabled ? sl::Boolean::eTrue : sl::Boolean::eFalse;
+	dlssOptions.colorBuffersHDR = sl::Boolean::eFalse;
 	dlssOptions.useAutoExposure = sl::Boolean::eTrue;
-
-	static bool loggedDLSSHDRState = false;
-	static bool lastLoggedDLSSHDRState = false;
-	if (!loggedDLSSHDRState || lastLoggedDLSSHDRState != hdrEnabled) {
-		logger::info("[Streamline] DLSS colorBuffersHDR={} hdrMode={}", hdrEnabled, upscaling->settings.hdrMode);
-		loggedDLSSHDRState = true;
-		lastLoggedDLSSHDRState = hdrEnabled;
-	}
 
 	// Apply DLSS preset per-quality-mode.
 	// 0 = Auto (eDefault — DLSS auto-selects), 10 = J, 11 = K, 12 = L, 13 = M.
