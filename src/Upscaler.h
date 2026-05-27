@@ -25,11 +25,6 @@ public:
 		int frameGenerationBackend = 1;
 		int reflexMode = 1;
 		bool reflexSleepMode = true;
-		int hdrMode = 0;
-		float peakLuminance = 1000.0f;
-		float paperWhiteLuminance = 200.0f;
-		float scRGBReferenceLuminance = 80.0f;
-		bool hdrCalibrationActive = false;
 		int upscaleMethodPreference = 2;
 		int qualityMode = 1;
 		int dlssPreset = 0;
@@ -95,7 +90,6 @@ public:
 	void LoadSettings();
 	void LoadFrameGenerationSettings();
 	void LoadReflexSettings();
-	void LoadHDRSettings();
 	void ApplyRuntimeFallbacks();
 	[[nodiscard]] const char* GetDLSSUnavailableReason() const;
 	[[nodiscard]] static bool IsPreNGRuntime() noexcept;

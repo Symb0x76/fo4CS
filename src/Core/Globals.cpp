@@ -3,7 +3,6 @@
 #include "Features/LightLimitFix.h"
 #include "Features/ShaderDump.h"
 #include "Features/FrameGeneration.h"
-#include "Features/HDRDisplay.h"
 #include "Features/Overlay.h"
 #include "Features/Reflex.h"
 #include "Features/Upscaling.h"
@@ -15,7 +14,6 @@ namespace globals::features
 	FeatureUpscaling upscaling;
 	FeatureFrameGeneration frameGeneration;
 	FeatureReflex reflex;
-	FeatureHDR hdr;
 	FeatureOverlay overlay;
 }
 
@@ -29,7 +27,6 @@ namespace CommunityShaders
 		&globals::features::upscaling,
 		&globals::features::frameGeneration,
 		&globals::features::reflex,
-		&globals::features::hdr,
 		&globals::features::overlay,
 		};
 		return features;

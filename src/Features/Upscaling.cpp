@@ -76,7 +76,7 @@ void FeatureUpscaling::LoadSettings()
 {
 	upscaling = Upscaling::GetSingleton();
 
-	// Load FrameGen/HDR/Upscaler INI settings into the shared singleton.
+	// Load FrameGen/Upscaler INI settings into the shared singleton.
 	// Must happen before DX11Hooks::Install() so ShouldLoadFidelityFX()
 	// sees the correct frameGenerationBackend value.
 	upscaling->LoadSettings();

@@ -14,8 +14,7 @@
 				"F4SE_SUPPORT_XBYAK": "ON",
 				"FRAMEGEN": true,
 				"REFLEX": true,
-				"UPSCALER": true,
-				"HDR": true
+				"UPSCALER": true
 			},
 			"binaryDir": "${sourceDir}/build"
 		},
@@ -63,8 +62,7 @@
 				"AIO": false,
 				"FRAMEGEN": true,
 				"REFLEX": false,
-				"UPSCALER": false,
-				"HDR": false
+				"UPSCALER": false
 			}
 		},
 		{
@@ -74,8 +72,7 @@
 				"AIO": false,
 				"FRAMEGEN": false,
 				"REFLEX": false,
-				"UPSCALER": true,
-				"HDR": false
+				"UPSCALER": true
 			}
 		},
 		{
@@ -85,18 +82,6 @@
 				"AIO": false,
 				"FRAMEGEN": false,
 				"REFLEX": true,
-				"UPSCALER": false,
-				"HDR": false
-			}
-		},
-		{
-			"name": "HDR",
-			"hidden": true,
-			"cacheVariables": {
-				"AIO": false,
-				"FRAMEGEN": false,
-				"HDR": true,
-				"REFLEX": false,
 				"UPSCALER": false
 			}
 		},
@@ -107,8 +92,7 @@
 				"AIO": true,
 				"FRAMEGEN": true,
 				"REFLEX": true,
-				"UPSCALER": true,
-				"HDR": true
+				"UPSCALER": true
 			}
 		},
 		{
@@ -117,7 +101,6 @@
 			"cacheVariables": {
 				"AIO": true,
 				"FRAMEGEN": false,
-				"HDR": false,
 				"REFLEX": false,
 				"UPSCALER": false
 			}

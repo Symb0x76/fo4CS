@@ -59,7 +59,6 @@ set(FEATURE_VERSIONS
     "		{\"Upscaling\"sv, {1,0,0}}"
     "		{\"FrameGeneration\"sv, {1,0,0}}"
     "		{\"Reflex\"sv, {1,0,0}}"
-    "		{\"HDR\"sv, {1,0,0}}"
     "		{\"Overlay\"sv, {1,0,0}}"
 )
 string(REPLACE ";" ",\n" FEATURE_VERSIONS "${FEATURE_VERSIONS}")
@@ -73,7 +72,7 @@ configure_file(
 # ------------------------------------------------------------------
 # ------------------------------------------------------------------
 # Core: D3D12 upscaling interop 共享 OBJECT 库
-#   - Upscaler / FrameGen / Reflex / HDR / NuclearGFX 共享
+#   - Upscaler / FrameGen / Reflex / NuclearGFX 共享
 #   - 不含 CommunityShaders Feature 框架
 #   - 插件目标通过 $<TARGET_OBJECTS:Core> 引入编译产物
 # ------------------------------------------------------------------
@@ -86,10 +85,6 @@ add_library(Core OBJECT
     src/FidelityFX.cpp
     src/FidelityFX.h
     src/FidelityFX_DX11.h
-    src/HDR.cpp
-    src/HDRCalibration.cpp
-    src/HDRCalibration.h
-    src/HDR.h
     src/Streamline.cpp
     src/Streamline.h
     src/Upscaler.cpp
@@ -314,7 +309,6 @@ if(COMMUNITY_SHADERS)
         src/Features/Upscaling.cpp
         src/Features/FrameGeneration.cpp
         src/Features/Reflex.cpp
-        src/Features/HDRDisplay.cpp
         src/Features/Overlay.cpp
         src/Overlay/Overlay.cpp src/Overlay/Overlay.h
     )
@@ -382,7 +376,6 @@ if(AIO)
     set(FRAMEGEN OFF)
     set(REFLEX OFF)
     set(UPSCALER OFF)
-    set(HDR OFF)
 endif()
 
 # community-shaders 分支: 全进 CommunityShaders.dll
@@ -391,7 +384,6 @@ if(COMMUNITY_SHADERS)
     set(FRAMEGEN OFF)
     set(REFLEX OFF)
     set(UPSCALER OFF)
-    set(HDR OFF)
     set(OVERLAY OFF)
 endif()
 
@@ -411,15 +403,6 @@ if(REFLEX)
     )
     target_compile_definitions(Reflex PRIVATE REFLEX=1)
     target_link_libraries(Reflex PRIVATE Core)
-endif()
-
-if(HDR)
-    fo4cs_create_plugin(HDR HDR "HDR" ${FO4CS_COMMON_DEPENDENCIES})
-    target_sources(HDR PRIVATE
-        src/HDRPlugin.cpp
-    )
-    target_compile_definitions(HDR PRIVATE FO4CS_HDR=1)
-    target_link_libraries(HDR PRIVATE Core)
 endif()
 
 if(UPSCALER)

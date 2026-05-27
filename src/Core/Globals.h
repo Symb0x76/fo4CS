@@ -11,7 +11,6 @@ struct ShaderDump;
 struct FeatureUpscaling;
 struct FeatureFrameGeneration;
 struct FeatureReflex;
-struct FeatureHDR;
 struct FeatureOverlay;
 
 // Global Feature instances — each Feature is declared and defined here (Skyrim CS pattern)
@@ -22,7 +21,6 @@ namespace globals::features
 	extern ::FeatureUpscaling upscaling;
 	extern ::FeatureFrameGeneration frameGeneration;
 	extern ::FeatureReflex reflex;
-	extern ::FeatureHDR hdr;
 	extern ::FeatureOverlay overlay;
 }
 

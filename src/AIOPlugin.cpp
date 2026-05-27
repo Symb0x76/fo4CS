@@ -2,7 +2,6 @@
 
 #include "DX11Hooks.h"
 #include "DX12SwapChain.h"
-#include "HDR.h"
 #include "Upscaler.h"
 #include "Overlay/Overlay.h"
 
@@ -20,43 +19,9 @@ namespace
 	}
 }
 
-// Panel callbacks — all four feature panels registered when running in AIO mode
+// Panel callbacks — all feature panels registered when running in AIO mode
 namespace AIOOverlay
 {
-	HDRSettings MakeHDRSettings(const Upscaling::Settings& settings)
-	{
-		HDRSettings hdr;
-		hdr.hdrMode = settings.hdrMode;
-		hdr.peakLuminance = settings.peakLuminance;
-		hdr.paperWhiteLuminance = settings.paperWhiteLuminance;
-		hdr.scRGBReferenceLuminance = settings.scRGBReferenceLuminance;
-		hdr.calibrationActive = settings.hdrCalibrationActive;
-		return hdr;
-	}
-
-	void SaveHDRPanelSettings(const Upscaling::Settings& settings)
-	{
-		auto hdr = MakeHDRSettings(settings);
-		SaveHDRSettingsToINI(hdr);
-		DX12SwapChain::GetSingleton()->hdrSettings = hdr;
-	}
-
-	void StartHDRCalibration(Upscaling::Settings& settings)
-	{
-		if (settings.hdrMode == 0) {
-			settings.hdrMode = 2;
-		}
-		if (settings.peakLuminance < 400.0f) {
-			settings.peakLuminance = 1000.0f;
-		}
-		if (settings.paperWhiteLuminance < 20.0f) {
-			settings.paperWhiteLuminance = 200.0f;
-		}
-		settings.hdrCalibrationActive = true;
-		SaveHDRPanelSettings(settings);
-		logger::info("[HDR] Calibration requested from AIO overlay");
-	}
-
 	void DrawDLSSRuntimeNotice()
 	{
 		auto* upscaling = Upscaling::GetSingleton();
@@ -98,26 +63,7 @@ namespace AIOOverlay
 				changed |= ImGui::Combo("Mode", &s.reflexMode, reflexModes, IM_ARRAYSIZE(reflexModes)) ? 1 : 0;
 				changed |= ImGui::Checkbox("Reflex Sleep Mode", &s.reflexSleepMode) ? 1 : 0;
 			}
-		} else if constexpr (PanelId == 2) { // HDR
-			if (ImGui::CollapsingHeader("HDR")) {
-				const char* hdrModes[] = { "Disabled", "scRGB (HDR)", "HDR10 (HDR)" };
-				if (ImGui::Combo("Mode", &s.hdrMode, hdrModes, IM_ARRAYSIZE(hdrModes))) {
-					if (s.hdrMode == 2 && s.peakLuminance < 400.0f) s.peakLuminance = 1000.0f;
-					changed = 1;
-				}
-				if (s.hdrMode > 0) {
-					changed |= ImGui::SliderFloat("Peak Luminance (nits)", &s.peakLuminance, 80.0f, 10000.0f, "%.0f") ? 1 : 0;
-					changed |= ImGui::SliderFloat("Paper White (nits)", &s.paperWhiteLuminance, 20.0f, 1000.0f, "%.0f") ? 1 : 0;
-					if (s.hdrMode == 1) {
-						changed |= ImGui::SliderFloat("scRGB Reference (nits)", &s.scRGBReferenceLuminance, 10.0f, 500.0f, "%.0f") ? 1 : 0;
-					}
-				}
-				if (ImGui::Button("Start Calibration")) {
-					StartHDRCalibration(s);
-					changed = 1;
-				}
-			}
-		} else if constexpr (PanelId == 3) { // Upscaler
+		} else if constexpr (PanelId == 2) { // Upscaler
 			if (ImGui::CollapsingHeader("Upscaler")) {
 				DrawDLSSRuntimeNotice();
 				const char* upscaleMethods[] = { "Disabled", "FSR", "DLSS" };
@@ -150,8 +96,6 @@ namespace AIOOverlay
 			ini.SetValue("Settings", "bReflexSleepMode", s.reflexSleepMode ? "true" : "false");
 			ini.SaveFile("Data\\F4SE\\Plugins\\Reflex\\Reflex.ini");
 		} else if constexpr (PanelId == 2) {
-			SaveHDRPanelSettings(s);
-		} else if constexpr (PanelId == 3) {
 			ini.SetValue("Settings", "iUpscaleMethodPreference", std::to_string(s.upscaleMethodPreference).c_str());
 			ini.SetValue("Settings", "iQualityMode", std::to_string(s.qualityMode).c_str());
 			ini.SetValue("Settings", "iDLSSPreset", std::to_string(s.dlssPreset).c_str());
@@ -174,8 +118,7 @@ namespace AIOOverlay
 	{
 		TryRegister<0>("Frame Generation", kOverlayCategory_Rendering);
 		TryRegister<1>("Reflex", kOverlayCategory_Latency);
-		TryRegister<2>("HDR", kOverlayCategory_Rendering);
-		TryRegister<3>("Upscaler", kOverlayCategory_Rendering);
+		TryRegister<2>("Upscaler", kOverlayCategory_Rendering);
 	}
 
 	void RegisterHostCallbacks()
@@ -217,11 +160,10 @@ extern "C" DLLEXPORT bool F4SEAPI F4SEPlugin_Load(const F4SE::LoadInterface* a_f
 	upscaling->pluginMode = Upscaling::PluginMode::kUpscaler;
 	upscaling->LoadSettings();
 
-	logger::info("[AIO] Upscaler DLSS={} FrameGen={} Reflex={} HDR={}",
+	logger::info("[AIO] Upscaler DLSS={} FrameGen={} Reflex={}",
 		static_cast<int>(upscaling->settings.upscaleMethodPreference),
 		static_cast<int>(upscaling->settings.frameGenerationMode),
-		upscaling->settings.reflexMode,
-		upscaling->settings.hdrMode);
+		upscaling->settings.reflexMode);
 
 	AIOOverlay::RegisterHostCallbacks();
 	DX11Hooks::Install();
