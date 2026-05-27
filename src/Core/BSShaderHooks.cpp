@@ -79,6 +79,15 @@ namespace CommunityShaders
 
 	void ReplacePixelShaders(RE::BSShader* shader)
 	{
+#if defined(FALLOUT_PRE_NG)
+		(void)shader;
+		static bool loggedPreNGHold = false;
+		if (!loggedPreNGHold) {
+			logger::info("[BSShaderHooks] PreNG pixel shader replacement held until ShaderDB hash gating is wired");
+			loggedPreNGHold = true;
+		}
+		return;
+#else
 		auto* device = CommunityShaders::Runtime::GetSingleton()->GetDevice();
 		if (!device) return;
 
@@ -97,6 +106,7 @@ namespace CommunityShaders
 				             shader->shaderType, pixelDesc);
 			}
 		}
+#endif
 	}
 
 	// ── Shader compilation ─────────────────────────────────────

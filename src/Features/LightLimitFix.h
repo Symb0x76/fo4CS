@@ -140,7 +140,7 @@ struct LightLimitFix : Feature
 	void SaveSettings() override;
 	void RestoreDefaultSettings() override;
 	void DrawSettings() override;
-	[[nodiscard]] bool HasResources() const { return clusterBuildingCS && clusterCullingCS; }
+	[[nodiscard]] bool HasResources() const;
 	void PostPostLoad() override;
 	void DataLoaded() override;
 	void Prepass() override;

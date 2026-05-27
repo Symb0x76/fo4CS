@@ -1,5 +1,6 @@
 #include "Features/LightLimitFix.h"
 #include <DirectXMath.h>
+#include <cmath>
 #include <cstring>
 
 #include "Core/CommunityShaders.h"
@@ -43,6 +44,9 @@ namespace
 {
 	constexpr std::uint32_t kClusterMaxLights = 128;
 	constexpr std::uint32_t kMaxLights = 1024;
+#if defined(FALLOUT_PRE_NG)
+	constexpr std::uint64_t kPreNGStableFrame = 5;
+#endif
 
 	std::string GetShaderPath()
 	{
@@ -65,6 +69,24 @@ namespace
 	static_assert(sizeof(NiLightView) == 0x170);
 	static_assert(offsetof(NiLightView, diff) == 0x12C);
 	static_assert(offsetof(NiLightView, modelBound) == 0x150);
+
+	bool LogResourceFailure(const char* a_name, HRESULT a_hr)
+	{
+		logger::error("[LightLimitFix] {} failed (hr=0x{:08X})",
+		              a_name, static_cast<std::uint32_t>(a_hr));
+		return false;
+	}
+
+	bool IsFiniteMatrix(const DirectX::XMFLOAT4X4& a_matrix)
+	{
+		const auto* values = reinterpret_cast<const float*>(&a_matrix);
+		for (std::size_t i = 0; i < 16; ++i) {
+			if (!std::isfinite(values[i])) {
+				return false;
+			}
+		}
+		return true;
+	}
 }
 
 void LightLimitFix::LoadSettings()
@@ -136,29 +158,16 @@ void LightLimitFix::DrawSettings()
 LightLimitFix::PerFrame LightLimitFix::GetCommonBufferData()
 {
 	PerFrame perFrame{};
-#if defined(FALLOUT_PRE_NG)
-	perFrame.EnableLightsVisualisation = false;
-	perFrame.LightsVisualisationMode = 0;
-	perFrame.ClusterSize[0] = 0;
-	perFrame.ClusterSize[1] = 0;
-	perFrame.ClusterSize[2] = 0;
-	return perFrame;
-#else
 	perFrame.EnableLightsVisualisation = settings.EnableLightsVisualisation;
 	perFrame.LightsVisualisationMode = settings.LightsVisualisationMode;
 	perFrame.ClusterSize[0] = clusterSize[0];
 	perFrame.ClusterSize[1] = clusterSize[1];
 	perFrame.ClusterSize[2] = clusterSize[2];
 	return perFrame;
-#endif
 }
 
 void LightLimitFix::SetupResources()
 {
-#if defined(FALLOUT_PRE_NG)
-	logger::info("[LightLimitFix] PreNG runtime hooks disabled; skipping GPU resources");
-	return;
-#else
 	auto* device = CommunityShaders::Runtime::GetSingleton()->GetDevice();
 	if (!device) {
 		logger::warn("[LightLimitFix] SetupResources: D3D11 device not available");
@@ -174,18 +183,49 @@ void LightLimitFix::SetupResources()
 			shaderPath + a_name);
 		if (!compiled) {
 			logger::warn("[LightLimitFix] Failed to compile: {}{}", shaderPath, a_name);
-			return;
+			return false;
 		}
-		device->CreateComputeShader(compiled->data(), compiled->size(), nullptr, a_out.put());
+		const auto hr = device->CreateComputeShader(compiled->data(), compiled->size(), nullptr, a_out.put());
+		if (FAILED(hr)) {
+			return LogResourceFailure(a_name, hr);
+		}
+		return true;
 	};
 
-	compileOrLoad("clusterBuildingCS.hlsl", clusterBuildingCS);
-	compileOrLoad("clusterCullingCS.hlsl", clusterCullingCS);
-
-	if (!HasResources()) {
-		logger::info("[LightLimitFix] GPU resources pending — shaders not yet available");
+	if (!compileOrLoad("clusterBuildingCS.hlsl", clusterBuildingCS) ||
+	    !compileOrLoad("clusterCullingCS.hlsl", clusterCullingCS)) {
+		logger::warn("[LightLimitFix] GPU resources pending - compute shaders not available");
 		return;
 	}
+
+	auto createBuffer = [&](const char* a_name, const D3D11_BUFFER_DESC& a_desc,
+	                        winrt::com_ptr<ID3D11Buffer>& a_out) {
+		const auto hr = device->CreateBuffer(&a_desc, nullptr, a_out.put());
+		if (FAILED(hr)) {
+			return LogResourceFailure(a_name, hr);
+		}
+		return true;
+	};
+
+	auto createSRV = [&](const char* a_name, ID3D11Resource* a_resource,
+	                     const D3D11_SHADER_RESOURCE_VIEW_DESC& a_desc,
+	                     winrt::com_ptr<ID3D11ShaderResourceView>& a_out) {
+		const auto hr = device->CreateShaderResourceView(a_resource, &a_desc, a_out.put());
+		if (FAILED(hr)) {
+			return LogResourceFailure(a_name, hr);
+		}
+		return true;
+	};
+
+	auto createUAV = [&](const char* a_name, ID3D11Resource* a_resource,
+	                     const D3D11_UNORDERED_ACCESS_VIEW_DESC& a_desc,
+	                     winrt::com_ptr<ID3D11UnorderedAccessView>& a_out) {
+		const auto hr = device->CreateUnorderedAccessView(a_resource, &a_desc, a_out.put());
+		if (FAILED(hr)) {
+			return LogResourceFailure(a_name, hr);
+		}
+		return true;
+	};
 
 	// Constant buffers
 	{
@@ -194,7 +234,7 @@ void LightLimitFix::SetupResources()
 		desc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
 		desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
 		desc.ByteWidth = sizeof(LightBuildingCB);
-		device->CreateBuffer(&desc, nullptr, lightBuildingCB.put());
+		if (!createBuffer("CreateBuffer(lightBuildingCB)", desc, lightBuildingCB)) return;
 	}
 	{
 		D3D11_BUFFER_DESC desc{};
@@ -202,7 +242,7 @@ void LightLimitFix::SetupResources()
 		desc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
 		desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
 		desc.ByteWidth = sizeof(LightCullingCB);
-		device->CreateBuffer(&desc, nullptr, lightCullingCB.put());
+		if (!createBuffer("CreateBuffer(lightCullingCB)", desc, lightCullingCB)) return;
 	}
 
 	// Lights structured buffer
@@ -212,14 +252,14 @@ void LightLimitFix::SetupResources()
 		desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
 		desc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
 		desc.StructureByteStride = sizeof(LightData);
-		desc.ByteWidth = kMaxLights * sizeof(LightData);
-		device->CreateBuffer(&desc, nullptr, lightsBuffer.put());
+		desc.ByteWidth = static_cast<UINT>(kMaxLights * sizeof(LightData));
+		if (!createBuffer("CreateBuffer(lightsBuffer)", desc, lightsBuffer)) return;
 
 		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc{};
 		srvDesc.Format = DXGI_FORMAT_UNKNOWN;
 		srvDesc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
 		srvDesc.Buffer.NumElements = kMaxLights;
-		device->CreateShaderResourceView(lightsBuffer.get(), &srvDesc, lightsSRV.put());
+		if (!createSRV("CreateShaderResourceView(lightsSRV)", lightsBuffer.get(), srvDesc, lightsSRV)) return;
 	}
 
 	// Clusters structured buffer
@@ -231,20 +271,20 @@ void LightLimitFix::SetupResources()
 		desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
 		desc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
 		desc.StructureByteStride = sizeof(ClusterAABB);
-		desc.ByteWidth = clusterCount * sizeof(ClusterAABB);
-		device->CreateBuffer(&desc, nullptr, clustersBuffer.put());
+		desc.ByteWidth = static_cast<UINT>(clusterCount * sizeof(ClusterAABB));
+		if (!createBuffer("CreateBuffer(clustersBuffer)", desc, clustersBuffer)) return;
 
 		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc{};
 		srvDesc.Format = DXGI_FORMAT_UNKNOWN;
 		srvDesc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
 		srvDesc.Buffer.NumElements = clusterCount;
-		device->CreateShaderResourceView(clustersBuffer.get(), &srvDesc, clustersSRV.put());
+		if (!createSRV("CreateShaderResourceView(clustersSRV)", clustersBuffer.get(), srvDesc, clustersSRV)) return;
 
 		D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc{};
 		uavDesc.Format = DXGI_FORMAT_UNKNOWN;
 		uavDesc.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
 		uavDesc.Buffer.NumElements = clusterCount;
-		device->CreateUnorderedAccessView(clustersBuffer.get(), &uavDesc, clustersUAV.put());
+		if (!createUAV("CreateUnorderedAccessView(clustersUAV)", clustersBuffer.get(), uavDesc, clustersUAV)) return;
 	}
 
 	// Light index counter
@@ -255,19 +295,19 @@ void LightLimitFix::SetupResources()
 		desc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
 		desc.StructureByteStride = sizeof(std::uint32_t);
 		desc.ByteWidth = sizeof(std::uint32_t);
-		device->CreateBuffer(&desc, nullptr, lightIndexCounterBuffer.put());
+		if (!createBuffer("CreateBuffer(lightIndexCounterBuffer)", desc, lightIndexCounterBuffer)) return;
 
 		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc{};
 		srvDesc.Format = DXGI_FORMAT_UNKNOWN;
 		srvDesc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
 		srvDesc.Buffer.NumElements = 1;
-		device->CreateShaderResourceView(lightIndexCounterBuffer.get(), &srvDesc, lightIndexCounterSRV.put());
+		if (!createSRV("CreateShaderResourceView(lightIndexCounterSRV)", lightIndexCounterBuffer.get(), srvDesc, lightIndexCounterSRV)) return;
 
 		D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc{};
 		uavDesc.Format = DXGI_FORMAT_UNKNOWN;
 		uavDesc.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
 		uavDesc.Buffer.NumElements = 1;
-		device->CreateUnorderedAccessView(lightIndexCounterBuffer.get(), &uavDesc, lightIndexCounterUAV.put());
+		if (!createUAV("CreateUnorderedAccessView(lightIndexCounterUAV)", lightIndexCounterBuffer.get(), uavDesc, lightIndexCounterUAV)) return;
 	}
 
 	// Light index list
@@ -279,20 +319,20 @@ void LightLimitFix::SetupResources()
 		desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
 		desc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
 		desc.StructureByteStride = sizeof(std::uint32_t);
-		desc.ByteWidth = clusterCount * kClusterMaxLights * sizeof(std::uint32_t);
-		device->CreateBuffer(&desc, nullptr, lightIndexListBuffer.put());
+		desc.ByteWidth = static_cast<UINT>(clusterCount * kClusterMaxLights * sizeof(std::uint32_t));
+		if (!createBuffer("CreateBuffer(lightIndexListBuffer)", desc, lightIndexListBuffer)) return;
 
 		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc{};
 		srvDesc.Format = DXGI_FORMAT_UNKNOWN;
 		srvDesc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
 		srvDesc.Buffer.NumElements = clusterCount * kClusterMaxLights;
-		device->CreateShaderResourceView(lightIndexListBuffer.get(), &srvDesc, lightIndexListSRV.put());
+		if (!createSRV("CreateShaderResourceView(lightIndexListSRV)", lightIndexListBuffer.get(), srvDesc, lightIndexListSRV)) return;
 
 		D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc{};
 		uavDesc.Format = DXGI_FORMAT_UNKNOWN;
 		uavDesc.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
 		uavDesc.Buffer.NumElements = clusterCount * kClusterMaxLights;
-		device->CreateUnorderedAccessView(lightIndexListBuffer.get(), &uavDesc, lightIndexListUAV.put());
+		if (!createUAV("CreateUnorderedAccessView(lightIndexListUAV)", lightIndexListBuffer.get(), uavDesc, lightIndexListUAV)) return;
 	}
 
 	// Light grid
@@ -304,25 +344,29 @@ void LightLimitFix::SetupResources()
 		desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
 		desc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
 		desc.StructureByteStride = sizeof(LightGrid);
-		desc.ByteWidth = clusterCount * sizeof(LightGrid);
-		device->CreateBuffer(&desc, nullptr, lightGridBuffer.put());
+		desc.ByteWidth = static_cast<UINT>(clusterCount * sizeof(LightGrid));
+		if (!createBuffer("CreateBuffer(lightGridBuffer)", desc, lightGridBuffer)) return;
 
 		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc{};
 		srvDesc.Format = DXGI_FORMAT_UNKNOWN;
 		srvDesc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
 		srvDesc.Buffer.NumElements = clusterCount;
-		device->CreateShaderResourceView(lightGridBuffer.get(), &srvDesc, lightGridSRV.put());
+		if (!createSRV("CreateShaderResourceView(lightGridSRV)", lightGridBuffer.get(), srvDesc, lightGridSRV)) return;
 
 		D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc{};
 		uavDesc.Format = DXGI_FORMAT_UNKNOWN;
 		uavDesc.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
 		uavDesc.Buffer.NumElements = clusterCount;
-		device->CreateUnorderedAccessView(lightGridBuffer.get(), &uavDesc, lightGridUAV.put());
+		if (!createUAV("CreateUnorderedAccessView(lightGridUAV)", lightGridBuffer.get(), uavDesc, lightGridUAV)) return;
+	}
+
+	if (!HasResources()) {
+		logger::error("[LightLimitFix] GPU resource creation finished with incomplete resources");
+		return;
 	}
 
 	logger::info("[LightLimitFix] GPU resources created ({} clusters, {} max lights)",
 	             clusterSize[0] * clusterSize[1] * clusterSize[2], kMaxLights);
-#endif
 }
 
 void LightLimitFix::DataLoaded()
@@ -339,7 +383,7 @@ void LightLimitFix::DataLoaded()
 void LightLimitFix::PostPostLoad()
 {
 #if defined(FALLOUT_PRE_NG)
-	logger::info("[LightLimitFix] PreNG runtime hooks disabled; skipping SetupGeometry hooks");
+	logger::info("[LightLimitFix] PreNG SetupGeometry hooks held until BSLighting/BSEffect vtables are validated");
 	return;
 #else
 	Hooks::Install();
@@ -348,18 +392,55 @@ void LightLimitFix::PostPostLoad()
 
 void LightLimitFix::Prepass()
 {
+	const auto frameNumber = ++diagFrameCounter;
+
 #if defined(FALLOUT_PRE_NG)
-	if (diagFrameCounter++ == 0) {
-		logger::info("[LightLimitFix] PreNG runtime hooks disabled; skipping Prepass");
+	auto* runtime = CommunityShaders::Runtime::GetSingleton();
+	if (!runtime) {
+		if (frameNumber == 1 || frameNumber % 300 == 0) {
+			logger::warn("[LightLimitFix] Prepass skipped: runtime unavailable");
+		}
+		return;
 	}
-	return;
-#else
-	if (!HasResources()) return;
+	if (runtime->GetFrameCount() < kPreNGStableFrame) {
+		if (frameNumber == 1) {
+			logger::info("[LightLimitFix] PreNG Prepass waiting for stable frame gate ({})", kPreNGStableFrame);
+		}
+		return;
+	}
+#endif
+
+	if (!HasResources()) {
+		if (frameNumber == 1 || frameNumber % 300 == 0) {
+			logger::warn("[LightLimitFix] Prepass skipped: GPU resources are incomplete");
+		}
+		return;
+	}
 
 	auto* rendererData = fo4cs::GetRendererData();
-	if (!rendererData) return;
+	if (!rendererData) {
+		if (frameNumber == 1 || frameNumber % 300 == 0) {
+			logger::warn("[LightLimitFix] Prepass skipped: renderer data unavailable");
+		}
+		return;
+	}
 	auto* context = reinterpret_cast<ID3D11DeviceContext*>(rendererData->context);
-	if (!context) return;
+	if (!context) {
+		if (frameNumber == 1 || frameNumber % 300 == 0) {
+			logger::warn("[LightLimitFix] Prepass skipped: D3D11 context unavailable");
+		}
+		return;
+	}
+
+	auto clearComputeBindings = [&] {
+		ID3D11ShaderResourceView* nullSRVs[2]{};
+		context->CSSetShaderResources(0, 2, nullSRVs);
+		ID3D11UnorderedAccessView* nullUAVs[3]{};
+		context->CSSetUnorderedAccessViews(0, 3, nullUAVs, nullptr);
+		ID3D11Buffer* nullCB = nullptr;
+		context->CSSetConstantBuffers(0, 1, &nullCB);
+		context->CSSetShader(nullptr, nullptr, 0);
+	};
 
 	const auto& gState = RE::BSGraphics::State::GetSingleton();
 	const auto& camView = gState.cameraState.camViewData;
@@ -371,12 +452,24 @@ void LightLimitFix::Prepass()
 		DirectX::XMMATRIX invProj = DirectX::XMMatrixInverse(nullptr, proj);
 		DirectX::XMStoreFloat4x4(&projInvTransposed, DirectX::XMMatrixTranspose(invProj));
 	}
+	if (!IsFiniteMatrix(projInvTransposed)) {
+		if (frameNumber == 1 || frameNumber % 300 == 0) {
+			logger::warn("[LightLimitFix] Prepass skipped: camera projection matrix is not invertible");
+		}
+		return;
+	}
 
 	DirectX::XMFLOAT4X4 viewTransposed;
 	{
 		DirectX::XMMATRIX view = DirectX::XMLoadFloat4x4(
 			reinterpret_cast<const DirectX::XMFLOAT4X4*>(camView.viewMat));
 		DirectX::XMStoreFloat4x4(&viewTransposed, DirectX::XMMatrixTranspose(view));
+	}
+	if (!IsFiniteMatrix(viewTransposed)) {
+		if (frameNumber == 1 || frameNumber % 300 == 0) {
+			logger::warn("[LightLimitFix] Prepass skipped: camera view matrix is invalid");
+		}
+		return;
 	}
 
 	if (!seenLights.empty()) {
@@ -391,9 +484,9 @@ void LightLimitFix::Prepass()
 		                           static_cast<UINT>(frameLights.size() * sizeof(LightData)), 0);
 	}
 
-	if (diagFrameCounter % 300 == 0) {
+	if (frameNumber % 300 == 0) {
 		logger::info("[LightLimitFix] frame={} lights={} clusters={}x{}x{} near={:.1f} far={:.0f}",
-		             diagFrameCounter, currentLightCount,
+		             frameNumber, currentLightCount,
 		             clusterSize[0], clusterSize[1], clusterSize[2],
 		             CameraNear, CameraFar);
 	}
@@ -407,7 +500,12 @@ void LightLimitFix::Prepass()
 
 	{
 		D3D11_MAPPED_SUBRESOURCE mapped;
-		context->Map(lightBuildingCB.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
+		const auto hr = context->Map(lightBuildingCB.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
+		if (FAILED(hr)) {
+			LogResourceFailure("Map(lightBuildingCB)", hr);
+			clearComputeBindings();
+			return;
+		}
 		auto* cb = static_cast<LightBuildingCB*>(mapped.pData);
 		cb->LightsNear = CameraNear;
 		cb->LightsFar = CameraFar;
@@ -427,14 +525,16 @@ void LightLimitFix::Prepass()
 		context->Dispatch(clusterSize[0], clusterSize[1], clusterSize[2]);
 	}
 
-	{
-		ID3D11UnorderedAccessView* nullUAV = nullptr;
-		context->CSSetUnorderedAccessViews(0, 1, &nullUAV, nullptr);
-	}
+	clearComputeBindings();
 
 	{
 		D3D11_MAPPED_SUBRESOURCE mapped;
-		context->Map(lightCullingCB.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
+		const auto hr = context->Map(lightCullingCB.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
+		if (FAILED(hr)) {
+			LogResourceFailure("Map(lightCullingCB)", hr);
+			clearComputeBindings();
+			return;
+		}
 		auto* cb = static_cast<LightCullingCB*>(mapped.pData);
 		cb->LightCount = currentLightCount;
 		cb->pad[0] = cb->pad[1] = cb->pad[2] = 0;
@@ -461,15 +561,16 @@ void LightLimitFix::Prepass()
 			(clusterSize[2] + NUMTHREAD_Z - 1) / NUMTHREAD_Z);
 	}
 
-	{
-		ID3D11ShaderResourceView* nullSRVs[2]{};
-		context->CSSetShaderResources(0, 2, nullSRVs);
-		ID3D11UnorderedAccessView* nullUAVs[3]{};
-		context->CSSetUnorderedAccessViews(0, 3, nullUAVs, nullptr);
-		context->CSSetShader(nullptr, nullptr, 0);
-	}
+	clearComputeBindings();
 
-	if (diagFrameCounter >= 3 && currentLightCount > 0) {
+#if defined(FALLOUT_PRE_NG)
+	static bool loggedPreNGBindingHold = false;
+	if (!loggedPreNGBindingHold) {
+		logger::info("[LightLimitFix] PreNG compute Prepass active; PS SRV binding held until shader hash replacement is wired");
+		loggedPreNGBindingHold = true;
+	}
+#else
+	if (frameNumber >= 3 && currentLightCount > 0) {
 		ID3D11ShaderResourceView* views[3]{
 			lightsSRV.get(),
 			lightIndexListSRV.get(),
@@ -477,12 +578,34 @@ void LightLimitFix::Prepass()
 		};
 		context->PSSetShaderResources(35, ARRAYSIZE(views), views);
 
-		if (diagFrameCounter % 300 == 0) {
+		if (frameNumber % 300 == 0) {
 			logger::info("[LightLimitFix] SRVs bound to PS slots t35-t37 ({} lights, {} clusters)",
 			             currentLightCount, clusterSize[0] * clusterSize[1] * clusterSize[2]);
 		}
 	}
 #endif
+}
+
+bool LightLimitFix::HasResources() const
+{
+	return clusterBuildingCS &&
+	       clusterCullingCS &&
+	       lightBuildingCB &&
+	       lightCullingCB &&
+	       lightsBuffer &&
+	       lightsSRV &&
+	       clustersBuffer &&
+	       clustersSRV &&
+	       clustersUAV &&
+	       lightIndexCounterBuffer &&
+	       lightIndexCounterSRV &&
+	       lightIndexCounterUAV &&
+	       lightIndexListBuffer &&
+	       lightIndexListSRV &&
+	       lightIndexListUAV &&
+	       lightGridBuffer &&
+	       lightGridSRV &&
+	       lightGridUAV;
 }
 
 void LightLimitFix::Reset()
@@ -521,6 +644,7 @@ void LightLimitFix::CollectLightsFromPass(RE::BSRenderPass* a_pass)
 void LightLimitFix::CollectLightCB()
 {
 	auto* rendererData = fo4cs::GetRendererData();
+	if (!rendererData) return;
 	auto* ctx = reinterpret_cast<ID3D11DeviceContext*>(rendererData->context);
 	auto* device = reinterpret_cast<ID3D11Device*>(rendererData->device);
 	if (!ctx || !device) return;

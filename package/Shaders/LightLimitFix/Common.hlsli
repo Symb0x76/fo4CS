@@ -7,8 +7,9 @@
 #define NUMTHREAD_Z 4
 #define GROUP_SIZE (NUMTHREAD_X * NUMTHREAD_Y * NUMTHREAD_Z)
 
-// Maximum visible lights per cluster (matches GPU register array size)
-#define MAX_CLUSTER_LIGHTS 256
+// Maximum visible lights per cluster. Keep this matched with
+// LightLimitFix.cpp:kClusterMaxLights.
+#define MAX_CLUSTER_LIGHTS 128
 
 namespace LightFlags
 {
