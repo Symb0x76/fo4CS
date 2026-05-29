@@ -19,11 +19,18 @@ echo [PostNG] COMMUNITY_SHADERS=%COMMUNITY_SHADERS%  AIO=%AIO%  FrameGen=%FRAMEG
 
 set "COMMONLIB_PATH=extern\CommonLibF4PostNG"
 set "BUILD_OUTPUT=build\PostNG\Release"
+set "FIDELITYFX_RUNTIME=package\Common\F4SE\Plugins\FidelityFX\amd_fidelityfx_dx12.dll"
+set "DIST_FIDELITYFX_RUNTIME=dist\F4SE\Plugins\FidelityFX\amd_fidelityfx_dx12.dll"
 
 git submodule sync --recursive -- "%COMMONLIB_PATH%"
 if %ERRORLEVEL% NEQ 0 exit /b 1
 git submodule update --init --recursive "%COMMONLIB_PATH%"
 if %ERRORLEVEL% NEQ 0 exit /b 1
+
+if not exist "%FIDELITYFX_RUNTIME%" (
+    echo [PostNG] Missing FSR runtime: %FIDELITYFX_RUNTIME%
+    exit /b 1
+)
 
 RMDIR dist /S /Q
 
@@ -44,6 +51,10 @@ if /I "%REFLEX%"=="ON" xcopy "%BUILD_OUTPUT%\Reflex.dll" "dist\F4SE\Plugins\Refl
 if /I "%UPSCALER%"=="ON" xcopy "%BUILD_OUTPUT%\Upscaler.dll" "dist\F4SE\Plugins\Upscaler\" /I /Y
 
 if exist "package\Common" xcopy "package\Common" "dist" /I /Y /E
+if not exist "%DIST_FIDELITYFX_RUNTIME%" (
+    echo [PostNG] Failed to package FSR runtime: %DIST_FIDELITYFX_RUNTIME%
+    exit /b 1
+)
 if /I "%COMMUNITY_SHADERS%"=="ON" (
     xcopy "package\CommunityShaders" "dist" /I /Y /E
     if exist "package\Shaders" xcopy "package\Shaders" "dist\Shaders" /I /Y /E
