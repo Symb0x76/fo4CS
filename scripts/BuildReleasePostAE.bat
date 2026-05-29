@@ -19,11 +19,18 @@ echo [PostAE] AIO=%AIO%  FrameGen=%FRAMEGEN%  Reflex=%REFLEX%  Upscaler=%UPSCALE
 
 set "COMMONLIB_PATH=extern\CommonLibF4PostAE"
 set "BUILD_OUTPUT=build\PostAE\Release"
+set "FIDELITYFX_RUNTIME=package\Common\F4SE\Plugins\FidelityFX\amd_fidelityfx_dx12.dll"
+set "DIST_FIDELITYFX_RUNTIME=dist\F4SE\Plugins\FidelityFX\amd_fidelityfx_dx12.dll"
 
 git submodule sync --recursive -- "%COMMONLIB_PATH%"
 if %ERRORLEVEL% NEQ 0 exit /b 1
 git submodule update --init --recursive "%COMMONLIB_PATH%"
 if %ERRORLEVEL% NEQ 0 exit /b 1
+
+if not exist "%FIDELITYFX_RUNTIME%" (
+    echo [PostAE] Missing FSR runtime: %FIDELITYFX_RUNTIME%
+    exit /b 1
+)
 
 RMDIR dist /S /Q
 
@@ -44,6 +51,10 @@ if /I "%UPSCALER%"=="ON" xcopy "%BUILD_OUTPUT%\Upscaler.dll" "dist\F4SE\Plugins\
 if /I "%OVERLAY%"=="ON" xcopy "%BUILD_OUTPUT%\Overlay.dll" "dist\F4SE\Plugins\Overlay\" /I /Y
 
 if exist "package\Common" xcopy "package\Common" "dist" /I /Y /E
+if not exist "%DIST_FIDELITYFX_RUNTIME%" (
+    echo [PostAE] Failed to package FSR runtime: %DIST_FIDELITYFX_RUNTIME%
+    exit /b 1
+)
 if /I "%AIO%"=="ON" (
     xcopy "package\FrameGen" "dist" /I /Y /E
     xcopy "package\Reflex" "dist" /I /Y /E
