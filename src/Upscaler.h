@@ -86,6 +86,12 @@ public:
 	bool postLoadingSkipUpscale = false;
 	std::array<bool, 2> hudLessFrameValid{};
 	std::array<std::uint64_t, 2> hudLessFrameIDs{};
+#if defined(FALLOUT_PRE_NG)
+	bool preUIUpscaleFrameValid = false;
+	bool preUIHUDLessFrameValid = false;
+	std::uint32_t preUIUpscaleFrame = 0;
+	std::uint32_t preUIHUDLessFrame = 0;
+#endif
 
 	void LoadSettings();
 	void LoadFrameGenerationSettings();
@@ -115,6 +121,13 @@ public:
 	static double GetRefreshRate(HWND a_window);
 
 	void PostDisplay();
+#if defined(FALLOUT_PRE_NG)
+	bool ShouldRunPreNGPreUIUpscale() const noexcept;
+	bool HasPreNGPreUIUpscaleForCurrentFrame() const noexcept;
+	bool HasPreNGPreUIHUDLessForCurrentFrame() const noexcept;
+	void MarkPreNGPreUIUpscaleFrame() noexcept;
+	void MarkPreNGPreUIHUDLessFrame() noexcept;
+#endif
 
 	void Reset();
 
@@ -127,7 +140,7 @@ public:
 
 	UpscaleMethod GetUpscaleMethod(bool a_checkMenu) const;
 	void UpdateUpscaling();
-	void Upscale();
+	bool Upscale();
 	void CheckResources();
 
 	void UpdateRenderTargets(float a_currentWidthRatio, float a_currentHeightRatio);

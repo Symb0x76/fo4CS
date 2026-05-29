@@ -382,6 +382,12 @@ bool FidelityFX_DX11::InitializeUpscaling(ID3D11Device* device, uint32_t maxRend
 	m_upscaleMaxRenderHeight = maxRenderHeight;
 	m_upscaleOutputWidth = outputWidth;
 	m_upscaleOutputHeight = outputHeight;
+	m_upscaleLastRenderWidth = 0;
+	m_upscaleLastRenderHeight = 0;
+	m_upscaleLastOutputWidth = 0;
+	m_upscaleLastOutputHeight = 0;
+	m_upscaleLastQualityMode = 0xFFFFFFFFu;
+	m_upscaleNeedsReset = true;
 	m_upscaleInitialized = true;
 	logger::info("[FidelityFX_DX11] FSR upscaler initialized (maxRender={}x{}, output={}x{})",
 		maxRenderWidth,
@@ -427,6 +433,13 @@ bool FidelityFX_DX11::Upscale(
 		std::max(1u, static_cast<uint32_t>(displaySize.x)),
 		std::max(1u, static_cast<uint32_t>(displaySize.y))
 	};
+	const bool resetHistory =
+		m_upscaleNeedsReset ||
+		m_upscaleLastRenderWidth != dispatch.renderSize.width ||
+		m_upscaleLastRenderHeight != dispatch.renderSize.height ||
+		m_upscaleLastOutputWidth != dispatch.upscaleSize.width ||
+		m_upscaleLastOutputHeight != dispatch.upscaleSize.height ||
+		m_upscaleLastQualityMode != qualityMode;
 	dispatch.enableSharpening = false;
 	dispatch.sharpness = 0.0f;
 
@@ -447,7 +460,7 @@ bool FidelityFX_DX11::Upscale(
 		0.0f);
 	lastFrameTime = currentFrameTime;
 	dispatch.preExposure = 1.0f;
-	dispatch.reset = false;
+	dispatch.reset = resetHistory;
 	dispatch.cameraNear = fo4cs::RE::GetCameraNear();
 	dispatch.cameraFar = fo4cs::RE::GetCameraFar();
 	dispatch.cameraFovAngleVertical = 1.0f;
@@ -470,6 +483,13 @@ bool FidelityFX_DX11::Upscale(
 		logger::error("[FidelityFX_DX11] FSR upscaling dispatch failed: {}", static_cast<int>(err));
 		return false;
 	}
+
+	m_upscaleNeedsReset = false;
+	m_upscaleLastRenderWidth = dispatch.renderSize.width;
+	m_upscaleLastRenderHeight = dispatch.renderSize.height;
+	m_upscaleLastOutputWidth = dispatch.upscaleSize.width;
+	m_upscaleLastOutputHeight = dispatch.upscaleSize.height;
+	m_upscaleLastQualityMode = qualityMode;
 
 	static bool s_loggedFirstDispatch = false;
 	if (!s_loggedFirstDispatch) {
@@ -498,6 +518,12 @@ void FidelityFX_DX11::DestroyUpscaling()
 	m_upscaleMaxRenderHeight = 0;
 	m_upscaleOutputWidth = 0;
 	m_upscaleOutputHeight = 0;
+	m_upscaleLastRenderWidth = 0;
+	m_upscaleLastRenderHeight = 0;
+	m_upscaleLastOutputWidth = 0;
+	m_upscaleLastOutputHeight = 0;
+	m_upscaleLastQualityMode = 0xFFFFFFFFu;
+	m_upscaleNeedsReset = true;
 	m_upscaleInitialized = false;
 }
 
@@ -833,13 +859,14 @@ void PreNG_FrameGen_PresentCallback(IDXGISwapChain* a_swapChain)
 		}
 		return;
 	}
-	float2 renderSize = { screenSize.x * ratioW, screenSize.y * ratioH };
+	float2 renderSize = {
+		static_cast<float>(std::max(1u, static_cast<uint32_t>(screenSize.x * ratioW))),
+		static_cast<float>(std::max(1u, static_cast<uint32_t>(screenSize.y * ratioH)))
+	};
 
 	float2 jitter = {};
-	jitter.x = -gameViewport->offsetX * screenSize.x / 2.0f;
-	jitter.y = gameViewport->offsetY * screenSize.y / 2.0f;
-	jitter.x /= ratioW;
-	jitter.y /= ratioH;
+	jitter.x = gameViewport->offsetX * renderSize.x / 2.0f;
+	jitter.y = -gameViewport->offsetY * renderSize.y / 2.0f;
 
 	LARGE_INTEGER now;
 	QueryPerformanceCounter(&now);

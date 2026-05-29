@@ -31,6 +31,12 @@ public:
 	uint32_t upscaleMaxRenderHeight = 0;
 	uint32_t upscaleMaxOutputWidth = 0;
 	uint32_t upscaleMaxOutputHeight = 0;
+	uint32_t upscaleLastRenderWidth = 0;
+	uint32_t upscaleLastRenderHeight = 0;
+	uint32_t upscaleLastOutputWidth = 0;
+	uint32_t upscaleLastOutputHeight = 0;
+	uint32_t upscaleLastQualityMode = 0xFFFFFFFFu;
+	bool upscaleNeedsReset = true;
 
 	void LoadFFX();
 

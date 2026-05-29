@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <d3dcompiler.h>
 #include <filesystem>
 #include <string>
@@ -83,6 +84,16 @@ namespace
 		*outX = halton(index, 2) - 0.5f;
 		*outY = halton(index, 3) - 0.5f;
 	}
+
+#if defined(FALLOUT_PRE_NG)
+	std::uint32_t GetCurrentGraphicsFrame() noexcept
+	{
+		if (auto* graphicsState = fo4cs::RE::GetGraphicsState()) {
+			return graphicsState->frameCount;
+		}
+		return 0;
+	}
+#endif
 
 	ID3D11DeviceChild* CompileShaderAny(const wchar_t* filePath, const char* programType, const char* program = "main")
 	{
@@ -580,6 +591,35 @@ void Upscaling::ResetSamplerStates()
 	}
 }
 
+#if defined(FALLOUT_PRE_NG)
+bool Upscaling::ShouldRunPreNGPreUIUpscale() const noexcept
+{
+	return !d3d12Interop && upscaleMethod == UpscaleMethod::kFSR;
+}
+
+bool Upscaling::HasPreNGPreUIUpscaleForCurrentFrame() const noexcept
+{
+	return preUIUpscaleFrameValid && preUIUpscaleFrame == GetCurrentGraphicsFrame();
+}
+
+bool Upscaling::HasPreNGPreUIHUDLessForCurrentFrame() const noexcept
+{
+	return preUIHUDLessFrameValid && preUIHUDLessFrame == GetCurrentGraphicsFrame();
+}
+
+void Upscaling::MarkPreNGPreUIUpscaleFrame() noexcept
+{
+	preUIUpscaleFrame = GetCurrentGraphicsFrame();
+	preUIUpscaleFrameValid = true;
+}
+
+void Upscaling::MarkPreNGPreUIHUDLessFrame() noexcept
+{
+	preUIHUDLessFrame = GetCurrentGraphicsFrame();
+	preUIHUDLessFrameValid = true;
+}
+#endif
+
 void Upscaling::CopyDepth()
 {
 	auto rendererData = fo4cs::GetRendererData();
@@ -588,7 +628,9 @@ void Upscaling::CopyDepth()
 	auto renderTargetManager = fo4cs::RE::GetRenderTargetManager();
 
 	auto screenSize = float2(float(gameViewport->screenWidth), float(gameViewport->screenHeight));
-	auto renderSize = float2(screenSize.x * renderTargetManager->dynamicWidthRatio, screenSize.y * renderTargetManager->dynamicHeightRatio);
+	auto renderSize = float2(
+		static_cast<float>(std::max(1u, static_cast<uint32_t>(screenSize.x * renderTargetManager->dynamicWidthRatio))),
+		static_cast<float>(std::max(1u, static_cast<uint32_t>(screenSize.y * renderTargetManager->dynamicHeightRatio))));
 	UpdateAndBindUpscalingCB(context, screenSize, renderSize);
 
 	ID3D11ShaderResourceView* depthSRV = reinterpret_cast<ID3D11ShaderResourceView*>(originalDepthStencilTarget.srViewDepth);
@@ -907,11 +949,12 @@ void Upscaling::UpdateUpscaling()
 	if (upscaleMethod != UpscaleMethod::kDisabled) {
 		const auto width = screenWidth;
 		const auto height = screenHeight;
-		auto renderWidth = static_cast<uint>(static_cast<float>(width) * resolutionScale);
-		auto phaseCount = std::max(1, static_cast<int>(8.0f * std::pow(static_cast<float>(width) / static_cast<float>(std::max(1u, renderWidth)), 2.0f)));
+		const auto renderWidth = std::max(1u, static_cast<uint>(static_cast<float>(width) * resolutionScale));
+		const auto renderHeight = std::max(1u, static_cast<uint>(static_cast<float>(height) * resolutionScale));
+		auto phaseCount = std::max(1, static_cast<int>(8.0f * std::pow(static_cast<float>(width) / static_cast<float>(renderWidth), 2.0f)));
 		GetJitterOffset(&jitter.x, &jitter.y, gameViewport->frameCount, phaseCount);
-		gameViewport->offsetX = 2.0f * -jitter.x / static_cast<float>(width);
-		gameViewport->offsetY = 2.0f * jitter.y / static_cast<float>(height);
+		gameViewport->offsetX = 2.0f * -jitter.x / static_cast<float>(renderWidth);
+		gameViewport->offsetY = 2.0f * jitter.y / static_cast<float>(renderHeight);
 	}
 
 	renderTargetManager->dynamicWidthRatio = resolutionScale;
@@ -929,15 +972,15 @@ void Upscaling::UpdateUpscaling()
 	fo4cs::Diagnostics::WriteHangTraceLine("UpdateUpscaling:exit");
 }
 
-void Upscaling::Upscale()
+bool Upscaling::Upscale()
 {
 	if (postLoadingSkipUpscale) {
 		postLoadingSkipUpscale = false;
-		return;
+		return false;
 	}
 
 	if (upscaleMethod == UpscaleMethod::kDisabled || !upscalingTexture)
-		return;
+		return false;
 
 	TraceRenderBackendStage("Upscale");
 	auto rendererData = fo4cs::GetRendererData();
@@ -947,20 +990,23 @@ void Upscaling::Upscale()
 	auto frameBufferSRV = reinterpret_cast<ID3D11ShaderResourceView*>(rendererData->renderTargets[(uint)RenderTarget::kFrameBuffer].srView);
 	if (!frameBufferSRV) {
 		logger::debug("[Upscaler] Frame buffer SRV is unavailable; skipping upscale dispatch");
-		return;
+		return false;
 	}
 	ID3D11Resource* frameBufferResource = nullptr;
 	frameBufferSRV->GetResource(&frameBufferResource);
 	if (!frameBufferResource) {
 		logger::debug("[Upscaler] Frame buffer resource is unavailable; skipping upscale dispatch");
-		return;
+		return false;
 	}
 	context->CopyResource(upscalingTexture->resource.get(), frameBufferResource);
 
 	auto gameViewport = fo4cs::RE::GetGraphicsState();
 	auto renderTargetManager = fo4cs::RE::GetRenderTargetManager();
 	auto screenSize = float2(float(gameViewport->screenWidth), float(gameViewport->screenHeight));
-	auto renderSize = float2(screenSize.x * renderTargetManager->dynamicWidthRatio, screenSize.y * renderTargetManager->dynamicHeightRatio);
+	auto renderSize = float2(
+		static_cast<float>(std::max(1u, static_cast<uint32_t>(screenSize.x * renderTargetManager->dynamicWidthRatio))),
+		static_cast<float>(std::max(1u, static_cast<uint32_t>(screenSize.y * renderTargetManager->dynamicHeightRatio))));
+	bool dispatchedUpscale = false;
 
 	if (upscaleMethod == UpscaleMethod::kDLSS && d3d12Interop) {
 		if (!setupBuffers)
@@ -1001,6 +1047,7 @@ void Upscaling::Upscale()
 			dx12SwapChain->ExecuteInteropCommandListAndWait();
 
 			if (dispatched) {
+				dispatchedUpscale = true;
 				context->CopyResource(frameBufferResource, upscalerOutputShared[frameIndex]->resource.get());
 				if (settings.qualityMode == 0 && upscalingTexture)
 					CopyNativeAABorder(context, upscalingTexture->resource.get(), frameBufferResource, upscalingTexture->desc.Width, upscalingTexture->desc.Height);
@@ -1045,6 +1092,7 @@ void Upscaling::Upscale()
 			dx12SwapChain->ExecuteInteropCommandListAndWait();
 
 			if (dispatched) {
+				dispatchedUpscale = true;
 				context->CopyResource(frameBufferResource, upscalerOutputShared[frameIndex]->resource.get());
 				if (settings.qualityMode == 0 && upscalingTexture)
 					CopyNativeAABorder(context, upscalingTexture->resource.get(), frameBufferResource, upscalingTexture->desc.Width, upscalingTexture->desc.Height);
@@ -1077,7 +1125,7 @@ void Upscaling::Upscale()
 			depthBufferShared[frameIndex] && motionVectorBufferShared[frameIndex]) {
 			static bool loggedPreNGFSRColorSource = false;
 			if (!loggedPreNGFSRColorSource) {
-				logger::info("[Upscaler] PreNG FSR color input source: kFrameBuffer ({}x{} fmt={}, transfer=direct UNORM)",
+				logger::info("[Upscaler] PreNG FSR color input source: kFrameBuffer ({}x{} fmt={}, transfer=direct UNORM, preferred-stage=pre-ui)",
 					upscalingTexture->desc.Width,
 					upscalingTexture->desc.Height,
 					static_cast<uint32_t>(upscalingTexture->desc.Format));
@@ -1099,6 +1147,7 @@ void Upscaling::Upscale()
 				settings.qualityMode);
 
 			if (dispatched) {
+				dispatchedUpscale = true;
 				context->CopyResource(frameBufferResource, upscalerOutputShared[frameIndex]->resource.get());
 				if (settings.qualityMode == 0 && upscalingTexture)
 					CopyNativeAABorder(context, upscalingTexture->resource.get(), frameBufferResource, upscalingTexture->desc.Width, upscalingTexture->desc.Height);
@@ -1108,6 +1157,7 @@ void Upscaling::Upscale()
 #endif
 
 	frameBufferResource->Release();
+	return dispatchedUpscale;
 }
 
 bool Upscaling::CreateUpscalingResources()
@@ -1329,7 +1379,14 @@ namespace
 			func(This);
 			upscaling->ResetSamplerStates();
 #if defined(FALLOUT_PRE_NG)
-			upscaling->CaptureHUDLessFrame();
+			if (upscaling->ShouldRunPreNGPreUIUpscale()) {
+				if (upscaling->Upscale()) {
+					upscaling->MarkPreNGPreUIUpscaleFrame();
+				}
+			}
+			if (upscaling->CaptureHUDLessFrame()) {
+				upscaling->MarkPreNGPreUIHUDLessFrame();
+			}
 			upscaling->CopyBuffersToSharedResources();
 #endif
 		}

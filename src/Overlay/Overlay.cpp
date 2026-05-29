@@ -216,6 +216,7 @@ void Overlay::Shutdown()
 	lastToggleTimestamp = 0;
 	hotkeyWasDown = false;
 	initialized = false;
+	format = DXGI_FORMAT_UNKNOWN;
 
 	logger::info("[Overlay] Shutdown complete");
 }
@@ -283,7 +284,7 @@ bool Overlay::HandleKeyDown(int a_key) noexcept
 
 void Overlay::PollHotkeyState() noexcept
 {
-	if (!initialized) {
+	if (!initialized && !hwnd) {
 		return;
 	}
 
@@ -486,6 +487,33 @@ void Overlay::SaveOverlaySelfSettings()
 	}
 }
 
+void Overlay::DrawRegisteredPanels(bool a_showIntro)
+{
+	if (visible) {
+		std::lock_guard lock(panelMutex);
+		for (auto& panel : panels) {
+			if (panel.callbacks.render) {
+				ImGui::SetNextWindowSize(ImVec2(400.0f * GetUIScale(), 300.0f * GetUIScale()), ImGuiCond_FirstUseEver);
+				char title[128];
+				snprintf(title, sizeof(title), "%s", panel.name.c_str());
+				if (ImGui::Begin(title, nullptr)) {
+					(void)panel.callbacks.render(panel.callbacks.userData);
+					if (panel.callbacks.save) {
+						ImGui::Separator();
+						if (ImGui::Button("Save Settings")) {
+							panel.callbacks.save(panel.callbacks.userData);
+						}
+					}
+				}
+				ImGui::End();
+			}
+		}
+	}
+	if (a_showIntro) {
+		RenderIntroMessage();
+	}
+}
+
 void Overlay::Render(ID3D12GraphicsCommandList4* a_commandList, ID3D12Resource* a_backBuffer, DXGI_FORMAT a_swapChainFormat)
 {
 	if (!initialized || !imguiContext) {
@@ -530,26 +558,7 @@ void Overlay::Render(ID3D12GraphicsCommandList4* a_commandList, ID3D12Resource* 
 	ImGui_ImplWin32_NewFrame();
 	ImGui::NewFrame();
 
-	if (visible) {
-		// Render registered panels (thread-safe copy)
-		{
-			std::lock_guard lock(panelMutex);
-			for (auto& panel : panels) {
-				if (panel.callbacks.render) {
-					ImGui::SetNextWindowSize(ImVec2(400.0f * GetUIScale(), 300.0f * GetUIScale()), ImGuiCond_FirstUseEver);
-					char title[128];
-					snprintf(title, sizeof(title), "%s", panel.name.c_str());
-					if (ImGui::Begin(title, nullptr)) {
-						panel.callbacks.render(panel.callbacks.userData);
-					}
-					ImGui::End();
-				}
-			}
-		}
-	}
-	if (showIntro) {
-		RenderIntroMessage();
-	}
+	DrawRegisteredPanels(showIntro);
 
 	ImGui::Render();
 

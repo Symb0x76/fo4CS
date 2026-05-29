@@ -89,11 +89,17 @@ private:
 	uint32_t m_upscaleMaxRenderHeight = 0;
 	uint32_t m_upscaleOutputWidth = 0;
 	uint32_t m_upscaleOutputHeight = 0;
+	uint32_t m_upscaleLastRenderWidth = 0;
+	uint32_t m_upscaleLastRenderHeight = 0;
+	uint32_t m_upscaleLastOutputWidth = 0;
+	uint32_t m_upscaleLastOutputHeight = 0;
+	uint32_t m_upscaleLastQualityMode = 0xFFFFFFFFu;
 	DXGI_FORMAT m_backBufferFormat = DXGI_FORMAT_UNKNOWN;
 
 	bool m_backendInitialized = false;
 	bool m_initialized = false;
 	bool m_upscaleInitialized = false;
+	bool m_upscaleNeedsReset = true;
 
 	bool EnsureBackend(ID3D11Device* device);
 	void DestroySharedResources();

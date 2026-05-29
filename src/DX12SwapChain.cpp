@@ -1,8 +1,10 @@
 #include "DX12SwapChain.h"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cstdint>
+#include <optional>
 #include <dx12/ffx_api_dx12.hpp>
 #include <dx12/ffx_api_framegeneration_dx12.hpp>
 #include <dxgi1_6.h>
@@ -166,6 +168,83 @@ std::string FormatHRESULT(HRESULT hr)
 			return "FSR-FG";
 		}
 		return "none";
+	}
+
+	enum class FrameGenerationBlockReason
+	{
+		kUIUnavailable,
+		kBlockingMenuOpen,
+		kPostLoadingSettle
+	};
+
+	struct FrameGenerationBlock
+	{
+		FrameGenerationBlockReason reason;
+		std::string_view detail;
+
+		constexpr bool operator==(const FrameGenerationBlock&) const = default;
+	};
+
+	// VATS, HUD, dialogue, and workshop remain FrameGen-enabled as gameplay surfaces.
+	constexpr std::array kFrameGenerationBlockingMenus{
+		std::string_view{ "MainMenu" },
+		std::string_view{ "LoadingMenu" },
+		std::string_view{ "FaderMenu" },
+		std::string_view{ "PauseMenu" },
+		std::string_view{ "PipboyMenu" },
+		std::string_view{ "TerminalMenu" },
+		std::string_view{ "ExamineMenu" },
+		std::string_view{ "ExamineConfirmMenu" },
+		std::string_view{ "ContainerMenu" },
+		std::string_view{ "BarterMenu" },
+		std::string_view{ "LockpickingMenu" },
+		std::string_view{ "MessageBoxMenu" },
+		std::string_view{ "SitWaitMenu" },
+		std::string_view{ "HolotapeMenu" },
+		std::string_view{ "PipboyHolotapeMenu" },
+		std::string_view{ "TerminalHolotapeMenu" },
+		std::string_view{ "PowerArmorModMenu" }
+	};
+
+	const char* GetFrameGenerationBlockReasonName(FrameGenerationBlockReason reason)
+	{
+		switch (reason) {
+		case FrameGenerationBlockReason::kUIUnavailable:
+			return "ui-unavailable";
+		case FrameGenerationBlockReason::kBlockingMenuOpen:
+			return "menu-open";
+		case FrameGenerationBlockReason::kPostLoadingSettle:
+			return "post-loading-settle";
+		default:
+			return "unknown";
+		}
+	}
+
+	std::optional<FrameGenerationBlock> GetFrameGenerationUIBlock()
+	{
+		auto* ui = RE::UI::GetSingleton();
+		if (!ui) {
+			return FrameGenerationBlock{ FrameGenerationBlockReason::kUIUnavailable, "UI" };
+		}
+
+		const auto openMenu = std::ranges::find_if(kFrameGenerationBlockingMenus, [ui](std::string_view menu) {
+			return ui->GetMenuOpen(menu.data());
+		});
+		if (openMenu != kFrameGenerationBlockingMenus.end()) {
+			return FrameGenerationBlock{ FrameGenerationBlockReason::kBlockingMenuOpen, *openMenu };
+		}
+
+		return std::nullopt;
+	}
+
+	std::string_view GetFrameGenerationBlockReasonName(const std::optional<FrameGenerationBlock>& block)
+	{
+		return block ? GetFrameGenerationBlockReasonName(block->reason) : "none";
+	}
+
+	std::string_view GetFrameGenerationBlockDetail(const std::optional<FrameGenerationBlock>& block)
+	{
+		return block ? block->detail : "none";
 	}
 
 }
@@ -346,25 +425,19 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
 	static std::atomic_uint64_t presentCounter{ 0 };
 	static bool lastFrameGenerationActive = false;
 	static const char* lastFrameGenerationBackend = "none";
+	static std::optional<FrameGenerationBlock> lastFrameGenerationBlock;
 
 	const auto presentID = presentCounter.fetch_add(1, std::memory_order_relaxed);
 	auto upscaling = Upscaling::GetSingleton();
 	auto streamline = Streamline::GetSingleton();
-	bool gameActive = false;
-	bool inMenuMode = true;
-	bool uiDirectionalBlock = false;
-	bool loadingMenuOpen = false;
-	if (auto main = RE::Main::GetSingleton()) {
-		gameActive = main->gameActive;
-		inMenuMode = main->inMenuMode;
-	}
-	if (auto ui = RE::UI::GetSingleton()) {
-		uiDirectionalBlock = ui->movementToDirectionalCount != 0;
-		loadingMenuOpen = ui->GetMenuOpen("LoadingMenu");
-	}
+	const auto frameGenerationUIBlock = GetFrameGenerationUIBlock();
+	const bool loadingMenuOpen =
+		frameGenerationUIBlock &&
+		frameGenerationUIBlock->reason == FrameGenerationBlockReason::kBlockingMenuOpen &&
+		frameGenerationUIBlock->detail == "LoadingMenu";
 
 	const auto tracePhase = loadingMenuOpen ? PresentTracePhase::kLoading :
-		(gameActive && !inMenuMode ? PresentTracePhase::kGameplay : PresentTracePhase::kNone);
+		(!frameGenerationUIBlock ? PresentTracePhase::kGameplay : PresentTracePhase::kNone);
 	const bool traceFrame = ShouldTracePresentFrame(presentID, tracePhase);
 	ScopedPresentTraceFlag scopedTraceFlag(upscaling, traceFrame);
 	const char* stage = "begin";
@@ -442,23 +515,30 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
 			wasLoading = loadingMenuOpen;
 		}
 
-		useFrameGenerationThisFrame = frameGenerationBackendAvailable && gameActive && !inMenuMode && !loadingMenuOpen && !uiDirectionalBlock && !skipFgAfterLoading;
+		auto frameGenerationBlock = frameGenerationUIBlock;
+		if (!frameGenerationBlock && skipFgAfterLoading) {
+			frameGenerationBlock = FrameGenerationBlock{ FrameGenerationBlockReason::kPostLoadingSettle, "post-loading" };
+		}
+
+		useFrameGenerationThisFrame = frameGenerationBackendAvailable && !frameGenerationBlock;
 
 		if (upscaling->pluginMode != Upscaling::PluginMode::kReflex &&
-			(presentID == 0 || lastFrameGenerationActive != useFrameGenerationThisFrame || std::string_view(lastFrameGenerationBackend) != frameGenerationBackend)) {
+			(presentID == 0 ||
+				lastFrameGenerationActive != useFrameGenerationThisFrame ||
+				std::string_view(lastFrameGenerationBackend) != frameGenerationBackend ||
+				lastFrameGenerationBlock != frameGenerationBlock)) {
 			logger::info(
-				"[FrameGen] present={} backend={} active={} available={} phase={} gameActive={} inMenu={} loadingMenu={} uiBlock={}",
+				"[FrameGen] present={} backend={} active={} available={} phase={} block={} detail={}",
 				presentID,
 				frameGenerationBackend,
 				useFrameGenerationThisFrame,
 				frameGenerationBackendAvailable,
 				GetPresentTracePhaseName(tracePhase),
-				gameActive,
-				inMenuMode,
-				loadingMenuOpen,
-				uiDirectionalBlock);
+				GetFrameGenerationBlockReasonName(frameGenerationBlock),
+				GetFrameGenerationBlockDetail(frameGenerationBlock));
 			lastFrameGenerationActive = useFrameGenerationThisFrame;
 			lastFrameGenerationBackend = frameGenerationBackend;
+			lastFrameGenerationBlock = frameGenerationBlock;
 		}
 
 		trace("frame-generation");
