@@ -59,12 +59,7 @@ void FidelityFX::LoadFFX()
 		ffxLoadFunctions(&ffxModule, module);
 		featureFSR = true;
 	} else {
-#if defined(FALLOUT_PRE_NG)
-		featureFSR = true;
-		logger::info("[FidelityFX] Using built-in D3D11 FSR runtime for PreNG");
-#else
 		logger::warn("[FidelityFX] amd_fidelityfx_dx12.dll is not loaded");
-#endif
 	}
 }
 

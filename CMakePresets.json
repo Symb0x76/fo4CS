@@ -14,7 +14,8 @@
 				"F4SE_SUPPORT_XBYAK": "ON",
 				"FRAMEGEN": true,
 				"REFLEX": true,
-				"UPSCALER": true
+				"UPSCALER": true,
+				"OVERLAY": true
 			},
 			"binaryDir": "${sourceDir}/build"
 		},
