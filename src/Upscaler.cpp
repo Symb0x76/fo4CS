@@ -586,11 +586,7 @@ void Upscaling::PostPostLoad()
 
 	renderBackendEnabled = pluginMode == PluginMode::kUpscaler &&
 		((UsesDLSSUpscaling() && Streamline::GetSingleton()->featureDLSS) ||
-		 (UsesFSRUpscaling() && FidelityFX::GetSingleton()->featureFSR
-#if !defined(FALLOUT_PRE_NG)
-		  && d3d12Interop
-#endif
-		 ));
+		 (UsesFSRUpscaling() && d3d12Interop && FidelityFX::GetSingleton()->featureFSR));
 	InstallHooks();
 }
 
@@ -1219,19 +1215,11 @@ void Upscaling::TimerSleepQPC(int64_t targetQPC)
 	} while (currentQPC.QuadPart < targetQPC);
 }
 
-// Forward-declared in FidelityFX_DX11.cpp (avoids FFX SDK header conflict with FidelityFX.h)
-#if defined(FALLOUT_PRE_NG)
-extern bool PreNG_FrameGen_IsActive();
-#else
-static bool PreNG_FrameGen_IsActive() { return false; }
-#endif
-
 void Upscaling::FrameLimiter(bool a_useFrameGeneration)
 {
 	static LARGE_INTEGER lastFrame = {};
 
-	// Works for both D3D12 proxy (PostNG/PostAE) and D3D11 native (PreNG).
-	bool const frameGenActive = d3d12Interop || PreNG_FrameGen_IsActive();
+	const bool frameGenActive = d3d12Interop;
 	if (frameGenActive && settings.frameLimitMode) {
 
 		// Stick within VRR bounds
@@ -1475,17 +1463,8 @@ struct SetUseDynamicResolutionViewportAsDefaultViewport
 		func(This, a_true);
 		if (!a_true) {
 			auto* upscaling = Upscaling::GetSingleton();
-#if defined(FALLOUT_PRE_NG)
-			if (!upscaling->HasPreNGPreUIUpscaleForCurrentFrame()) {
-				upscaling->Upscale();
-			}
-			if (!upscaling->HasPreNGPreUIHUDLessForCurrentFrame()) {
-				upscaling->PostDisplay();
-			}
-#else
 			upscaling->Upscale();
 			upscaling->PostDisplay();
-#endif
 		}
 	}
 	static inline REL::Relocation<decltype(thunk)> func;

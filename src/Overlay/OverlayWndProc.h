@@ -12,9 +12,7 @@ inline Overlay* g_overlay = nullptr;
 
 inline LRESULT CALLBACK WndProc(HWND a_hwnd, UINT a_msg, WPARAM a_wParam, LPARAM a_lParam)
 {
-	if (g_overlay && (g_overlay->IsInitialized() || g_overlay->IsVisible())) {
-		const auto imguiHandled = ImGui_ImplWin32_WndProcHandler(a_hwnd, a_msg, a_wParam, a_lParam);
-
+	if (g_overlay) {
 		if (a_msg == WM_KEYDOWN && !(a_lParam & (1 << 30))) {
 			const auto key = static_cast<int>(a_wParam);
 
@@ -30,13 +28,16 @@ inline LRESULT CALLBACK WndProc(HWND a_hwnd, UINT a_msg, WPARAM a_wParam, LPARAM
 			}
 		}
 
+		const bool hasImGuiContext = ImGui::GetCurrentContext() != nullptr;
+		const auto imguiHandled = hasImGuiContext ? ImGui_ImplWin32_WndProcHandler(a_hwnd, a_msg, a_wParam, a_lParam) : 0;
+
 		if (g_overlay->IsVisible()) {
-			auto& io = ImGui::GetIO();
 			if (a_msg == WM_SETCURSOR) {
 				SetCursor(LoadCursorW(nullptr, IDC_ARROW));
 				return TRUE;
 			}
 
+			auto* io = hasImGuiContext ? &ImGui::GetIO() : nullptr;
 			const bool mouseMessage =
 				a_msg >= WM_MOUSEFIRST && a_msg <= WM_MOUSELAST;
 			const bool keyboardMessage =
@@ -44,8 +45,8 @@ inline LRESULT CALLBACK WndProc(HWND a_hwnd, UINT a_msg, WPARAM a_wParam, LPARAM
 
 			if (a_msg == WM_INPUT ||
 				mouseMessage ||
-				(keyboardMessage && io.WantCaptureKeyboard) ||
-				(imguiHandled && (io.WantCaptureMouse || io.WantCaptureKeyboard))) {
+				(keyboardMessage && (!io || io->WantCaptureKeyboard)) ||
+				(imguiHandled && io && (io->WantCaptureMouse || io->WantCaptureKeyboard))) {
 				return true;
 			}
 		}

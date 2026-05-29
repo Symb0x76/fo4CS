@@ -283,7 +283,7 @@ bool Overlay::HandleKeyDown(int a_key) noexcept
 
 void Overlay::PollHotkeyState() noexcept
 {
-	if (!initialized) {
+	if (!initialized && !hwnd) {
 		return;
 	}
 

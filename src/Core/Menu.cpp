@@ -29,9 +29,7 @@ namespace CommunityShaders::Menu
 		bool initialized = false;
 		bool menuOpen = false;
 		bool loggedFirstRender = false;
-		bool hotkeyWasDown = false;
 		uint64_t initTimestamp = 0;
-		uint64_t lastToggleTimestamp = 0;
 		HWND hwnd = nullptr;
 		WNDPROC previousWndProc = nullptr;
 		ImGuiContext* imguiContext = nullptr;
@@ -257,21 +255,8 @@ namespace CommunityShaders::Menu
 		void PollHotkeyState()
 		{
 			auto* overlay = Overlay::GetSingleton();
-			const bool hotkeyIsDown = (GetAsyncKeyState(overlay->GetHotkey()) & 0x8000) != 0;
-			if (!hotkeyIsDown) {
-				hotkeyWasDown = false;
-				return;
-			}
-			if (!hotkeyWasDown && !overlay->IsCapturingHotkey()) {
-				const auto now = GetTickCount64();
-				if (now - lastToggleTimestamp >= 200) {
-					lastToggleTimestamp = now;
-					menuOpen = !menuOpen;
-					overlay->SetVisible(menuOpen);
-					logger::debug("[CommunityShaders::Menu] Toggled visible={}", menuOpen);
-				}
-			}
-			hotkeyWasDown = true;
+			overlay->PollHotkeyState();
+			menuOpen = overlay->IsVisible();
 		}
 
 		void DrawRegisteredPanels()
@@ -300,6 +285,7 @@ namespace CommunityShaders::Menu
 					}
 				}
 				ImGui::End();
+				overlay->SetVisible(menuOpen);
 			}
 
 			if (!menuOpen && IsShowingIntroMessage()) {
@@ -404,6 +390,9 @@ namespace CommunityShaders::Menu
 			return;
 		}
 
+		auto* overlay = Overlay::GetSingleton();
+		PollHotkeyState();
+		menuOpen = overlay->IsVisible();
 		const bool showIntro = IsShowingIntroMessage();
 		UpdateD3D11MouseCaptureState(menuOpen);
 		if (!menuOpen && !showIntro) {
@@ -439,7 +428,7 @@ namespace CommunityShaders::Menu
 	bool IsOpen() noexcept
 	{
 #if defined(FALLOUT_PRE_NG)
-		return menuOpen;
+		return Overlay::GetSingleton()->IsVisible();
 #else
 		return false;
 #endif

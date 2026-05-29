@@ -32,7 +32,13 @@ public:
 	[[nodiscard]] bool IsInitialized() const noexcept { return initialized; }
 	[[nodiscard]] ImGuiContext* GetImGuiContext() const noexcept { return imguiContext; }
 	[[nodiscard]] bool IsVisible() const noexcept { return visible; }
-	void SetVisible(bool a_visible) noexcept { visible = a_visible; }
+	void SetVisible(bool a_visible) noexcept
+	{
+		visible = a_visible;
+		if (visible) {
+			showIntroMessage = false;
+		}
+	}
 	void ToggleVisible() noexcept;
 	[[nodiscard]] bool ShouldRender() const noexcept { return visible || IsShowingIntroMessage(); }
 

@@ -9,17 +9,6 @@
 #include "FidelityFX.h"
 #include "Streamline.h"
 
-// PreNG D3D11-native FrameGen (implemented in FidelityFX_DX11.cpp).
-// Forward-declared here to avoid including FidelityFX_DX11.h and its FFX SDK
-// headers, which would conflict with FidelityFX.h's D3D12 FFX structs.
-#if defined(FALLOUT_PRE_NG)
-extern void PreNG_FrameGen_PresentCallback(IDXGISwapChain*);
-extern void PreNG_FrameGen_InitForSwapChain(ID3D11Device*, IDXGISwapChain*);
-#else
-static void PreNG_FrameGen_PresentCallback(IDXGISwapChain*) {}
-static void PreNG_FrameGen_InitForSwapChain(ID3D11Device*, IDXGISwapChain*) {}
-#endif
-
 #include "ENB/ENBSeriesAPI.h"
 
 bool enbLoaded = false;
@@ -102,27 +91,12 @@ HRESULT WINAPI hk_IDXGIFactory_CreateSwapChain(IDXGIFactory2* This, _In_ ID3D11D
 		auto ret = ptrCreateSwapChain(reinterpret_cast<IDXGIFactory*>(This), a_device, pDesc, ppSwapChain);
 		if (SUCCEEDED(ret) && ppSwapChain && *ppSwapChain) {
 			InstallSwapChainPresentHook(*ppSwapChain);
-			PreNG_FrameGen_InitForSwapChain(a_device, *ppSwapChain);
 			Upscaling::GetSingleton()->OnD3D11DeviceCreated(a_device, nullptr);
 			DX11Hooks::NotifyD3D11DeviceCreated(a_device);
 		}
 		return ret;
 	}
 
-#if defined(FALLOUT_PRE_NG)
-	// PreNG: use D3D11-native FrameGen, skip the D3D12 proxy path below
-	{
-		auto ret = ptrCreateSwapChain(reinterpret_cast<IDXGIFactory*>(This), a_device, pDesc, ppSwapChain);
-		if (SUCCEEDED(ret) && ppSwapChain && *ppSwapChain) {
-			InstallSwapChainPresentHook(*ppSwapChain);
-			PreNG_FrameGen_InitForSwapChain(a_device, *ppSwapChain);
-			Upscaling::GetSingleton()->OnD3D11DeviceCreated(a_device, nullptr);
-			DX11Hooks::NotifyD3D11DeviceCreated(a_device);
-		}
-		return ret;
-	}
-#endif
-#if !defined(FALLOUT_PRE_NG)
 	if (DX12SwapChain::GetSingleton()->swapChain) {
 		logger::debug("[FrameGen] D3D12 proxy already exists, delegating to original CreateSwapChain");
 		return ptrCreateSwapChain(reinterpret_cast<IDXGIFactory*>(This), a_device, pDesc, ppSwapChain);
@@ -170,10 +144,11 @@ HRESULT WINAPI hk_IDXGIFactory_CreateSwapChain(IDXGIFactory2* This, _In_ ID3D11D
 		const auto result = ptrCreateSwapChain(reinterpret_cast<IDXGIFactory*>(This), a_device, pDesc, ppSwapChain);
 		if (SUCCEEDED(result) && ppSwapChain && *ppSwapChain) {
 			InstallSwapChainPresentHook(*ppSwapChain);
+			Upscaling::GetSingleton()->OnD3D11DeviceCreated(a_device, nullptr);
+			DX11Hooks::NotifyD3D11DeviceCreated(a_device);
 		}
 		return result;
 	}
-#endif
 }
 
 HRESULT WINAPI hk_IDXGIFactory2_CreateSwapChainForHwnd(
@@ -185,6 +160,11 @@ HRESULT WINAPI hk_IDXGIFactory2_CreateSwapChainForHwnd(
 		auto ret = ptrCreateSwapChainForHwnd(This, pDevice, hWnd, pDesc, pFullscreenDesc, pRestrictToOutput, ppSwapChain);
 		if (SUCCEEDED(ret) && ppSwapChain && *ppSwapChain) {
 			InstallSwapChainPresentHook(reinterpret_cast<IDXGISwapChain*>(*ppSwapChain));
+			if (ID3D11Device* d3d11Device = nullptr; SUCCEEDED(pDevice->QueryInterface(__uuidof(ID3D11Device), reinterpret_cast<void**>(&d3d11Device))) && d3d11Device) {
+				Upscaling::GetSingleton()->OnD3D11DeviceCreated(d3d11Device, nullptr);
+				DX11Hooks::NotifyD3D11DeviceCreated(d3d11Device);
+				d3d11Device->Release();
+			}
 		}
 		return ret;
 	}
@@ -256,11 +236,13 @@ HRESULT WINAPI hk_IDXGIFactory2_CreateSwapChainForHwnd(
 	} catch (const std::exception& e) {
 		logger::error("[FrameGen] D3D12 proxy via CreateSwapChainForHwnd failed: {}; falling back to D3D11", e.what());
 		Upscaling::GetSingleton()->d3d12Interop = false;
-		d3d11Device->Release();
 		const auto result = ptrCreateSwapChainForHwnd(This, pDevice, hWnd, pDesc, pFullscreenDesc, pRestrictToOutput, ppSwapChain);
 		if (SUCCEEDED(result) && ppSwapChain && *ppSwapChain) {
 			InstallSwapChainPresentHook(*ppSwapChain);
+			Upscaling::GetSingleton()->OnD3D11DeviceCreated(d3d11Device, nullptr);
+			DX11Hooks::NotifyD3D11DeviceCreated(d3d11Device);
 		}
+		d3d11Device->Release();
 		return result;
 	}
 }
@@ -326,40 +308,8 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 {
 	logger::info("[FrameGen] D3D11CreateDeviceAndSwapChain hook fired (windowed={}, enb={})", pSwapChainDesc->Windowed, enbLoaded);
 	auto upscaling = Upscaling::GetSingleton();
-#if !defined(FALLOUT_PRE_NG)
 	const auto originalFeatureLevels = pFeatureLevels;
-#endif
-#if !defined(FALLOUT_PRE_NG)
 	const auto originalFeatureLevelCount = FeatureLevels;
-#endif
-
-#if defined(FALLOUT_PRE_NG)
-	// PreNG: use D3D11-native FrameGen, skip the D3D12 proxy entirely
-	{
-		logger::debug("[FrameGen] PreNG: delegating to original D3D11CreateDeviceAndSwapChain...");
-		auto ret = ptrD3D11CreateDeviceAndSwapChain(
-			pAdapter, DriverType, Software, Flags,
-			pFeatureLevels, FeatureLevels, SDKVersion,
-			pSwapChainDesc, ppSwapChain,
-			ppDevice, pFeatureLevel, ppImmediateContext);
-		logger::debug("[FrameGen] PreNG: original returned hr=0x{:X}, ppDevice={}, ppSC={}, devValid={}, scValid={}", static_cast<uint32_t>(ret), reinterpret_cast<uintptr_t>(ppDevice), reinterpret_cast<uintptr_t>(ppSwapChain), ppDevice && *ppDevice, ppSwapChain && *ppSwapChain);
-		if (SUCCEEDED(ret) && ppDevice && *ppDevice) {
-			upscaling->OnD3D11DeviceCreated(*ppDevice, nullptr);
-			DX11Hooks::NotifyD3D11DeviceCreated(*ppDevice);
-		}
-		if (SUCCEEDED(ret) && ppSwapChain && *ppSwapChain) {
-			InstallSwapChainPresentHook(*ppSwapChain);
-			if (ppDevice && *ppDevice) {
-				PreNG_FrameGen_InitForSwapChain(*ppDevice, *ppSwapChain);
-			}
-			else {
-				logger::warn("[FrameGen] PreNG: ppDevice is null, skipping FrameGen init");
-			}
-		}
-		return ret;
-	}
-#endif
-#if !defined(FALLOUT_PRE_NG)
 
 	if (pSwapChainDesc->Windowed && ShouldCreateD3D12Proxy()) {
 		logger::debug("[FrameGen] Using D3D12 proxy");
@@ -469,11 +419,9 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 	}
 	if (SUCCEEDED(ret) && ppSwapChain && *ppSwapChain) {
 		InstallSwapChainPresentHook(*ppSwapChain);
-		PreNG_FrameGen_InitForSwapChain(*ppDevice, *ppSwapChain);
 	}
 
 	return ret;
-#endif
 }
 
 
