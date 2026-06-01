@@ -1,0 +1,31 @@
+CompileFlags:
+  Add:
+    - "-std=c++23"
+    - "-fms-compatibility"
+    - "-fms-extensions"
+    - "-fdelayed-template-parsing"
+    - "-D_MSVC_LANG=202302L"
+    - "-DNOMINMAX"
+    - "-DWIN32_LEAN_AND_MEAN"
+    - "-Iinclude"
+    - "-Isrc"
+    - "-Iextern"
+    - "-Iextern/Streamline/include"
+    - "-Iextern/imgui"
+    - "-Iextern/imgui/backends"
+    - "-I../commonlibfo4/include"
+    - "-I../commonlibfo4/src"
+    - "-Ibuild/PreNG/vcpkg_installed/x64-windows-static-md/include"
+    - "-Ibuild/PostNG/vcpkg_installed/x64-windows-static-md/include"
+    - "-Ibuild/PostAE/vcpkg_installed/x64-windows-static-md/include"
+  Remove:
+    - "-m*"
+    - "-fcoroutines*"
+
+Diagnostics:
+  Suppress:
+    - "pp_hash_error"
+    - "drv_unsupported_opt"
+  ClangTidy:
+    Remove:
+      - "*"
