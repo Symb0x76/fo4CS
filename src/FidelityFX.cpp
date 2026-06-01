@@ -80,19 +80,20 @@ void FidelityFX::SetupFrameGeneration()
 	createFg.flags = FFX_FRAMEGENERATION_ENABLE_ASYNC_WORKLOAD_SUPPORT;
 	createFg.backBufferFormat = ffxApiGetSurfaceFormatDX12(dx12SwapChain->swapChainDesc.Format);
 
-	ffx::CreateContextDescFrameGenerationVersion createFgVersion{};
-	createFgVersion.version = FFX_FRAMEGENERATION_VERSION;
-
 	ffx::CreateBackendDX12Desc createBackend{};
 	createBackend.device = dx12SwapChain->d3d12Device.get();
 
-	if (ffx::CreateContext(frameGenContext, nullptr, createFg, createFgVersion, createBackend) != ffx::ReturnCode::Ok) {
+	if (ffx::CreateContext(frameGenContext, nullptr, createFg, createBackend) != ffx::ReturnCode::Ok) {
 		logger::error("[FidelityFX] Failed to create frame generation context");
 		frameGenContext = nullptr;
 		return;
 	}
 
 	featureFrameGen = true;
+	logger::info("[FidelityFX] FSR frame generation context created (display={}x{}, fmt={})",
+		createFg.displaySize.width,
+		createFg.displaySize.height,
+		static_cast<uint32_t>(dx12SwapChain->swapChainDesc.Format));
 }
 bool FidelityFX::SetupUpscaling(ID3D12Device* a_device, uint32_t a_maxRenderWidth, uint32_t a_maxRenderHeight, uint32_t a_outputWidth, uint32_t a_outputHeight)
 {
@@ -133,6 +134,12 @@ bool FidelityFX::SetupUpscaling(ID3D12Device* a_device, uint32_t a_maxRenderWidt
 	upscaleMaxRenderHeight = maxRenderHeight;
 	upscaleMaxOutputWidth = outputWidth;
 	upscaleMaxOutputHeight = outputHeight;
+	upscaleLastRenderWidth = 0;
+	upscaleLastRenderHeight = 0;
+	upscaleLastOutputWidth = 0;
+	upscaleLastOutputHeight = 0;
+	upscaleLastQualityMode = 0xFFFFFFFFu;
+	upscaleNeedsReset = true;
 	logger::info("[FidelityFX] FSR upscaler context created (maxRender={}x{}, output={}x{})",
 		maxRenderWidth,
 		maxRenderHeight,
@@ -172,6 +179,13 @@ bool FidelityFX::Upscale(
 	dispatchUpscale.renderSize.height = std::max(1u, static_cast<uint32_t>(a_renderSize.y));
 	dispatchUpscale.upscaleSize.width = std::max(1u, static_cast<uint32_t>(a_displaySize.x));
 	dispatchUpscale.upscaleSize.height = std::max(1u, static_cast<uint32_t>(a_displaySize.y));
+	const bool resetHistory =
+		upscaleNeedsReset ||
+		upscaleLastRenderWidth != dispatchUpscale.renderSize.width ||
+		upscaleLastRenderHeight != dispatchUpscale.renderSize.height ||
+		upscaleLastOutputWidth != dispatchUpscale.upscaleSize.width ||
+		upscaleLastOutputHeight != dispatchUpscale.upscaleSize.height ||
+		upscaleLastQualityMode != a_qualityMode;
 	dispatchUpscale.enableSharpening = false;
 	dispatchUpscale.sharpness = 0.0f;
 	static LARGE_INTEGER frequency = []() {
@@ -191,7 +205,7 @@ bool FidelityFX::Upscale(
 		0.0f);
 	lastFrameTime = currentFrameTime;
 	dispatchUpscale.preExposure = 1.0f;
-	dispatchUpscale.reset = false;
+	dispatchUpscale.reset = resetHistory;
 
 	dispatchUpscale.cameraNear = fo4cs::RE::GetCameraNear();
 	dispatchUpscale.cameraFar = fo4cs::RE::GetCameraFar();
@@ -212,6 +226,13 @@ bool FidelityFX::Upscale(
 		logger::error("[FidelityFX] Failed to dispatch upscaling");
 		return false;
 	}
+
+	upscaleNeedsReset = false;
+	upscaleLastRenderWidth = dispatchUpscale.renderSize.width;
+	upscaleLastRenderHeight = dispatchUpscale.renderSize.height;
+	upscaleLastOutputWidth = dispatchUpscale.upscaleSize.width;
+	upscaleLastOutputHeight = dispatchUpscale.upscaleSize.height;
+	upscaleLastQualityMode = a_qualityMode;
 
 	static bool loggedFirstDispatch = false;
 	if (!loggedFirstDispatch) {
@@ -237,6 +258,12 @@ void FidelityFX::DestroyUpscaling()
 	upscaleMaxRenderHeight = 0;
 	upscaleMaxOutputWidth = 0;
 	upscaleMaxOutputHeight = 0;
+	upscaleLastRenderWidth = 0;
+	upscaleLastRenderHeight = 0;
+	upscaleLastOutputWidth = 0;
+	upscaleLastOutputHeight = 0;
+	upscaleLastQualityMode = 0xFFFFFFFFu;
+	upscaleNeedsReset = true;
 }
 
 void FidelityFX::Present(bool a_useFrameGen)
@@ -331,55 +358,74 @@ void FidelityFX::Present(bool a_useFrameGen)
 
 	if (canUseFrameGen) {
 		static int fgFailuresSinceLastSuccess = 0;
-		static constexpr int kMaxConsecutiveFrameGenFailures = 5;
-		ffx::DispatchDescFrameGenerationPrepareV2 dispatchParameters{};
+		auto* gameViewport = fo4cs::RE::GetGraphicsState();
+		auto* renderTargetManager = fo4cs::RE::GetRenderTargetManager();
 
-		dispatchParameters.commandList = commandList;
+		if (!gameViewport || !renderTargetManager) {
+			static bool loggedMissingGameState = false;
+			if (!loggedMissingGameState) {
+				logger::warn("[FidelityFX] Frame generation game render state is not ready; skipping generated frames");
+				loggedMissingGameState = true;
+			}
+		} else {
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable : 4996)
+#endif
+			ffx::DispatchDescFrameGenerationPrepare dispatchParameters{};
 
-		static auto gameViewport = fo4cs::RE::GetGraphicsState();
-			static auto renderTargetManager = fo4cs::RE::GetRenderTargetManager();
+			dispatchParameters.commandList = commandList;
 
-		auto screenSize = float2(float(gameViewport->screenWidth), float(gameViewport->screenHeight));
-		auto renderSize = float2(screenSize.x * renderTargetManager->dynamicWidthRatio, screenSize.y * renderTargetManager->dynamicHeightRatio);
+			auto screenSize = float2(float(gameViewport->screenWidth), float(gameViewport->screenHeight));
+			auto renderSize = float2(
+				static_cast<float>(std::max(1u, static_cast<uint32_t>(screenSize.x * renderTargetManager->dynamicWidthRatio))),
+				static_cast<float>(std::max(1u, static_cast<uint32_t>(screenSize.y * renderTargetManager->dynamicHeightRatio))));
 
-		dispatchParameters.motionVectorScale.x = renderSize.x;
-		dispatchParameters.motionVectorScale.y = renderSize.y;
-		dispatchParameters.renderSize.width = static_cast<uint>(renderSize.x);
-		dispatchParameters.renderSize.height = static_cast<uint>(renderSize.y);
+			dispatchParameters.motionVectorScale.x = renderSize.x;
+			dispatchParameters.motionVectorScale.y = renderSize.y;
+			dispatchParameters.renderSize.width = std::max(1u, static_cast<uint32_t>(renderSize.x));
+			dispatchParameters.renderSize.height = std::max(1u, static_cast<uint32_t>(renderSize.y));
 
-		float2 jitter;
-		jitter.x = -gameViewport->offsetX * screenSize.x / 2.0f;
-		jitter.y = gameViewport->offsetY * screenSize.y / 2.0f;
+			float2 jitter;
+			jitter.x = -gameViewport->offsetX * renderSize.x / 2.0f;
+			jitter.y = gameViewport->offsetY * renderSize.y / 2.0f;
 
-		dispatchParameters.jitterOffset.x = -jitter.x / renderTargetManager->dynamicWidthRatio;
-		dispatchParameters.jitterOffset.y = -jitter.y / renderTargetManager->dynamicHeightRatio;
+			dispatchParameters.jitterOffset.x = -jitter.x;
+			dispatchParameters.jitterOffset.y = -jitter.y;
 
-		dispatchParameters.frameTimeDelta = deltaTime * 1000.f;
+			dispatchParameters.frameTimeDelta = deltaTime * 1000.f;
+			dispatchParameters.cameraNear = fo4cs::RE::GetCameraNear();
+			dispatchParameters.cameraFar = fo4cs::RE::GetCameraFar();
+			dispatchParameters.cameraFovAngleVertical = 1.0f;
+			dispatchParameters.viewSpaceToMetersFactor = 0.01428222656f;
+			dispatchParameters.frameID = frameID;
+			dispatchParameters.depth = ffxApiGetResourceDX12(depth);
+			dispatchParameters.motionVectors = ffxApiGetResourceDX12(motionVectors);
 
-	dispatchParameters.cameraNear = fo4cs::RE::GetCameraNear();
-	dispatchParameters.cameraFar = fo4cs::RE::GetCameraFar();
+			static bool loggedFirstPrepare = false;
+			if (!loggedFirstPrepare) {
+				const auto hudDesc = HUDLessColor->GetDesc();
+				const auto depthDesc = depth->GetDesc();
+				const auto motionDesc = motionVectors->GetDesc();
+				logger::info("[FidelityFX] First FSR frame generation prepare (render={}x{}, hud={}x{} fmt={}, depth={}x{} fmt={}, motion={}x{} fmt={})",
+					dispatchParameters.renderSize.width,
+					dispatchParameters.renderSize.height,
+					hudDesc.Width,
+					hudDesc.Height,
+					static_cast<uint32_t>(hudDesc.Format),
+					depthDesc.Width,
+					depthDesc.Height,
+					static_cast<uint32_t>(depthDesc.Format),
+					motionDesc.Width,
+					motionDesc.Height,
+					static_cast<uint32_t>(motionDesc.Format));
+				loggedFirstPrepare = true;
+			}
 
-		dispatchParameters.cameraFovAngleVertical = 1.0f;
-		dispatchParameters.viewSpaceToMetersFactor = 0.01428222656f;
-
-		dispatchParameters.frameID = frameID;
-
-		dispatchParameters.depth = ffxApiGetResourceDX12(depth);
-		dispatchParameters.motionVectors = ffxApiGetResourceDX12(motionVectors);
-
-		static bool wasFrameGenActive = false;
-		const bool frameGenJustResumed = canUseFrameGen && !wasFrameGenActive;
-		wasFrameGenActive = canUseFrameGen;
-		dispatchParameters.reset = frameGenJustResumed;
-
-		dispatchParameters.cameraPosition[0] = 0.0f; dispatchParameters.cameraPosition[1] = 0.0f; dispatchParameters.cameraPosition[2] = 0.0f;
-		dispatchParameters.cameraUp[0] = 0.0f; dispatchParameters.cameraUp[1] = 1.0f; dispatchParameters.cameraUp[2] = 0.0f;
-		dispatchParameters.cameraRight[0] = 1.0f; dispatchParameters.cameraRight[1] = 0.0f; dispatchParameters.cameraRight[2] = 0.0f;
-		dispatchParameters.cameraForward[0] = 0.0f; dispatchParameters.cameraForward[1] = 0.0f; dispatchParameters.cameraForward[2] = 1.0f;
-
-
-		if (dispatchParameters.renderSize.width > 0 && dispatchParameters.renderSize.height > 0) {
-			ffx::ReturnCode dispatchResult = ffx::Dispatch(frameGenContext, dispatchParameters);
+			const auto dispatchResult = ffx::Dispatch(frameGenContext, dispatchParameters);
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
 			if (dispatchResult != ffx::ReturnCode::Ok) {
 				fgFailuresSinceLastSuccess++;
 
@@ -395,12 +441,6 @@ void FidelityFX::Present(bool a_useFrameGen)
 				disableConfig.HUDLessColor = FfxApiResource({});
 				disableConfig.swapChain = dx12SwapChain->swapChain;
 				ffx::Configure(frameGenContext, disableConfig);
-
-				if (fgFailuresSinceLastSuccess >= kMaxConsecutiveFrameGenFailures) {
-					featureFrameGen = false;
-					logger::error("[FidelityFX] Disabling FSR frame generation after {} consecutive dispatch failures; last error={}",
-						fgFailuresSinceLastSuccess, static_cast<uint32_t>(dispatchResult));
-				}
 			} else {
 				if (fgFailuresSinceLastSuccess > 0) {
 					logger::info("[FidelityFX] Frame generation dispatch recovered after {} failures",

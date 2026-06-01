@@ -9,13 +9,16 @@ if not defined AIO set AIO=OFF
 if not defined FRAMEGEN set FRAMEGEN=OFF
 if not defined REFLEX set REFLEX=OFF
 if not defined UPSCALER set UPSCALER=OFF
+if not defined OVERLAY set OVERLAY=OFF
 set "COMMUNITY_SHADERS=%COMMUNITY_SHADERS: =%"
 set "AIO=%AIO: =%"
 set "FRAMEGEN=%FRAMEGEN: =%"
 set "REFLEX=%REFLEX: =%"
 set "UPSCALER=%UPSCALER: =%"
+set "OVERLAY=%OVERLAY: =%"
+if /I "%COMMUNITY_SHADERS%"=="ON" set "OVERLAY=OFF"
 
-echo [PostAE] COMMUNITY_SHADERS=%COMMUNITY_SHADERS%  AIO=%AIO%  FrameGen=%FRAMEGEN%  Reflex=%REFLEX%  Upscaler=%UPSCALER%
+echo [PostAE] COMMUNITY_SHADERS=%COMMUNITY_SHADERS%  AIO=%AIO%  FrameGen=%FRAMEGEN%  Reflex=%REFLEX%  Upscaler=%UPSCALER%  Overlay=%OVERLAY%
 
 set "COMMONLIB_PATH=extern\CommonLibF4PostAE"
 set "BUILD_OUTPUT=build\PostAE\Release"
@@ -39,7 +42,8 @@ cmake -S . --preset=PostAE ^
     -DAIO=%AIO% ^
     -DFRAMEGEN=%FRAMEGEN% ^
     -DREFLEX=%REFLEX% ^
-    -DUPSCALER=%UPSCALER%
+    -DUPSCALER=%UPSCALER% ^
+    -DOVERLAY=%OVERLAY%
 if %ERRORLEVEL% NEQ 0 exit /b 1
 cmake --build build\PostAE --config Release
 if %ERRORLEVEL% NEQ 0 exit /b 1
@@ -49,6 +53,7 @@ if /I "%AIO%"=="ON" xcopy "%BUILD_OUTPUT%\NuclearGFX.dll" "dist\F4SE\Plugins\" /
 if /I "%FRAMEGEN%"=="ON" xcopy "%BUILD_OUTPUT%\FrameGen.dll" "dist\F4SE\Plugins\FrameGen\" /I /Y
 if /I "%REFLEX%"=="ON" xcopy "%BUILD_OUTPUT%\Reflex.dll" "dist\F4SE\Plugins\Reflex\" /I /Y
 if /I "%UPSCALER%"=="ON" xcopy "%BUILD_OUTPUT%\Upscaler.dll" "dist\F4SE\Plugins\Upscaler\" /I /Y
+if /I "%OVERLAY%"=="ON" xcopy "%BUILD_OUTPUT%\Overlay.dll" "dist\F4SE\Plugins\Overlay\" /I /Y
 
 if exist "package\Common" xcopy "package\Common" "dist" /I /Y /E
 if not exist "%DIST_FIDELITYFX_RUNTIME%" (

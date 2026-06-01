@@ -93,6 +93,7 @@ private:
 	Overlay() = default;
 
 	[[nodiscard]] const char* GetHotkeyName() const noexcept;
+	void DrawRegisteredPanels(bool a_showIntro);
 
 	bool initialized = false;
 	bool visible = false;

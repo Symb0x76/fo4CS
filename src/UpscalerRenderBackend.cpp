@@ -61,6 +61,11 @@ namespace
 		}
 	}
 
+	uint32_t ScaleRenderExtent(uint32_t displayExtent, float ratio)
+	{
+		return std::max(1u, static_cast<uint32_t>(static_cast<float>(displayExtent) * ratio));
+	}
+
 	void GetJitterOffset(float* outX, float* outY, uint frameIndex, int phaseCount)
 	{
 		const auto halton = [](uint index, uint base) {
@@ -575,7 +580,9 @@ void Upscaling::CopyDepth()
 	auto renderTargetManager = fo4cs::RE::GetRenderTargetManager();
 
 	auto screenSize = float2(float(gameViewport->screenWidth), float(gameViewport->screenHeight));
-	auto renderSize = float2(screenSize.x * renderTargetManager->dynamicWidthRatio, screenSize.y * renderTargetManager->dynamicHeightRatio);
+	auto renderSize = float2(
+		static_cast<float>(std::max(1u, static_cast<uint32_t>(screenSize.x * renderTargetManager->dynamicWidthRatio))),
+		static_cast<float>(std::max(1u, static_cast<uint32_t>(screenSize.y * renderTargetManager->dynamicHeightRatio))));
 	UpdateAndBindUpscalingCB(context, screenSize, renderSize);
 
 	ID3D11ShaderResourceView* depthSRV = reinterpret_cast<ID3D11ShaderResourceView*>(originalDepthStencilTarget.srViewDepth);
@@ -890,11 +897,12 @@ void Upscaling::UpdateUpscaling()
 	if (upscaleMethod != UpscaleMethod::kDisabled) {
 		const auto width = screenWidth;
 		const auto height = screenHeight;
-		auto renderWidth = static_cast<uint>(static_cast<float>(width) * resolutionScale);
-		auto phaseCount = std::max(1, static_cast<int>(8.0f * std::pow(static_cast<float>(width) / static_cast<float>(std::max(1u, renderWidth)), 2.0f)));
+		const auto renderWidth = std::max(1u, static_cast<uint>(static_cast<float>(width) * resolutionScale));
+		const auto renderHeight = std::max(1u, static_cast<uint>(static_cast<float>(height) * resolutionScale));
+		auto phaseCount = std::max(1, static_cast<int>(8.0f * std::pow(static_cast<float>(width) / static_cast<float>(renderWidth), 2.0f)));
 		GetJitterOffset(&jitter.x, &jitter.y, gameViewport->frameCount, phaseCount);
-		gameViewport->offsetX = 2.0f * -jitter.x / static_cast<float>(width);
-		gameViewport->offsetY = 2.0f * jitter.y / static_cast<float>(height);
+		gameViewport->offsetX = 2.0f * -jitter.x / static_cast<float>(renderWidth);
+		gameViewport->offsetY = 2.0f * jitter.y / static_cast<float>(renderHeight);
 	}
 
 	renderTargetManager->dynamicWidthRatio = resolutionScale;
@@ -943,7 +951,9 @@ bool Upscaling::Upscale()
 	auto gameViewport = fo4cs::RE::GetGraphicsState();
 	auto renderTargetManager = fo4cs::RE::GetRenderTargetManager();
 	auto screenSize = float2(float(gameViewport->screenWidth), float(gameViewport->screenHeight));
-	auto renderSize = float2(screenSize.x * renderTargetManager->dynamicWidthRatio, screenSize.y * renderTargetManager->dynamicHeightRatio);
+	const auto renderWidth = ScaleRenderExtent(static_cast<uint32_t>(gameViewport->screenWidth), renderTargetManager->dynamicWidthRatio);
+	const auto renderHeight = ScaleRenderExtent(static_cast<uint32_t>(gameViewport->screenHeight), renderTargetManager->dynamicHeightRatio);
+	auto renderSize = float2(static_cast<float>(renderWidth), static_cast<float>(renderHeight));
 	bool dispatchedUpscale = false;
 
 	if (upscaleMethod == UpscaleMethod::kDLSS && d3d12Interop) {
@@ -1002,10 +1012,14 @@ bool Upscaling::Upscale()
 			!upscalerInputShared[frameIndex] || !upscalerOutputShared[frameIndex] ||
 			!upscalerInputShared12[frameIndex] || !upscalerOutputShared12[frameIndex];
 		const bool mismatchedSharedColor =
-			upscalerInputShared[frameIndex] &&
-			(upscalerInputShared[frameIndex]->desc.Width != upscalingTexture->desc.Width ||
-			 upscalerInputShared[frameIndex]->desc.Height != upscalingTexture->desc.Height ||
-			 upscalerInputShared[frameIndex]->desc.Format != upscalingTexture->desc.Format);
+			(upscalerInputShared[frameIndex] &&
+			 (upscalerInputShared[frameIndex]->desc.Width != renderWidth ||
+			  upscalerInputShared[frameIndex]->desc.Height != renderHeight ||
+			  upscalerInputShared[frameIndex]->desc.Format != upscalingTexture->desc.Format)) ||
+			(upscalerOutputShared[frameIndex] &&
+			 (upscalerOutputShared[frameIndex]->desc.Width != upscalingTexture->desc.Width ||
+			  upscalerOutputShared[frameIndex]->desc.Height != upscalingTexture->desc.Height ||
+			  upscalerOutputShared[frameIndex]->desc.Format != upscalingTexture->desc.Format));
 
 		if (missingSharedColor || mismatchedSharedColor)
 			CreateUpscalingResources();
@@ -1013,7 +1027,16 @@ bool Upscaling::Upscale()
 		if (upscalerInputShared[frameIndex] && upscalerOutputShared[frameIndex] &&
 			upscalerInputShared12[frameIndex] && upscalerOutputShared12[frameIndex] &&
 			depthBufferShared12[frameIndex] && motionVectorBufferShared12[frameIndex]) {
-			context->CopyResource(upscalerInputShared[frameIndex]->resource.get(), frameBufferResource);
+			D3D11_BOX srcBox{ 0, 0, 0, renderWidth, renderHeight, 1 };
+			context->CopySubresourceRegion(
+				upscalerInputShared[frameIndex]->resource.get(),
+				0,
+				0,
+				0,
+				0,
+				frameBufferResource,
+				0,
+				&srcBox);
 			CopyBuffersToSharedResources();
 
 			auto commandList = dx12SwapChain->BeginInteropCommandList();
@@ -1099,7 +1122,17 @@ bool Upscaling::CreateUpscalingResources()
 	presentationColorDesc.CPUAccessFlags = 0;
 	presentationColorDesc.Usage = D3D11_USAGE_DEFAULT;
 
+	auto renderTargetManager = fo4cs::RE::GetRenderTargetManager();
+	const auto renderWidthRatio = renderTargetManager ? renderTargetManager->dynamicWidthRatio : 1.0f;
+	const auto renderHeightRatio = renderTargetManager ? renderTargetManager->dynamicHeightRatio : 1.0f;
+	const auto renderWidth = ScaleRenderExtent(presentationColorDesc.Width, renderWidthRatio);
+	const auto renderHeight = ScaleRenderExtent(presentationColorDesc.Height, renderHeightRatio);
+
 	D3D11_TEXTURE2D_DESC inputColorDesc = presentationColorDesc;
+	if (needsFSRSharedResources) {
+		inputColorDesc.Width = renderWidth;
+		inputColorDesc.Height = renderHeight;
+	}
 	D3D11_TEXTURE2D_DESC outputColorDesc = presentationColorDesc;
 
 	const auto openSharedTexture = [&](Texture2D* texture, winrt::com_ptr<ID3D12Resource>& outResource) {
