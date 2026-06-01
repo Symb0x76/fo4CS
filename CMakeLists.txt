@@ -29,7 +29,7 @@ xseplugin_resolve_commonlib_project(CommonLibPath "${CommonLibRoot}")
 # FSR runtime: all game runtimes use amd_fidelityfx_dx12.dll through the D3D12 proxy.
 
 if(F4SE_SUPPORT_XBYAK)
-    set(COMMONLIBF4_ENABLE_XBYAK ON CACHE BOOL "Enable xbyak support for CommonLibF4" FORCE)
+  set(COMMONLIBF4_ENABLE_XBYAK ON CACHE BOOL "Enable xbyak support for CommonLibF4" FORCE)
 endif()
 
 add_subdirectory(${CommonLibPath} ${CommonLibName} EXCLUDE_FROM_ALL)
@@ -45,6 +45,7 @@ set(FO4CS_COMMON_DEPENDENCIES
     Microsoft::DirectX-Headers
     d3d12.lib
     dxgi.lib
+    advapi32.lib
     magic_enum::magic_enum
     d3dcompiler.lib
 )
@@ -65,13 +66,6 @@ configure_file(
     @ONLY
 )
 
-# ------------------------------------------------------------------
-# ------------------------------------------------------------------
-# Core: D3D12 upscaling interop 共享 OBJECT 库
-#   - Upscaler / FrameGen / Reflex / NuclearGFX 共享
-#   - 不含 CommunityShaders Feature 框架
-#   - 插件目标通过 $<TARGET_OBJECTS:Core> 引入编译产物
-# ------------------------------------------------------------------
 add_library(Core OBJECT
     src/Buffer.h
     src/DX11Hooks.cpp
@@ -100,7 +94,7 @@ target_include_directories(Core
 )
 
 if(WIN32)
-    target_compile_definitions(Core PRIVATE _WINDOWS)
+  target_compile_definitions(Core PRIVATE _WINDOWS)
 endif()
 target_compile_definitions(Core PRIVATE
     _AMD64_
@@ -108,10 +102,10 @@ target_compile_definitions(Core PRIVATE
 )
 
 if(CMAKE_GENERATOR MATCHES "Visual Studio")
-    target_compile_definitions(Core PRIVATE _UNICODE "$<$<CONFIG:DEBUG>:DEBUG>")
+  target_compile_definitions(Core PRIVATE _UNICODE "$<$<CONFIG:DEBUG>:DEBUG>")
 
-    set(_CORE_RELEASE_OPTS "/Zi;/fp:fast;/GL;/Gy-;/Gm-;/Gw;/sdl-;/GS-;/guard:cf-;/O2;/Ob2;/Oi;/Ot;/Oy;/fp:except-")
-    target_compile_options(Core PRIVATE
+  set(_CORE_RELEASE_OPTS "/Zi;/fp:fast;/GL;/Gy-;/Gm-;/Gw;/sdl-;/GS-;/guard:cf-;/O2;/Ob2;/Oi;/Ot;/Oy;/fp:except-")
+  target_compile_options(Core PRIVATE
         /MP /W4 /WX /permissive-
         /Zc:alignedNew /Zc:auto /Zc:__cplusplus /Zc:externC /Zc:externConstexpr
         /Zc:forScope /Zc:hiddenFriend /Zc:implicitNoexcept /Zc:lambda
@@ -119,7 +113,7 @@ if(CMAKE_GENERATOR MATCHES "Visual Studio")
         /Zc:sizedDealloc /Zc:strictStrings /Zc:ternary /Zc:threadSafeInit
         /Zc:trigraphs /Zc:wchar_t /wd4200 /arch:AVX
     )
-    target_compile_options(Core PUBLIC
+  target_compile_options(Core PUBLIC
         "$<$<CONFIG:DEBUG>:/fp:strict>" "$<$<CONFIG:DEBUG>:/ZI>"
         "$<$<CONFIG:DEBUG>:/Od>" "$<$<CONFIG:DEBUG>:/Gy>"
         "$<$<CONFIG:RELEASE>:${_CORE_RELEASE_OPTS}>"
@@ -146,16 +140,12 @@ set(FO4CS_IMGUI_CORE_SOURCES
 )
 set_source_files_properties(${FO4CS_IMGUI_CORE_SOURCES} PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
 if(CMAKE_GENERATOR MATCHES "Visual Studio")
-    set_source_files_properties(${FO4CS_IMGUI_CORE_SOURCES} PROPERTIES COMPILE_OPTIONS "/W0")
+  set_source_files_properties(${FO4CS_IMGUI_CORE_SOURCES} PROPERTIES COMPILE_OPTIONS "/W0")
 endif()
 
 if(COMMUNITY_SHADERS)
-# ------------------------------------------------------------------
-# CoreCS: CommunityShaders Feature 框架 OBJECT 库
-#   - 仅 community-shaders.dll 链接
-#   - Feature 基类 + 生命周期 + ShaderCache + Deferred + Features
-# ------------------------------------------------------------------
-add_library(CoreCS OBJECT
+
+  add_library(CoreCS OBJECT
     src/Core/BSShaderHooks.cpp
     src/Core/BSShaderHooks.h
     src/Core/CommunityShaders.cpp
@@ -192,7 +182,7 @@ add_library(CoreCS OBJECT
     src/Features/LightLimitFix.h
 )
 
-if(COMMUNITY_SHADERS)
+  if(COMMUNITY_SHADERS)
     target_sources(CoreCS PRIVATE
         src/Features/Upscaling.cpp
         src/Features/FrameGeneration.cpp
@@ -203,11 +193,11 @@ if(COMMUNITY_SHADERS)
     target_include_directories(CoreCS PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/extern/Streamline/include
     )
-endif()
+  endif()
 
-target_compile_features(CoreCS PRIVATE cxx_std_23)
+  target_compile_features(CoreCS PRIVATE cxx_std_23)
 
-target_include_directories(CoreCS
+  target_include_directories(CoreCS
     PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/extern/imgui
     ${CMAKE_CURRENT_SOURCE_DIR}/extern/imgui/backends
@@ -217,15 +207,15 @@ target_include_directories(CoreCS
     ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
-if(WIN32)
+  if(WIN32)
     target_compile_definitions(CoreCS PRIVATE _WINDOWS)
-endif()
-target_compile_definitions(CoreCS PRIVATE
+  endif()
+  target_compile_definitions(CoreCS PRIVATE
     _AMD64_
     "$<$<OR:$<CONFIG:Debug>,$<CONFIG:RelWithDebInfo>>:FO4CS_ENABLE_DEBUG_SETTINGS=1>"
 )
 
-if(CMAKE_GENERATOR MATCHES "Visual Studio")
+  if(CMAKE_GENERATOR MATCHES "Visual Studio")
     target_compile_definitions(CoreCS PRIVATE _UNICODE "$<$<CONFIG:DEBUG>:DEBUG>")
 
     target_compile_options(CoreCS PRIVATE
@@ -241,153 +231,153 @@ if(CMAKE_GENERATOR MATCHES "Visual Studio")
         "$<$<CONFIG:DEBUG>:/Od>" "$<$<CONFIG:DEBUG>:/Gy>"
         "$<$<CONFIG:RELEASE>:${_CORE_RELEASE_OPTS}>"
     )
-endif()
+  endif()
 
-target_precompile_headers(CoreCS PRIVATE include/PCH.h)
-target_link_libraries(CoreCS PUBLIC ${FO4CS_COMMON_DEPENDENCIES})
+  target_precompile_headers(CoreCS PRIVATE include/PCH.h)
+  target_link_libraries(CoreCS PUBLIC ${FO4CS_COMMON_DEPENDENCIES})
 endif()
 
 if(BUILD_PRE_NG)
-    set(FO4CS_RUNTIME_FLAVOR "PreNG")
+  set(FO4CS_RUNTIME_FLAVOR "PreNG")
 elseif(BUILD_POST_NG)
-    set(FO4CS_RUNTIME_FLAVOR "PostNG")
+  set(FO4CS_RUNTIME_FLAVOR "PostNG")
 elseif(BUILD_POST_AE)
-    set(FO4CS_RUNTIME_FLAVOR "PostAE")
+  set(FO4CS_RUNTIME_FLAVOR "PostAE")
 else()
-    set(FO4CS_RUNTIME_FLAVOR "Unknown")
+  set(FO4CS_RUNTIME_FLAVOR "Unknown")
 endif()
 
 # ------------------------------------------------------------------
 # 插件目标
 # ------------------------------------------------------------------
 if(AIO)
-    set(FRAMEGEN OFF)
-    set(REFLEX OFF)
-    set(UPSCALER OFF)
+  set(FRAMEGEN OFF)
+  set(REFLEX OFF)
+  set(UPSCALER OFF)
 endif()
 
 # community-shaders 分支: 全进 CommunityShaders.dll
 if(COMMUNITY_SHADERS)
-    set(AIO OFF)
-    set(FRAMEGEN OFF)
-    set(REFLEX OFF)
-    set(UPSCALER OFF)
-    set(OVERLAY OFF)
+  set(AIO OFF)
+  set(FRAMEGEN OFF)
+  set(REFLEX OFF)
+  set(UPSCALER OFF)
+  set(OVERLAY OFF)
 endif()
 
 if(FRAMEGEN)
-    fo4cs_create_plugin(FrameGen FrameGen "FrameGen" ${FO4CS_COMMON_DEPENDENCIES})
-    target_sources(FrameGen PRIVATE
+  fo4cs_create_plugin(FrameGen FrameGen "FrameGen" ${FO4CS_COMMON_DEPENDENCIES})
+  target_sources(FrameGen PRIVATE
         src/FrameGenPlugin.cpp
     )
-    target_compile_definitions(FrameGen PRIVATE FRAMEGEN=1)
-    target_link_libraries(FrameGen PRIVATE Core)
+  target_compile_definitions(FrameGen PRIVATE FRAMEGEN=1)
+  target_link_libraries(FrameGen PRIVATE Core)
 endif()
 
 if(REFLEX)
-    fo4cs_create_plugin(Reflex Reflex "Reflex" ${FO4CS_COMMON_DEPENDENCIES})
-    target_sources(Reflex PRIVATE
+  fo4cs_create_plugin(Reflex Reflex "Reflex" ${FO4CS_COMMON_DEPENDENCIES})
+  target_sources(Reflex PRIVATE
         src/ReflexPlugin.cpp
     )
-    target_compile_definitions(Reflex PRIVATE REFLEX=1)
-    target_link_libraries(Reflex PRIVATE Core)
+  target_compile_definitions(Reflex PRIVATE REFLEX=1)
+  target_link_libraries(Reflex PRIVATE Core)
 endif()
 
 if(UPSCALER)
-    fo4cs_create_plugin(Upscaler Upscaler "Upscaler" ${FO4CS_COMMON_DEPENDENCIES})
-    target_sources(Upscaler PRIVATE
+  fo4cs_create_plugin(Upscaler Upscaler "Upscaler" ${FO4CS_COMMON_DEPENDENCIES})
+  target_sources(Upscaler PRIVATE
         src/UpscalerPlugin.cpp
     )
-    target_compile_definitions(Upscaler PRIVATE
+  target_compile_definitions(Upscaler PRIVATE
         UPSCALER=1
         UPSCALER_LDR=1
     )
-    target_link_libraries(Upscaler PRIVATE Core)
+  target_link_libraries(Upscaler PRIVATE Core)
 endif()
 
 if(AIO)
-    fo4cs_create_plugin(NuclearGFX NuclearGFX "NuclearGFX" ${FO4CS_COMMON_DEPENDENCIES})
-    target_sources(NuclearGFX PRIVATE
+  fo4cs_create_plugin(NuclearGFX NuclearGFX "NuclearGFX" ${FO4CS_COMMON_DEPENDENCIES})
+  target_sources(NuclearGFX PRIVATE
         src/AIOPlugin.cpp
         src/Overlay/Overlay.cpp
         extern/imgui/backends/imgui_impl_dx11.cpp
-	    extern/imgui/backends/imgui_impl_dx12.cpp
+     extern/imgui/backends/imgui_impl_dx12.cpp
         extern/imgui/backends/imgui_impl_win32.cpp
     )
-    target_include_directories(NuclearGFX PRIVATE
+  target_include_directories(NuclearGFX PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/extern/imgui
         ${CMAKE_CURRENT_SOURCE_DIR}/extern/imgui/backends
     )
-    set_source_files_properties(
+  set_source_files_properties(
         extern/imgui/backends/imgui_impl_dx12.cpp
         extern/imgui/backends/imgui_impl_win32.cpp
         PROPERTIES SKIP_PRECOMPILE_HEADERS ON
     )
-    if(CMAKE_GENERATOR MATCHES "Visual Studio")
-        set_source_files_properties(
+  if(CMAKE_GENERATOR MATCHES "Visual Studio")
+    set_source_files_properties(
             extern/imgui/backends/imgui_impl_dx12.cpp
             extern/imgui/backends/imgui_impl_win32.cpp
             PROPERTIES COMPILE_OPTIONS "/W0"
         )
-    endif()
-    set_target_properties(NuclearGFX PROPERTIES OUTPUT_NAME "NuclearGFX")
-    target_link_libraries(NuclearGFX PRIVATE Core)
+  endif()
+  set_target_properties(NuclearGFX PROPERTIES OUTPUT_NAME "NuclearGFX")
+  target_link_libraries(NuclearGFX PRIVATE Core)
 endif()
 
 if(COMMUNITY_SHADERS)
-    fo4cs_create_plugin(CommunityShaders CommunityShaders "CommunityShaders" ${FO4CS_COMMON_DEPENDENCIES})
-    target_sources(CommunityShaders PRIVATE
+  fo4cs_create_plugin(CommunityShaders CommunityShaders "CommunityShaders" ${FO4CS_COMMON_DEPENDENCIES})
+  target_sources(CommunityShaders PRIVATE
         src/CommunityShadersPlugin.cpp
         extern/imgui/backends/imgui_impl_dx11.cpp
         extern/imgui/backends/imgui_impl_win32.cpp
         extern/imgui/backends/imgui_impl_dx12.cpp
     )
-    set_source_files_properties(
+  set_source_files_properties(
         extern/imgui/backends/imgui_impl_dx11.cpp
         extern/imgui/backends/imgui_impl_dx12.cpp
         extern/imgui/backends/imgui_impl_win32.cpp
         PROPERTIES SKIP_PRECOMPILE_HEADERS ON
     )
-    if(CMAKE_GENERATOR MATCHES "Visual Studio")
-        set_source_files_properties(
+  if(CMAKE_GENERATOR MATCHES "Visual Studio")
+    set_source_files_properties(
         extern/imgui/backends/imgui_impl_dx11.cpp
         extern/imgui/backends/imgui_impl_dx12.cpp
             extern/imgui/backends/imgui_impl_win32.cpp
             PROPERTIES COMPILE_OPTIONS "/W0"
         )
-    endif()
-    target_compile_definitions(CommunityShaders PRIVATE COMMUNITY_SHADERS)
-    target_link_libraries(CommunityShaders PRIVATE Core CoreCS)
+  endif()
+  target_compile_definitions(CommunityShaders PRIVATE COMMUNITY_SHADERS)
+  target_link_libraries(CommunityShaders PRIVATE Core CoreCS)
 endif()
 if(OVERLAY)
-    fo4cs_create_plugin(Overlay Overlay "Overlay" ${FO4CS_COMMON_DEPENDENCIES})
-    target_sources(Overlay PRIVATE
+  fo4cs_create_plugin(Overlay Overlay "Overlay" ${FO4CS_COMMON_DEPENDENCIES})
+  target_sources(Overlay PRIVATE
         src/OverlayPlugin.cpp
         src/Overlay/Overlay.cpp
         src/Overlay/Overlay.h
         src/Overlay/OverlayWndProc.h
     )
-    target_include_directories(Overlay PRIVATE
+  target_include_directories(Overlay PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/extern/imgui
         ${CMAKE_CURRENT_SOURCE_DIR}/extern/imgui/backends
     )
-    target_link_libraries(Overlay PRIVATE Core)
+  target_link_libraries(Overlay PRIVATE Core)
 
-    # D3D12/Win32 ImGui backends — only Overlay.dll needs these
-    target_sources(Overlay PRIVATE
+  # D3D12/Win32 ImGui backends — only Overlay.dll needs these
+  target_sources(Overlay PRIVATE
         extern/imgui/backends/imgui_impl_dx12.cpp
         extern/imgui/backends/imgui_impl_win32.cpp
     )
-    set_source_files_properties(
+  set_source_files_properties(
         extern/imgui/backends/imgui_impl_dx12.cpp
         extern/imgui/backends/imgui_impl_win32.cpp
         PROPERTIES SKIP_PRECOMPILE_HEADERS ON
     )
-    if(CMAKE_GENERATOR MATCHES "Visual Studio")
-        set_source_files_properties(
+  if(CMAKE_GENERATOR MATCHES "Visual Studio")
+    set_source_files_properties(
             extern/imgui/backends/imgui_impl_dx12.cpp
             extern/imgui/backends/imgui_impl_win32.cpp
             PROPERTIES COMPILE_OPTIONS "/W0"
         )
-    endif()
+  endif()
 endif()

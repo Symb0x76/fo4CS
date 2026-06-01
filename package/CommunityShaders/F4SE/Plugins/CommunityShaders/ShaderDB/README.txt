@@ -1,4 +1,4 @@
-ShaderDB — Runtime Shader Replacement Database
+ShaderDB - Runtime Shader Replacement Database
 ================================================
 
 Each subdirectory maps to a runtime version (PreNG, PostNG, PostAE, Common).
@@ -6,28 +6,25 @@ Inside each runtime directory, stage subdirectories contain shader entries.
 
 Directory layout:
   ShaderDB/{Runtime}/{Stage}/{ShaderUID}/
-    {ShaderUID}.txt   — metadata + replacement path
-
-Example for replacing a pixel shader:
-  ShaderDB/PreNG/Pixel/PS00AB01I0C2O6/
-    PS00AB01I0C2O6.txt
+    {ShaderUID}.txt   - metadata + optional replacement path
 
 Entry format (.txt):
   [pixelHunt]
   asmHash=0x0ABC
-  shader=Data\Shaders\LightLimitFix\LightingPS.hlsl
+  shader=Data\Shaders\SomeFeature\SomeShader.hlsl
   type=PS
+  active=false
 
-How to generate entries:
-1. Enable pipeline tracing: set bTracePipeline=true in CommunityShaders.ini
-2. Run the game through scenes with dynamic lights
-3. Find the trace output in the CommunityShaders log
-4. For each PS that uses a light constant buffer (check asm disassembly):
-   - Copy the dumped .txt and .asm files from ShaderDump/
-   - Edit the .txt to add: shader=Data\Shaders\LightLimitFix\LightingPS.hlsl
-   - Place in the correct runtime subdirectory
+Important LightLimitFix rule:
+  LLF must not be enabled from ShaderDB hash guessing. The current FO4 LLF
+  direction follows Skyrim Community Shaders: validate the engine lighting hook,
+  collect BSRenderPass scene lights, prove strict-light CB data, then bind b3 and
+  t35-t37 only in the verified lighting shader path.
 
-ASM hash identification:
-  - The asm hash is computed from the shader's D3D disassembly (stripped of debug info)
-  - Dumped shaders include the hash in their metadata
-  - Match by checking CB slot 2 references in the .asm file
+  The packaged PLACEHOLDER_light_ps entry is an inactive sentinel. Do not fill in
+  asmHash, uncomment shader=, or set active=true as an LLF implementation step.
+  Standalone LLF PS templates under Data\Shaders are support files only until
+  a real FO4 lighting shader path is verified.
+
+ShaderDB remains useful for generic shader replacement experiments and for
+supporting evidence while mapping shader paths, but it is not the LLF route.

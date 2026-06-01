@@ -3,6 +3,10 @@
 #include "Plugin.h"
 
 #include <ShlObj_core.h>
+#include <filesystem>
+#include <optional>
+#include <string>
+#include <vector>
 
 namespace fo4cs
 {
@@ -24,6 +28,54 @@ namespace fo4cs
 		}
 
 		return path;
+	}
+
+	inline std::optional<std::filesystem::path> GetCurrentModulePath()
+	{
+		HMODULE module = nullptr;
+		if (!GetModuleHandleExW(
+				GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+				reinterpret_cast<LPCWSTR>(&GetCurrentModulePath),
+				&module) ||
+			!module) {
+			return std::nullopt;
+		}
+
+		std::vector<wchar_t> buffer(MAX_PATH);
+		while (true) {
+			const auto length = GetModuleFileNameW(module, buffer.data(), static_cast<DWORD>(buffer.size()));
+			if (length == 0) {
+				return std::nullopt;
+			}
+			if (length < static_cast<DWORD>(buffer.size() - 1)) {
+				return std::filesystem::path(std::wstring(buffer.data(), length));
+			}
+
+			buffer.resize(buffer.size() * 2);
+		}
+	}
+
+	inline void LogLoadedModuleIdentity()
+	{
+		const auto modulePath = GetCurrentModulePath();
+		if (!modulePath) {
+			logger::warn("[{}] Loaded module identity unavailable (path lookup failed)", Plugin::NAME);
+			return;
+		}
+
+		std::error_code ec;
+		const auto fileSize = std::filesystem::file_size(*modulePath, ec);
+		const auto sizeText = ec ? std::string("unavailable") : std::to_string(fileSize);
+		ec.clear();
+		const auto lastWrite = std::filesystem::last_write_time(*modulePath, ec);
+		const auto lastWriteTicks = ec ? 0 : lastWrite.time_since_epoch().count();
+
+		logger::info(
+			"[{}] Loaded module identity path={} size={} lastWriteTicks={} build=" __DATE__ " " __TIME__,
+			Plugin::NAME,
+			modulePath->string(),
+			sizeText,
+			lastWriteTicks);
 	}
 
 	inline void InitializeLog()
@@ -59,6 +111,7 @@ namespace fo4cs
 		spdlog::set_default_logger(log);
 		spdlog::set_pattern("%v"s);
 		logger::info("[Logger] Initialized file sink at {}", path->string());
+		LogLoadedModuleIdentity();
 	}
 
 #if defined(FALLOUT_POST_NG)

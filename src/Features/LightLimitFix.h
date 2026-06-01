@@ -1,18 +1,27 @@
 #pragma once
 
 #include <d3d11.h>
+#include <cstddef>
+#include <cstdint>
 #include <set>
 #include <vector>
 #include <winrt/base.h>
 
 #include "Core/Feature.h"
 
-// Light Limit Fix removes the vanilla 4-light limit by replacing the per-draw
-// strict-light CB with a clustered-forward light grid computed on the GPU.
+// Light Limit Fix removes the vanilla 4-light limit through the Skyrim CS
+// engine-lighting route: strict-light data in b3 plus clustered SRVs t35-t37.
 //
 // FO4 Adaptation Notes (vs Skyrim CS):
 //   - BSShader::SetupGeometry is at vfunc index 7 (FO4 added SetupMaterialSecondary)
 //   - FO4 uses BSShaderManager::ShaderEnum (kLighting=8, kEffect=0, kWater=0xA)
+//   - PreNG static export validates BSLightingShader::SetupGeometry as
+//     sub_14289DD10(this, pass); the vanilla point-light writer is called at
+//     sub_14289DD10+0x3AF (0x14289E0BF) and targets sub_14289F550.
+//   - Skyrim LLF binds clustered SRVs from Prepass and uses the internal
+//     point-light setup call path for strict-light CB data. FO4 still needs the
+//     equivalent guarded internal-call hook before PreNG SetupGeometry hooks can
+//     be enabled.
 
 struct LightLimitFix : Feature
 {
@@ -30,13 +39,15 @@ struct LightLimitFix : Feature
 			"Removes the vanilla 4-light limit using clustered-forward rendering.",
 			{
 				"GPU cluster building + culling via compute shaders",
-				"Structured light buffer replaces per-draw strict-light CB",
+				"Strict-light CB mirror plus clustered SRV light lists",
 				"Unlimited dynamic lights per pixel"
 			}
 		};
 	}
 
 	// --- GPU Data Types (matches Skyrim CS layout for shader compatibility) ---
+	static constexpr std::uint32_t kMaxStrictLights = 15;
+
 
 	enum class LightFlags : std::uint32_t
 	{
@@ -66,13 +77,17 @@ struct LightLimitFix : Feature
 		float fadeZone;
 		float sizeBias;
 		PositionOpt positionWS[2];
-		std::uint64_t roomFlags = 0;
+		std::uint32_t roomFlags[4]{};
 		std::uint32_t lightFlags = 0;
-		std::uint32_t shadowMaskIndex = 0;
+		std::uint32_t shadowLightIndex = 0;
 		std::uint32_t pad0;
 		std::uint32_t pad1;
-		std::uint64_t pad2[2];
 	};
+	static_assert(sizeof(LightData) == 96);
+	static_assert(offsetof(LightData, positionWS) == 32);
+	static_assert(offsetof(LightData, roomFlags) == 64);
+	static_assert(offsetof(LightData, lightFlags) == 80);
+	static_assert(offsetof(LightData, shadowLightIndex) == 84);
 	#pragma warning(pop)
 
 	struct ClusterAABB
@@ -110,9 +125,22 @@ struct LightLimitFix : Feature
 	{
 		std::uint32_t EnableLightsVisualisation;
 		std::uint32_t LightsVisualisationMode;
-		float pad0[2];
+		float CameraNear;
+		float CameraFar;
 		std::uint32_t ClusterSize[4];
 	};
+
+	struct alignas(16) StrictLightDataCB
+	{
+		std::uint32_t NumStrictLights = 0;
+		std::int32_t RoomIndex = -1;
+		std::uint32_t ShadowBitMask = 0;
+		std::uint32_t pad0 = 0;
+		LightData StrictLights[kMaxStrictLights]{};
+	};
+	static_assert(alignof(StrictLightDataCB) == 16);
+	static_assert(sizeof(StrictLightDataCB) % 16 == 0);
+	static_assert(sizeof(StrictLightDataCB) == 16 + (kMaxStrictLights * sizeof(LightData)));
 
 	PerFrame GetCommonBufferData();
 
@@ -124,6 +152,7 @@ struct LightLimitFix : Feature
 	float CameraNear = 0.1f;
 	float CameraFar = 10000.0f;
 	std::uint32_t currentLightCount = 0;
+	std::uint32_t currentStrictLightCount = 0;
 
 	// --- Settings ---
 	struct Settings
@@ -152,6 +181,23 @@ struct LightLimitFix : Feature
 
 	// Per-frame light accumulation
 	void CollectLightsFromPass(RE::BSRenderPass* a_pass);
+#if defined(FALLOUT_PRE_NG)
+	std::uint32_t CollectLightsFromPreNGSceneLights(
+		RE::BSRenderPass* a_pass,
+		std::uint32_t a_requestedLightCount = 0xFFFFFFFFu,
+		std::uint32_t a_shadowArg = 0);
+	std::uint32_t CollectLightsFromPreNGShadowScene();
+	bool UpdatePreNGStrictLightDataCB();
+	bool UploadPreNGStrictLightDataDiagnostic();
+	bool BindPreNGStrictLightDataCBToPixelShader(
+		RE::BSRenderPass* a_pass,
+		std::uint32_t a_requestedLightCount,
+		bool a_bufferAlreadyUploaded);
+	bool BindPreNGClusterSRVsToPixelShader(
+		RE::BSRenderPass* a_pass,
+		std::uint32_t a_requestedLightCount,
+		bool a_strictCBBound);
+#endif
 	void CollectLightsFromScene();
 	void CollectLightsFromBSLight();
 	void CollectLightCB();
@@ -159,19 +205,20 @@ struct LightLimitFix : Feature
 	std::set<RE::BSLight*> seenLights;
 	std::vector<RE::BSLight*> seenThisPass;
 	std::set<std::uint64_t> seenCBHashes;
+	StrictLightDataCB strictLightDataTemp{};
 	std::uint32_t diagFrameCounter = 0;
 
 	struct Hooks
 	{
 		struct BSLightingShader_SetupGeometry
 		{
-			static void thunk(RE::BSShader* a_this, RE::BSRenderPass* a_pass, std::uint32_t a_renderFlags);
+			static void thunk(RE::BSShader* a_this, RE::BSRenderPass* a_pass);
 			static inline REL::Relocation<decltype(thunk)> func;
 		};
 
 		struct BSEffectShader_SetupGeometry
 		{
-			static void thunk(RE::BSShader* a_this, RE::BSRenderPass* a_pass, std::uint32_t a_renderFlags);
+			static void thunk(RE::BSShader* a_this, RE::BSRenderPass* a_pass);
 			static inline REL::Relocation<decltype(thunk)> func;
 		};
 
@@ -184,6 +231,7 @@ private:
 	winrt::com_ptr<ID3D11ComputeShader>          clusterCullingCS;
 	winrt::com_ptr<ID3D11Buffer>                 lightBuildingCB;
 	winrt::com_ptr<ID3D11Buffer>                 lightCullingCB;
+	winrt::com_ptr<ID3D11Buffer>                 strictLightDataCB;
 	winrt::com_ptr<ID3D11Buffer>                 lightsBuffer;
 	winrt::com_ptr<ID3D11ShaderResourceView>     lightsSRV;
 	winrt::com_ptr<ID3D11Buffer>                 clustersBuffer;

@@ -10,4 +10,5 @@ namespace CommunityShaders::Hooks
 {
 	void Install();
 	void OnD3D11DeviceCreated(ID3D11Device* a_device);
+	void OnFrame();
 }

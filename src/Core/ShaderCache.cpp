@@ -1,11 +1,16 @@
 #include "Core/ShaderCache.h"
 
+#include "Core/CommunityShaders.h"
+#include "Core/Feature.h"
+#include "Core/ShaderCompiler.h"
 #include "Core/State.h"
+#include "RE/Bethesda/BSShader.h"
 
 #include <d3dcompiler.h>
 
 #include <algorithm>
 #include <cctype>
+#include <cstring>
 #include <format>
 #include <fstream>
 #include <memory>
@@ -14,10 +19,639 @@
 
 namespace CommunityShaders
 {
+	namespace
+	{
+		constexpr const char* kDescriptorCompileEnv = "FO4CS_LLF_PRENG_DESCRIPTOR_COMPILE";
+		constexpr std::int32_t kPreNGBSLightingShaderType = 8;
+
+		bool IsTruthyDescriptorEnvironmentValue(const char* a_value)
+		{
+			return std::strcmp(a_value, "1") == 0 ||
+			       std::strcmp(a_value, "true") == 0 ||
+			       std::strcmp(a_value, "TRUE") == 0 ||
+			       std::strcmp(a_value, "on") == 0 ||
+			       std::strcmp(a_value, "ON") == 0;
+		}
+
+		bool ReadDescriptorCompileRegistryValue(HKEY a_root, const char* a_subKey, char (&a_value)[16])
+		{
+			DWORD type = 0;
+			DWORD size = static_cast<DWORD>(sizeof(a_value));
+			const auto result = RegGetValueA(
+				a_root,
+				a_subKey,
+				kDescriptorCompileEnv,
+				RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ,
+				&type,
+				a_value,
+				&size);
+			if (result != ERROR_SUCCESS || size == 0) {
+				return false;
+			}
+
+			a_value[sizeof(a_value) - 1] = '\0';
+			return true;
+		}
+
+		bool ReadDescriptorCompileSwitch()
+		{
+			char value[16]{};
+			SetLastError(ERROR_SUCCESS);
+			const auto length = GetEnvironmentVariableA(
+				kDescriptorCompileEnv,
+				value,
+				static_cast<DWORD>(sizeof(value)));
+			if (length > 0) {
+				return length < sizeof(value) && IsTruthyDescriptorEnvironmentValue(value);
+			}
+			if (GetLastError() != ERROR_ENVVAR_NOT_FOUND) {
+				return false;
+			}
+
+			if (ReadDescriptorCompileRegistryValue(HKEY_CURRENT_USER, "Environment", value)) {
+				return IsTruthyDescriptorEnvironmentValue(value);
+			}
+
+			if (ReadDescriptorCompileRegistryValue(
+					HKEY_LOCAL_MACHINE,
+					"SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment",
+					value)) {
+				return IsTruthyDescriptorEnvironmentValue(value);
+			}
+
+			return false;
+		}
+
+		std::string ToLowerAscii(std::string a_value)
+		{
+			std::ranges::transform(a_value, a_value.begin(), [](unsigned char a_ch) {
+				return static_cast<char>(std::tolower(a_ch));
+			});
+			return a_value;
+		}
+
+		bool StartsWith(std::string_view a_value, std::string_view a_prefix) noexcept
+		{
+			return a_value.size() >= a_prefix.size() &&
+			       a_value.substr(0, a_prefix.size()) == a_prefix;
+		}
+
+		std::string BuildFeatureDefineList(const std::vector<D3D_SHADER_MACRO>& a_defines)
+		{
+			std::string result;
+			for (const auto& define : a_defines) {
+				if (!define.Name) {
+					break;
+				}
+				if (!result.empty()) {
+					result += ',';
+				}
+				result += define.Name;
+			}
+			return result.empty() ? "<none>" : result;
+		}
+
+		struct DescriptorDefineSet
+		{
+			std::vector<std::pair<std::string, std::string>> storage;
+			std::vector<D3D_SHADER_MACRO> macros;
+		};
+
+		DescriptorDefineSet BuildDescriptorDefineSet(
+			ShaderStage a_stage,
+			std::int32_t a_shaderType,
+			std::uint32_t a_descriptor)
+		{
+			DescriptorDefineSet result;
+
+			for (auto* feature : Feature::GetFeatureList()) {
+				if (!feature || !feature->loaded) {
+					continue;
+				}
+
+				const auto name = feature->GetShaderDefineName();
+				if (!name.empty()) {
+					result.storage.emplace_back(std::string{ name }, "1");
+				}
+			}
+
+			result.storage.emplace_back("FO4CS_DESCRIPTOR_SHADER", "1");
+			result.storage.emplace_back("FO4CS_SHADER_TYPE", std::to_string(a_shaderType));
+			result.storage.emplace_back("FO4CS_SHADER_DESCRIPTOR", std::to_string(a_descriptor));
+			result.storage.emplace_back(
+				a_stage == ShaderStage::Vertex ? "FO4CS_DESCRIPTOR_VERTEX_SHADER" : "FO4CS_DESCRIPTOR_PIXEL_SHADER",
+				"1");
+
+			result.macros.reserve(result.storage.size() + 1);
+			for (auto& [name, value] : result.storage) {
+				result.macros.push_back({ name.c_str(), value.c_str() });
+			}
+			result.macros.push_back({});
+			return result;
+		}
+
+		std::string_view GetDescriptorTarget(ShaderStage a_stage) noexcept
+		{
+			return a_stage == ShaderStage::Vertex ? "vs_5_0" : "ps_5_0";
+		}
+	}
+
 	ShaderCache* ShaderCache::GetSingleton()
 	{
 		static ShaderCache singleton;
 		return std::addressof(singleton);
+	}
+
+	std::string ShaderCache::NormalizeFxpFilename(std::string_view a_fxpFilename)
+	{
+		if (a_fxpFilename.empty()) {
+			return "<empty>";
+		}
+
+		std::string normalized{ a_fxpFilename };
+		std::ranges::transform(normalized, normalized.begin(), [](unsigned char a_ch) {
+			if (a_ch == '\\') {
+				return '/';
+			}
+			return static_cast<char>(std::tolower(a_ch));
+		});
+		return normalized;
+	}
+
+	std::string ShaderCache::NormalizeFxpFilename(const char* a_fxpFilename)
+	{
+		return a_fxpFilename ? NormalizeFxpFilename(std::string_view{ a_fxpFilename }) : "<null>";
+	}
+
+	const char* ShaderCache::GetDescriptorCacheState(const std::optional<DescriptorShaderState>& a_state) noexcept
+	{
+		if (!a_state) {
+			return "missing";
+		}
+
+		return a_state->found ? "vanilla-observed" : "miss-observed";
+	}
+
+	ShaderCache::DescriptorShaderKey ShaderCache::MakeDescriptorShaderKey(
+		ShaderStage a_stage,
+		const RE::BSShader& a_shader,
+		std::uint32_t a_descriptor)
+	{
+		return {
+			a_stage,
+			a_shader.shaderType,
+			a_descriptor,
+			NormalizeFxpFilename(a_shader.fxpFilename)
+		};
+	}
+
+	bool ShaderCache::ShouldCompileDescriptorShaders()
+	{
+#if defined(FALLOUT_PRE_NG)
+		static const bool enabled = ReadDescriptorCompileSwitch();
+		return enabled;
+#else
+		return false;
+#endif
+	}
+
+	std::optional<std::string> ShaderCache::ResolveDescriptorShaderSource(const DescriptorShaderKey& a_key)
+	{
+		auto source = a_key.fxpFilename;
+		if (source.empty() || source.front() == '<' || source.find('<') != std::string::npos) {
+			return std::nullopt;
+		}
+
+		if (StartsWith(source, "data/shaders/")) {
+			source.erase(0, std::string_view{ "data/shaders/" }.size());
+		} else if (StartsWith(source, "shaders/")) {
+			source.erase(0, std::string_view{ "shaders/" }.size());
+		}
+
+		std::filesystem::path sourcePath{ source };
+		const auto extension = ToLowerAscii(sourcePath.extension().string());
+		if (extension == ".fxp" || extension == ".fx") {
+			sourcePath.replace_extension(".hlsl");
+		} else if (extension.empty()) {
+			sourcePath += ".hlsl";
+		} else if (extension != ".hlsl") {
+			return std::nullopt;
+		}
+
+		std::vector<std::filesystem::path> candidates;
+		candidates.push_back(sourcePath);
+		if (sourcePath.has_parent_path()) {
+			candidates.push_back(sourcePath.filename());
+		}
+
+		for (const auto& candidate : candidates) {
+			const auto diskPath = std::filesystem::path("Data\\Shaders") / candidate;
+			std::error_code ec;
+			if (std::filesystem::exists(diskPath, ec) && std::filesystem::is_regular_file(diskPath, ec)) {
+				return candidate.generic_string();
+			}
+		}
+
+		return std::nullopt;
+	}
+
+	void ShaderCache::ObserveDescriptorShader(
+		ShaderStage a_stage,
+		const RE::BSShader& a_shader,
+		std::uint32_t a_descriptor,
+		std::string_view a_fxpFilename,
+		bool a_found,
+		std::uintptr_t a_shaderEntry,
+		std::uintptr_t a_d3dObject)
+	{
+		const auto normalizedFxp = NormalizeFxpFilename(a_fxpFilename);
+		const DescriptorShaderKey key{ a_stage, a_shader.shaderType, a_descriptor, normalizedFxp };
+
+		std::scoped_lock lock(descriptorLock);
+		auto [it, inserted] = descriptorShaders.try_emplace(key);
+		auto& state = it->second;
+		if (inserted) {
+			state.stage = a_stage;
+			state.shaderType = a_shader.shaderType;
+			state.descriptor = a_descriptor;
+			state.fxpFilename = normalizedFxp;
+		}
+
+		state.found = state.found || a_found;
+		if (a_shaderEntry != 0) {
+			state.shaderEntry = a_shaderEntry;
+		}
+		if (a_d3dObject != 0) {
+			state.d3dObject = a_d3dObject;
+		}
+		++state.hits;
+	}
+
+	std::optional<ShaderCache::DescriptorShaderState> ShaderCache::GetDescriptorShaderState(
+		ShaderStage a_stage,
+		const RE::BSShader& a_shader,
+		std::uint32_t a_descriptor) const
+	{
+		return GetDescriptorShaderState(a_stage, a_shader.shaderType, a_descriptor, NormalizeFxpFilename(a_shader.fxpFilename));
+	}
+
+	std::optional<ShaderCache::DescriptorShaderState> ShaderCache::GetDescriptorShaderState(
+		ShaderStage a_stage,
+		std::int32_t a_shaderType,
+		std::uint32_t a_descriptor,
+		std::string_view a_fxpFilename) const
+	{
+		const DescriptorShaderKey key{ a_stage, a_shaderType, a_descriptor, NormalizeFxpFilename(a_fxpFilename) };
+		std::scoped_lock lock(descriptorLock);
+		if (const auto it = descriptorShaders.find(key); it != descriptorShaders.end()) {
+			return it->second;
+		}
+
+		return std::nullopt;
+	}
+
+	void ShaderCache::LogDescriptorBridgeHeld(
+		ShaderStage a_stage,
+		const RE::BSShader& a_shader,
+		std::uint32_t a_descriptor,
+		std::string_view a_operation)
+	{
+		const auto state = GetDescriptorShaderState(a_stage, a_shader, a_descriptor);
+		const auto normalizedFxp = state ? state->fxpFilename : NormalizeFxpFilename(a_shader.fxpFilename);
+		const auto heldKey = std::format(
+			"{}:{}:{}:{:08X}:{}",
+			GetStageName(a_stage),
+			a_shader.shaderType,
+			normalizedFxp,
+			a_descriptor,
+			a_operation);
+
+		{
+			std::scoped_lock lock(descriptorLock);
+			if (!descriptorHeldLogs.insert(heldKey).second) {
+				return;
+			}
+		}
+
+		logger::info(
+			"[ShaderCache] FO4 descriptor shader cache {} held shaderType={} fxp={} stage={} descriptor=0x{:X} descriptorBridge=available descriptorCache={} hits={} customCompile=held customBind=held",
+			a_operation,
+			a_shader.shaderType,
+			normalizedFxp,
+			GetStageName(a_stage),
+			a_descriptor,
+			GetDescriptorCacheState(state),
+			state ? state->hits : 0);
+	}
+
+	void ShaderCache::LogDescriptorCompileEvent(
+		ShaderStage a_stage,
+		const RE::BSShader& a_shader,
+		std::uint32_t a_descriptor,
+		std::string_view a_operation,
+		std::string_view a_compileState,
+		std::string_view a_reason,
+		std::string_view a_extra)
+	{
+		const auto state = GetDescriptorShaderState(a_stage, a_shader, a_descriptor);
+		const auto normalizedFxp = state ? state->fxpFilename : NormalizeFxpFilename(a_shader.fxpFilename);
+		const auto logKey = std::format(
+			"{}:{}:{}:{:08X}:{}:{}:{}:{}",
+			GetStageName(a_stage),
+			a_shader.shaderType,
+			normalizedFxp,
+			a_descriptor,
+			a_operation,
+			a_compileState,
+			a_reason,
+			a_extra);
+
+		{
+			std::scoped_lock lock(descriptorLock);
+			if (!descriptorCompileLogs.insert(logKey).second) {
+				return;
+			}
+		}
+
+		const auto descriptorState = GetDescriptorCacheState(state);
+		const auto hits = state ? state->hits : 0;
+		if (a_extra.empty()) {
+			logger::info(
+				"[ShaderCache] FO4 descriptor shader cache {} shaderType={} fxp={} stage={} descriptor=0x{:X} descriptorBridge=available descriptorCache={} hits={} customCompile={} customBind=held reason={}",
+				a_operation,
+				a_shader.shaderType,
+				normalizedFxp,
+				GetStageName(a_stage),
+				a_descriptor,
+				descriptorState,
+				hits,
+				a_compileState,
+				a_reason);
+			return;
+		}
+
+		logger::info(
+			"[ShaderCache] FO4 descriptor shader cache {} shaderType={} fxp={} stage={} descriptor=0x{:X} descriptorBridge=available descriptorCache={} hits={} customCompile={} customBind=held reason={} {}",
+			a_operation,
+			a_shader.shaderType,
+			normalizedFxp,
+			GetStageName(a_stage),
+			a_descriptor,
+			descriptorState,
+			hits,
+			a_compileState,
+			a_reason,
+			a_extra);
+	}
+
+	RE::BSGraphics::VertexShader* ShaderCache::GetVertexShader(const RE::BSShader& a_shader, std::uint32_t a_descriptor)
+	{
+		const auto key = MakeDescriptorShaderKey(ShaderStage::Vertex, a_shader, a_descriptor);
+		RE::BSGraphics::VertexShader* cachedEntry = nullptr;
+		{
+			std::scoped_lock lock(descriptorLock);
+			if (const auto it = descriptorVertexShaders.find(key); it != descriptorVertexShaders.end()) {
+				cachedEntry = std::addressof(it->second->entry);
+			}
+		}
+		if (cachedEntry) {
+			LogDescriptorCompileEvent(ShaderStage::Vertex, a_shader, a_descriptor, "GetVertexShader", "cache-hit", "owned-entry");
+			return cachedEntry;
+		}
+
+		if (!ShouldCompileDescriptorShaders()) {
+			LogDescriptorCompileEvent(
+				ShaderStage::Vertex,
+				a_shader,
+				a_descriptor,
+				"GetVertexShader",
+				"gated",
+				"FO4CS_LLF_PRENG_DESCRIPTOR_COMPILE-off");
+			return nullptr;
+		}
+
+		return MakeAndAddVertexShader(a_shader, a_descriptor);
+	}
+
+	RE::BSGraphics::PixelShader* ShaderCache::GetPixelShader(const RE::BSShader& a_shader, std::uint32_t a_descriptor)
+	{
+		const auto key = MakeDescriptorShaderKey(ShaderStage::Pixel, a_shader, a_descriptor);
+		RE::BSGraphics::PixelShader* cachedEntry = nullptr;
+		{
+			std::scoped_lock lock(descriptorLock);
+			if (const auto it = descriptorPixelShaders.find(key); it != descriptorPixelShaders.end()) {
+				cachedEntry = std::addressof(it->second->entry);
+			}
+		}
+		if (cachedEntry) {
+			LogDescriptorCompileEvent(ShaderStage::Pixel, a_shader, a_descriptor, "GetPixelShader", "cache-hit", "owned-entry");
+			return cachedEntry;
+		}
+
+		if (!ShouldCompileDescriptorShaders()) {
+			LogDescriptorCompileEvent(
+				ShaderStage::Pixel,
+				a_shader,
+				a_descriptor,
+				"GetPixelShader",
+				"gated",
+				"FO4CS_LLF_PRENG_DESCRIPTOR_COMPILE-off");
+			return nullptr;
+		}
+
+		return MakeAndAddPixelShader(a_shader, a_descriptor);
+	}
+
+	RE::BSGraphics::VertexShader* ShaderCache::MakeAndAddVertexShader(const RE::BSShader& a_shader, std::uint32_t a_descriptor)
+	{
+		constexpr auto stage = ShaderStage::Vertex;
+		const auto key = MakeDescriptorShaderKey(stage, a_shader, a_descriptor);
+
+		if (!ShouldCompileDescriptorShaders()) {
+			LogDescriptorCompileEvent(stage, a_shader, a_descriptor, "MakeAndAddVertexShader", "gated", "FO4CS_LLF_PRENG_DESCRIPTOR_COMPILE-off");
+			return nullptr;
+		}
+
+		if (a_shader.shaderType != kPreNGBSLightingShaderType) {
+			LogDescriptorCompileEvent(stage, a_shader, a_descriptor, "MakeAndAddVertexShader", "skipped", "unsupported-shaderType");
+			return nullptr;
+		}
+
+		RE::BSGraphics::VertexShader* cachedEntry = nullptr;
+		{
+			std::scoped_lock lock(descriptorLock);
+			if (const auto it = descriptorVertexShaders.find(key); it != descriptorVertexShaders.end()) {
+				cachedEntry = std::addressof(it->second->entry);
+			}
+		}
+		if (cachedEntry) {
+			LogDescriptorCompileEvent(stage, a_shader, a_descriptor, "MakeAndAddVertexShader", "cache-hit", "owned-entry");
+			return cachedEntry;
+		}
+
+		auto* device = Runtime::GetSingleton()->GetDevice();
+		if (!device) {
+			LogDescriptorCompileEvent(stage, a_shader, a_descriptor, "MakeAndAddVertexShader", "failed", "device-unavailable");
+			return nullptr;
+		}
+
+		const auto source = ResolveDescriptorShaderSource(key);
+		if (!source) {
+			LogDescriptorCompileEvent(stage, a_shader, a_descriptor, "MakeAndAddVertexShader", "failed", "source-unresolved");
+			return nullptr;
+		}
+
+		auto defines = BuildDescriptorDefineSet(stage, a_shader.shaderType, a_descriptor);
+		const auto defineList = BuildFeatureDefineList(defines.macros);
+		auto bytecode = ShaderCompiler::GetSingleton()->CompileFromFile(*source, GetDescriptorTarget(stage), defines.macros.data(), "main");
+		if (!bytecode) {
+			LogDescriptorCompileEvent(
+				stage,
+				a_shader,
+				a_descriptor,
+				"MakeAndAddVertexShader",
+				"failed",
+				"compile-failed",
+				std::format("source={} target={} defines={}", *source, GetDescriptorTarget(stage), defineList));
+			return nullptr;
+		}
+
+		ID3D11VertexShader* shader = nullptr;
+		const auto hr = device->CreateVertexShader(bytecode->data(), bytecode->size(), nullptr, &shader);
+		if (FAILED(hr)) {
+			LogDescriptorCompileEvent(
+				stage,
+				a_shader,
+				a_descriptor,
+				"MakeAndAddVertexShader",
+				"failed",
+				"CreateVertexShader-failed",
+				std::format("source={} target={} hr=0x{:08X}", *source, GetDescriptorTarget(stage), static_cast<std::uint32_t>(hr)));
+			return nullptr;
+		}
+
+		auto owned = std::make_unique<OwnedDescriptorVertexShader>();
+		owned->d3dShader.attach(shader);
+		owned->bytecode = std::move(*bytecode);
+		owned->entry.id = a_descriptor;
+		owned->entry.shader = owned->d3dShader.get();
+		owned->entry.byteCodeSize = static_cast<std::uint32_t>(owned->bytecode.size());
+		owned->entry.shaderDesc = a_descriptor;
+
+		RE::BSGraphics::VertexShader* entry = nullptr;
+		bool inserted = false;
+		{
+			std::scoped_lock lock(descriptorLock);
+			auto [it, wasInserted] = descriptorVertexShaders.try_emplace(key, std::move(owned));
+			inserted = wasInserted;
+			entry = std::addressof(it->second->entry);
+		}
+		LogDescriptorCompileEvent(
+			stage,
+			a_shader,
+			a_descriptor,
+			"MakeAndAddVertexShader",
+			inserted ? "created" : "cache-hit",
+			inserted ? "owned-entry-created" : "owned-entry-created-by-peer",
+			std::format("source={} target={} bytecode={} defines={}", *source, GetDescriptorTarget(stage), entry->byteCodeSize, defineList));
+
+		return entry;
+	}
+
+	RE::BSGraphics::PixelShader* ShaderCache::MakeAndAddPixelShader(const RE::BSShader& a_shader, std::uint32_t a_descriptor)
+	{
+		constexpr auto stage = ShaderStage::Pixel;
+		const auto key = MakeDescriptorShaderKey(stage, a_shader, a_descriptor);
+
+		if (!ShouldCompileDescriptorShaders()) {
+			LogDescriptorCompileEvent(stage, a_shader, a_descriptor, "MakeAndAddPixelShader", "gated", "FO4CS_LLF_PRENG_DESCRIPTOR_COMPILE-off");
+			return nullptr;
+		}
+
+		if (a_shader.shaderType != kPreNGBSLightingShaderType) {
+			LogDescriptorCompileEvent(stage, a_shader, a_descriptor, "MakeAndAddPixelShader", "skipped", "unsupported-shaderType");
+			return nullptr;
+		}
+
+		RE::BSGraphics::PixelShader* cachedEntry = nullptr;
+		{
+			std::scoped_lock lock(descriptorLock);
+			if (const auto it = descriptorPixelShaders.find(key); it != descriptorPixelShaders.end()) {
+				cachedEntry = std::addressof(it->second->entry);
+			}
+		}
+		if (cachedEntry) {
+			LogDescriptorCompileEvent(stage, a_shader, a_descriptor, "MakeAndAddPixelShader", "cache-hit", "owned-entry");
+			return cachedEntry;
+		}
+
+		auto* device = Runtime::GetSingleton()->GetDevice();
+		if (!device) {
+			LogDescriptorCompileEvent(stage, a_shader, a_descriptor, "MakeAndAddPixelShader", "failed", "device-unavailable");
+			return nullptr;
+		}
+
+		const auto source = ResolveDescriptorShaderSource(key);
+		if (!source) {
+			LogDescriptorCompileEvent(stage, a_shader, a_descriptor, "MakeAndAddPixelShader", "failed", "source-unresolved");
+			return nullptr;
+		}
+
+		auto defines = BuildDescriptorDefineSet(stage, a_shader.shaderType, a_descriptor);
+		const auto defineList = BuildFeatureDefineList(defines.macros);
+		auto bytecode = ShaderCompiler::GetSingleton()->CompileFromFile(*source, GetDescriptorTarget(stage), defines.macros.data(), "main");
+		if (!bytecode) {
+			LogDescriptorCompileEvent(
+				stage,
+				a_shader,
+				a_descriptor,
+				"MakeAndAddPixelShader",
+				"failed",
+				"compile-failed",
+				std::format("source={} target={} defines={}", *source, GetDescriptorTarget(stage), defineList));
+			return nullptr;
+		}
+
+		ID3D11PixelShader* shader = nullptr;
+		const auto hr = device->CreatePixelShader(bytecode->data(), bytecode->size(), nullptr, &shader);
+		if (FAILED(hr)) {
+			LogDescriptorCompileEvent(
+				stage,
+				a_shader,
+				a_descriptor,
+				"MakeAndAddPixelShader",
+				"failed",
+				"CreatePixelShader-failed",
+				std::format("source={} target={} hr=0x{:08X}", *source, GetDescriptorTarget(stage), static_cast<std::uint32_t>(hr)));
+			return nullptr;
+		}
+
+		auto owned = std::make_unique<OwnedDescriptorPixelShader>();
+		owned->d3dShader.attach(shader);
+		owned->bytecode = std::move(*bytecode);
+		owned->entry.id = a_descriptor;
+		owned->entry.shader = owned->d3dShader.get();
+
+		RE::BSGraphics::PixelShader* entry = nullptr;
+		std::size_t bytecodeSize = 0;
+		bool inserted = false;
+		{
+			std::scoped_lock lock(descriptorLock);
+			auto [it, wasInserted] = descriptorPixelShaders.try_emplace(key, std::move(owned));
+			inserted = wasInserted;
+			entry = std::addressof(it->second->entry);
+			bytecodeSize = it->second->bytecode.size();
+		}
+		LogDescriptorCompileEvent(
+			stage,
+			a_shader,
+			a_descriptor,
+			"MakeAndAddPixelShader",
+			inserted ? "created" : "cache-hit",
+			inserted ? "owned-entry-created" : "owned-entry-created-by-peer",
+			std::format("source={} target={} bytecode={} defines={}", *source, GetDescriptorTarget(stage), bytecodeSize, defineList));
+
+		return entry;
 	}
 
 	void ShaderCache::ObserveShader(ShaderStage a_stage, const void* a_bytecode, SIZE_T a_bytecodeLength)
@@ -50,32 +684,46 @@ namespace CommunityShaders
 
 	std::optional<std::uint32_t> ShaderCache::GetAsmHashForBytecode(const void* a_bytecode, SIZE_T a_bytecodeLength)
 	{
-		if (!a_bytecode || a_bytecodeLength == 0)
+		auto metadata = GetMetadataForBytecode(ShaderStage::Pixel, a_bytecode, a_bytecodeLength);
+		if (!metadata) {
 			return std::nullopt;
+		}
+
+		return metadata->asmHash;
+	}
+
+	std::optional<ShaderCache::ShaderMetadata> ShaderCache::GetMetadataForBytecode(ShaderStage a_stage, const void* a_bytecode, SIZE_T a_bytecodeLength)
+	{
+		if (!a_bytecode || a_bytecodeLength == 0) {
+			return std::nullopt;
+		}
 
 		const auto bytecodeHash = HashShaderBytecode(a_bytecode, a_bytecodeLength);
 		{
 			std::scoped_lock lock(observedLock);
-			if (auto it = bytecodeToAsmHash.find(bytecodeHash); it != bytecodeToAsmHash.end())
+			if (auto it = bytecodeToMetadata.find(bytecodeHash); it != bytecodeToMetadata.end()) {
 				return it->second;
+			}
 		}
 
 		auto bytes = std::span{ static_cast<const std::byte*>(a_bytecode), a_bytecodeLength };
 		winrt::com_ptr<ID3DBlob> disassembly;
-		if (FAILED(D3DDisassemble(bytes.data(), bytes.size_bytes(), 0, nullptr, disassembly.put())))
+		if (FAILED(D3DDisassemble(bytes.data(), bytes.size_bytes(), 0, nullptr, disassembly.put()))) {
 			return std::nullopt;
+		}
 
 		auto disasmText = std::string_view{
 			static_cast<const char*>(disassembly->GetBufferPointer()),
 			disassembly->GetBufferSize()
 		};
 
-		auto metadata = BuildMetadata(ShaderStage::Pixel, bytes, disasmText);
+		auto metadata = BuildMetadata(a_stage, bytes, disasmText);
 		{
 			std::scoped_lock lock(observedLock);
 			bytecodeToAsmHash[bytecodeHash] = metadata.asmHash;
+			bytecodeToMetadata[bytecodeHash] = metadata;
 		}
-		return metadata.asmHash;
+		return metadata;
 	}
 
 	void ShaderCache::TraceShaderCreation(ShaderStage a_stage, SIZE_T a_len, std::string_view a_hash)
@@ -143,6 +791,11 @@ namespace CommunityShaders
 				disassembly->GetBufferSize()
 			};
 			const auto metadata = BuildMetadata(a_stage, a_bytecode, disassemblyText);
+			{
+				std::scoped_lock lock(observedLock);
+				bytecodeToAsmHash[std::string{ a_hash }] = metadata.asmHash;
+				bytecodeToMetadata[std::string{ a_hash }] = metadata;
+			}
 			const auto binPath = dumpDirectory / std::format("{}.bin", metadata.uid);
 			std::ofstream bin{ binPath, std::ios::binary };
 			bin.write(reinterpret_cast<const char*>(a_bytecode.data()), static_cast<std::streamsize>(a_bytecode.size_bytes()));
@@ -167,19 +820,61 @@ namespace CommunityShaders
 
 		static const auto regexFlags = std::regex_constants::optimize | std::regex_constants::icase;
 		static const std::regex instructionRegex{ "^\\s*(add|sub|mul|div|mad|max|min|dp2|dp3|dp4|rsq|sqrt|and|or|xor|not|lt|gt|le|ge|eq|ne|mov(?:c|_sat)?|sample(?:_indexable)?|loop|endloop|if|else|endif|break(?:c)?|ret)\\b", regexFlags };
+		static const std::regex sampleInstructionRegex{ "^\\s*(sample(?:_\\w+)?|ld(?:_\\w+)?)\\b", regexFlags };
+		static const std::regex textureSampleSlotRegex{ "\\bt(\\d+)(?:\\.|\\b)", regexFlags };
 		static const std::regex textureRegex{ "dcl_resource_(\\w+)\\s*(?:\\([^)]*\\))?\\s*(?:\\([^)]+\\))?\\s+t(\\d+)", regexFlags };
-		static const std::regex inputRegex{ "dcl_input[^\\s]*\\s+v(\\d+)", regexFlags };
+		static const std::regex inputRegex{ "^\\s*dcl_input[^\\r\\n]*\\bv(\\d+)(?:\\.|\\b)", regexFlags };
 		static const std::regex constantBufferRegex{ "dcl_constantbuffer\\s+cb(\\d+)\\[(\\d+)\\]", regexFlags };
-		static const std::regex outputRegex{ "dcl_output[^\\s]*\\s+o(\\d+)", regexFlags };
+		static const std::regex outputRegex{ "^\\s*dcl_output[^\\r\\n]*\\bo(\\d+)(?:\\.|\\b)", regexFlags };
+		static const std::regex discardRegex{ "^\\s*discard(?:_\\w+)?\\b", regexFlags };
+		static const std::regex immediateConstantBufferRegex{ "^\\s*dcl_immediateConstantBuffer\\b", regexFlags };
 
 		std::string opcodeStream;
 		std::istringstream stream{ std::string{ a_disassembly } };
 		std::string line;
+		bool inImmediateConstantBuffer = false;
+		int immediateConstantBufferDepth = 0;
 		while (std::getline(stream, line)) {
 			std::smatch match;
 			if (std::regex_search(line, match, instructionRegex)) {
+				++metadata.instructionCount;
 				opcodeStream += match[1].str();
 				opcodeStream += ';';
+			}
+
+			if (std::regex_search(line, match, sampleInstructionRegex)) {
+				++metadata.sampleInstructionCount;
+				for (auto it = std::sregex_iterator(line.begin(), line.end(), textureSampleSlotRegex); it != std::sregex_iterator(); ++it) {
+					const auto slot = static_cast<std::uint32_t>(std::stoul((*it)[1].str()));
+					if (slot < metadata.textureSampleCounts.size()) {
+						++metadata.textureSampleCounts[slot];
+					}
+				}
+			}
+
+			const bool startsImmediateConstantBuffer = std::regex_search(line, immediateConstantBufferRegex);
+			if (startsImmediateConstantBuffer) {
+				metadata.hasImmediateConstantBuffer = true;
+				inImmediateConstantBuffer = true;
+				immediateConstantBufferDepth = 0;
+			}
+
+			if (inImmediateConstantBuffer) {
+				const auto openBraceCount = static_cast<int>(std::count(line.begin(), line.end(), '{'));
+				const auto closeBraceCount = static_cast<int>(std::count(line.begin(), line.end(), '}'));
+				const auto declarationBraceCount = startsImmediateConstantBuffer ? 1 : 0;
+				if (openBraceCount > declarationBraceCount) {
+					metadata.immediateConstantBufferRows += static_cast<std::uint32_t>(openBraceCount - declarationBraceCount);
+				}
+				immediateConstantBufferDepth += openBraceCount - closeBraceCount;
+				if (immediateConstantBufferDepth <= 0) {
+					inImmediateConstantBuffer = false;
+					immediateConstantBufferDepth = 0;
+				}
+			}
+
+			if (std::regex_search(line, discardRegex)) {
+				metadata.hasDiscard = true;
 			}
 
 			if (std::regex_search(line, match, textureRegex)) {
@@ -275,6 +970,21 @@ namespace CommunityShaders
 		}
 		logFile << "\n";
 
+		logFile << "textureSampleCounts=";
+		first = true;
+		for (std::size_t slot = 0; slot < a_metadata.textureSampleCounts.size(); ++slot) {
+			const auto count = a_metadata.textureSampleCounts[slot];
+			if (count == 0) {
+				continue;
+			}
+			if (!first) {
+				logFile << ",";
+			}
+			logFile << slot << ":" << count;
+			first = false;
+		}
+		logFile << "\n";
+
 		logFile << std::format("textureSlotMask=0x{:X}\n", a_metadata.textureSlotMask);
 		logFile << std::format("textureDimensionMask=0x{:X}\n", a_metadata.textureDimensionMask);
 		logFile << "inputTextureCount=(" << a_metadata.inputTextureCount << ")\n";
@@ -282,6 +992,11 @@ namespace CommunityShaders
 		logFile << std::format("inputMask=0x{:X}\n", a_metadata.inputMask);
 		logFile << "outputcount=(" << a_metadata.outputCount << ")\n";
 		logFile << std::format("outputMask=0x{:X}\n", a_metadata.outputMask);
+		logFile << "instructionCount=(" << a_metadata.instructionCount << ")\n";
+		logFile << "sampleInstructionCount=(" << a_metadata.sampleInstructionCount << ")\n";
+		logFile << "immediateConstantBufferRows=(" << a_metadata.immediateConstantBufferRows << ")\n";
+		logFile << "hasDiscard=" << (a_metadata.hasDiscard ? "true" : "false") << "\n";
+		logFile << "hasImmediateConstantBuffer=" << (a_metadata.hasImmediateConstantBuffer ? "true" : "false") << "\n";
 		logFile << "shader=;" << a_metadata.uid << "_replacement.hlsl\n";
 		logFile << "log=true\n";
 		logFile << "dump=true\n";

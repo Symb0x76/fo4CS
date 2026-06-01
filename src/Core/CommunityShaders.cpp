@@ -67,6 +67,7 @@ namespace CommunityShaders
 		}
 
 		++frameCount;
+		Hooks::OnFrame();
 		BSShaderHooks::OnFrame();  // drain deferred shader replacements
 		ResetFeatures();
 		Menu::Reset();

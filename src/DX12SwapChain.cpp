@@ -346,6 +346,7 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
 	static std::atomic_uint64_t presentCounter{ 0 };
 	static bool lastFrameGenerationActive = false;
 	static const char* lastFrameGenerationBackend = "none";
+	static bool frameCallbackFailureLogged = false;
 
 	const auto presentID = presentCounter.fetch_add(1, std::memory_order_relaxed);
 	auto upscaling = Upscaling::GetSingleton();
@@ -375,6 +376,22 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
 	try {
 		if (traceFrame) {
 			logger::debug("[DX12SwapChain] Present#{} begin frameIndex={}", presentID, frameIndex);
+		}
+		if (frameCallback) {
+			trace("frame-callback");
+			try {
+				frameCallback();
+			} catch (const std::exception& e) {
+				if (!frameCallbackFailureLogged) {
+					frameCallbackFailureLogged = true;
+					logger::error("[DX12SwapChain] Frame callback failed: {}", e.what());
+				}
+			} catch (...) {
+				if (!frameCallbackFailureLogged) {
+					frameCallbackFailureLogged = true;
+					logger::error("[DX12SwapChain] Frame callback failed with unknown exception");
+				}
+			}
 		}
 		trace("reflex-sleep");
 		streamline->SleepReflexFrame("present");

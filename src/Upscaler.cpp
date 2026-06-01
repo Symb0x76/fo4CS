@@ -238,12 +238,20 @@ namespace
 	constexpr bool kDebugSettingsSupported = false;
 #endif
 
-	void LoadSharedDebugSettings(Upscaling::Settings& settings)
+	void LoadSharedDebugSettings(Upscaling::Settings& settings, const CSimpleIniA& ini)
 	{
 		if constexpr (kDebugSettingsSupported) {
-			settings.debugLogging = true;
-			settings.streamlineLogLevel = 2;
-			settings.debugFrameLogCount = 240;
+			settings.debugLogging = ini.GetBoolValue("Settings", "bDebugLogging", settings.debugLogging);
+			settings.streamlineLogLevel = ClampIntSetting(
+				static_cast<int>(ini.GetLongValue("Settings", "iStreamlineLogLevel", settings.streamlineLogLevel)),
+				0,
+				2,
+				"iStreamlineLogLevel");
+			settings.debugFrameLogCount = ClampIntSetting(
+				static_cast<int>(ini.GetLongValue("Settings", "iDebugFrameLogCount", settings.debugFrameLogCount)),
+				0,
+				600,
+				"iDebugFrameLogCount");
 		} else {
 			settings.debugLogging = false;
 			settings.streamlineLogLevel = 0;
@@ -360,7 +368,7 @@ void Upscaling::LoadFrameGenerationSettings()
 		0,
 		kFrameGenerationBackendFSR,
 		"iFrameGenerationBackend");
-	LoadSharedDebugSettings(settings);
+	LoadSharedDebugSettings(settings, ini);
 	ApplyDebugEnvironmentOverrides(settings);
 	ConfigureDebugLogging(settings);
 	ApplyRuntimeFallbacks();
@@ -390,7 +398,7 @@ void Upscaling::LoadReflexSettings()
 		2,
 		"iReflexMode");
 	settings.reflexSleepMode = ini.GetBoolValue("Settings", "bReflexSleepMode", settings.reflexSleepMode);
-	LoadSharedDebugSettings(settings);
+	LoadSharedDebugSettings(settings, ini);
 	ApplyDebugEnvironmentOverrides(settings);
 	ConfigureDebugLogging(settings);
 	ApplyRuntimeFallbacks();
@@ -445,6 +453,9 @@ void Upscaling::LoadSettings()
 		0,
 		15,
 		"iDLSSPreset");
+	LoadSharedDebugSettings(settings, upscalerIni);
+	ApplyDebugEnvironmentOverrides(settings);
+	ConfigureDebugLogging(settings);
 
 	ApplyRuntimeFallbacks();
 

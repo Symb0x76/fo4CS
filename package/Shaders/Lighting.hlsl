@@ -1,45 +1,41 @@
 // Lighting.hlsl — FO4 Community Shaders lighting pixel shader
-// Replaces vanilla FO4 lighting PS via BSShader::ReloadShaders hook.
+// Intended shader-side companion for a verified FO4 lighting path; not an unconditional vanilla PS replacement.
 // Architecture mirrors Skyrim CS: compiled per (shaderType, descriptor)
 // with feature defines injected at compile time.
-
-#include "LightLimitFix/Common.hlsli"
+// PreNG note: BSShaderHooks holds ReplacePixelShaders on FALLOUT_PRE_NG, so this
+// file is not evidence that active FO4 lighting shaders consume LLF b3/t35-t37.
 
 #if defined(LIGHT_LIMIT_FIX)
-	// Clustered-forward light grid resources (bound by LightLimitFix::Prepass)
-	StructuredBuffer<Light>    Lights          : register(t35);
-	StructuredBuffer<uint>     LightIndexList  : register(t36);
-	StructuredBuffer<LightGrid> LightGrid      : register(t37);
+#include "LightLimitFix/LightLimitFix.hlsli"
 
-	cbuffer ClusterData : register(b0)
+	cbuffer LightLimitFixSupportData : register(b0)
 	{
+		uint EnableVisualisation;
+		uint VisualisationMode;
+		float CameraNear;
+		float CameraFar;
 		uint4 ClusterSize;
-		uint  EnableVisualisation;
-		uint  VisualisationMode;
-		float pad[2];
 	}
 
-	uint GetClusterIndex(float2 screenPos, float viewZ)
+	float GetLLFCameraNear()
 	{
-		uint3 clusterCoord;
-		clusterCoord.x = uint(screenPos.x * float(ClusterSize.x));
-		clusterCoord.y = uint(screenPos.y * float(ClusterSize.y));
-		// Logarithmic Z-slice (matching ClusterBuildingCS)
-		clusterCoord.z = uint(log2(max(viewZ, 0.001)) * float(ClusterSize.z) / 10.0);
-		clusterCoord = clamp(clusterCoord, 0u, uint3(ClusterSize.xyz - 1u));
-		return clusterCoord.x
-			+ clusterCoord.y * ClusterSize.x
-			+ clusterCoord.z * (ClusterSize.x * ClusterSize.y);
+		return CameraNear > 0.0f ? CameraNear : 0.1f;
 	}
 
-	float3 EvaluateLight(Light light, float3 worldPos, float3 N, float3 V)
+	float GetLLFCameraFar()
+	{
+		const float cameraNear = GetLLFCameraNear();
+		return CameraFar > cameraNear ? CameraFar : 10000.0f;
+	}
+
+	float3 EvaluateLight(LightLimitFix::Light light, float3 worldPos, float3 N, float3 V)
 	{
 		float3 toLight = light.positionWS[0].xyz - worldPos;
-		float dist = length(toLight);
+		float dist = max(length(toLight), 1e-4f);
 		float3 L = toLight / dist;
 
-		float attenuation = 1.0 - saturate(dist * light.invRadius);
-		attenuation *= attenuation * light.fade;
+		float intensityFactor = saturate(dist / max(light.radius, 1e-4f));
+		float attenuation = (1.0f - intensityFactor * intensityFactor) * light.fade;
 
 		float NdotL = saturate(dot(N, L));
 		float3 diffuse = light.color * NdotL * attenuation;
@@ -65,16 +61,26 @@ float4 main(
 
 #if defined(LIGHT_LIMIT_FIX)
 	float3 V = normalize(float3(0, 0, 1) - worldPos);
-	uint clusterIdx = GetClusterIndex(
+	uint clusterLightOffset = 0;
+	uint clusteredLightCount = 0;
+	LightLimitFix::TryGetCluster(
 		position.xy / float2(1920.0, 1080.0),
-		position.z);
+		position.z,
+		ClusterSize,
+		GetLLFCameraNear(),
+		GetLLFCameraFar(),
+		clusterLightOffset,
+		clusteredLightCount);
 
-	LightGrid grid = LightGrid[clusterIdx];
 	float3 N = normalize(normal);
+	uint totalLightCount = LightLimitFix::GetStrictLightCount() + clusteredLightCount;
 
-	for (uint i = 0; i < grid.lightCount && i < 128; i++) {
-		uint lightIdx = LightIndexList[grid.offset + i];
-		totalLight += EvaluateLight(Lights[lightIdx], worldPos, N, V);
+	[loop] for (uint i = 0; i < totalLightCount; i++) {
+		LightLimitFix::Light light = (LightLimitFix::Light)0;
+		if (!LightLimitFix::GetStrictOrClusteredLight(i, clusterLightOffset, light))
+			continue;
+
+		totalLight += EvaluateLight(light, worldPos, N, V);
 	}
 #endif
 

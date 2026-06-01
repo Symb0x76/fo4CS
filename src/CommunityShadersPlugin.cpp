@@ -69,6 +69,17 @@ namespace
 		fo4cs::Diagnostics::WriteHangTraceLine("Present:exit");
 	}
 
+	void OnDX12ProxyFrame()
+	{
+		fo4cs::Diagnostics::WriteHangTraceLine("DX12ProxyFrame:enter");
+		auto* runtime = CommunityShaders::Runtime::GetSingleton();
+		if (runtime->IsLoaded()) {
+			fo4cs::Diagnostics::WriteHangTraceLine("DX12ProxyFrame:Runtime:OnFrame:begin");
+			runtime->OnFrame();
+			fo4cs::Diagnostics::WriteHangTraceLine("DX12ProxyFrame:Runtime:OnFrame:end");
+		}
+	}
+
 	void MessageHandler(F4SE::MessagingInterface::Message* message)
 	{
 		if (message->type == F4SE::MessagingInterface::kPostPostLoad) {
@@ -107,6 +118,7 @@ extern "C" DLLEXPORT bool F4SEAPI F4SEPlugin_Load(const F4SE::LoadInterface* a_f
 
 	DX11Hooks::SetDeviceCreatedCallback(OnD3D11DeviceCreated);
 	DX11Hooks::SetPresentCallback(OnPresent);
+	DX12SwapChain::GetSingleton()->RegisterFrameCallback(OnDX12ProxyFrame);
 
 	CommunityShaders::Runtime::GetSingleton()->Load();
 

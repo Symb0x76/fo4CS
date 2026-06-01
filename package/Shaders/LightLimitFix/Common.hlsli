@@ -38,11 +38,8 @@ struct LightGrid
 	uint2 pad0;
 };
 
-// GPU-side layout matching LightLimitFix::LightData in C++
-// C++ struct is 112 bytes (alignas(16)); first 104 bytes are layout-identical.
-// uint64_t roomFlags → uint2 (SM 5.0 lacks 64-bit integers)
+// GPU-side layout matching LightLimitFix::LightData in C++.
 // float3 positionWS[2] → float4 positionWS[2] (float3 + uint pad per slot)
-// uint64_t pad2[2] → uint4 pad2
 struct Light
 {
 	float3 color;           // offset 0
@@ -52,12 +49,11 @@ struct Light
 	float fadeZone;         // offset 24
 	float sizeBias;         // offset 28 (+4 = 16 boundary)
 	float4 positionWS[2];   // offset 32 (+32 = 16 boundary)
-	uint2 roomFlags;        // offset 64 (maps uint64_t)
-	uint lightFlags;        // offset 72
-	uint shadowMaskIndex;   // offset 76 (+4 = 16 boundary)
-	uint pad0;              // offset 80
-	uint pad1;              // offset 84
-	uint4 pad2;             // offset 88 (maps uint64_t[2])
+	uint4 roomFlags;        // offset 64
+	uint lightFlags;        // offset 80
+	uint shadowLightIndex;  // offset 84
+	uint pad0;              // offset 88
+	uint pad1;              // offset 92 (+4 = 16 boundary)
 };
 
 #endif // LLF_COMMON_HLSLI

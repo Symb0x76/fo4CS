@@ -21,6 +21,7 @@ using OverlayPresentCallback = void (*)(ID3D12GraphicsCommandList4* cmdList,
                                         ID3D12Resource* backBuffer,
                                         DXGI_FORMAT format);
 using OverlayPollCallback = void (*)();
+using FrameCallback = void (*)();
 
 class WrappedResource
 {
@@ -88,10 +89,12 @@ public:
 	OverlayInitCallback overlayInitCallback = nullptr;
 	OverlayPresentCallback overlayPresentCallback = nullptr;
 	OverlayPollCallback overlayPollCallback = nullptr;
+	FrameCallback frameCallback = nullptr;
 
 	void RegisterOverlayInitCallback(OverlayInitCallback a_cb) { overlayInitCallback = a_cb; }
 	void RegisterOverlayPresentCallback(OverlayPresentCallback a_cb) { overlayPresentCallback = a_cb; }
 	void RegisterOverlayPollCallback(OverlayPollCallback a_cb) { overlayPollCallback = a_cb; }
+	void RegisterFrameCallback(FrameCallback a_cb) { frameCallback = a_cb; }
 
 	bool HasOverlayPresentCallback() const { return overlayPresentCallback != nullptr; }
 	bool HasOverlayPollCallback() const { return overlayPollCallback != nullptr; }
