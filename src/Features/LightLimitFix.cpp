@@ -115,7 +115,6 @@ constexpr const char *kPreNGDFLightContractCompileEnv = "FO4CS_LLF_PRENG_DFLIGHT
 constexpr const char *kPreNGDFLightCandidateCompileEnv = "FO4CS_LLF_PRENG_DFLIGHT_CANDIDATE_COMPILE";
 constexpr const char *kPreNGDFLightContractProbeSource = "LightLimitFix\\DFLightContractProbePS.hlsl";
 constexpr const char *kPreNGDFLightFullShadowedCandidateSource = "LightLimitFix\\DFLightFullShadowedPS.hlsl";
-constexpr std::uint32_t kPreNGSetupGeometryStrictCBProofMaxSamples = 16;
 constexpr std::uint32_t kPreNGMaxSetupGeometryCallBudget = 1000000;
 constexpr std::uint32_t kPreNGDefaultSetupGeometryFrameBudget = 2;
 constexpr std::uint32_t kPreNGMaxSetupGeometryFrameBudget = 64;
@@ -266,8 +265,8 @@ std::uint64_t HashPreNGBytes(const void *a_data, std::size_t a_size)
 }
 
 LightLimitFix::ClusterPayloadCacheState MakePreNGClusterPayloadCacheState(
-    const std::vector<LightLimitFix::LightData> &a_lights, const LightLimitFix::StrictLightDataCB &a_strictLightData,
-    std::uint32_t a_lightCount, std::uint32_t a_strictLightCount, const DirectX::XMFLOAT4X4 &a_viewTransposed,
+    const std::vector<LightLimitFix::LightData> &a_lights, std::uint32_t a_lightCount,
+    const DirectX::XMFLOAT4X4 &a_viewTransposed,
     float a_lightsNear, float a_lightsFar, const std::uint32_t (&a_clusterSize)[3])
 {
     LightLimitFix::ClusterPayloadCacheState state{};
@@ -278,12 +277,9 @@ LightLimitFix::ClusterPayloadCacheState MakePreNGClusterPayloadCacheState(
     state.ClusterSize[2] = a_clusterSize[2];
     state.ClusterSize[3] = 0;
     state.LightCount = a_lightCount;
-    state.StrictLightCount = a_strictLightCount;
-    state.ShadowBitMask = a_strictLightData.ShadowBitMask;
     state.LightsHash = a_lights.empty()
                            ? kPreNGFNVOffsetBasis
                            : HashPreNGBytes(a_lights.data(), a_lights.size() * sizeof(LightLimitFix::LightData));
-    state.StrictHash = HashPreNGBytes(&a_strictLightData, sizeof(a_strictLightData));
     state.ViewHash = HashPreNGBytes(&a_viewTransposed, sizeof(a_viewTransposed));
     return state;
 }
@@ -1479,20 +1475,19 @@ void TryBindPreNGBSLightingDeferredDescriptorResources(LightLimitFix &a_feature)
     if (bindIndex <= 8 || bindIndex % 512 == 0)
     {
         logger::info("[LightLimitFix] PreNG BSLighting deferred descriptor resources attempted binds={} vsDesc=0x{:X} "
-                     "psDesc=0x{:X} vanillaFound={} vanillaPS=0x{:X} strictCB={} clusterSRVs={} lights={} strict={} "
-                     "shadowMask=0x{:08X}; audit records whether current PS still matches the observed BSLighting PS",
+                     "psDesc=0x{:X} vanillaFound={} vanillaPS=0x{:X} strictCB={} clusterSRVs={} lights={}; audit "
+                     "records whether current PS still matches the observed BSLighting PS",
                      bindIndex, vertexDescriptor, pixelDescriptor, vanillaFound, vanillaPixelShader,
-                     resourceState.strictCBBound, resourceState.clusterSRVsBound, resourceState.lightCount,
-                     resourceState.strictLightCount, resourceState.shadowBitMask);
+                     resourceState.strictCBBound, resourceState.clusterSRVsBound, resourceState.lightCount);
         a_feature.TracePreNGActiveLightingBindings("descriptor-bslighting-resource-bind-deferred-prepass",
                                                    static_cast<std::int32_t>(F4Runtime::PreNG::BS_LIGHTING_SHADER_TYPE),
                                                    vertexDescriptor, pixelDescriptor, vanillaFound, vanillaPixelShader);
     }
 
-    if (resourceState.strictCBBound && resourceState.clusterSRVsBound &&
+    if (resourceState.clusterSRVsBound &&
         !s_preNGBSLightingDeferredResourceProofComplete.exchange(true, std::memory_order_relaxed))
     {
-        logger::info("[LightLimitFix] PreNG BSLighting deferred resource-only proof reached b3/t35-t37 completion "
+        logger::info("[LightLimitFix] PreNG BSLighting deferred resource-only proof reached t35-t37 completion "
                      "after clustered payload upload; future deferred proof binds are held until a visible-safe "
                      "consumer is implemented");
     }
@@ -1591,8 +1586,6 @@ struct PreNGPointLightSetupCall
     {
         const auto callIndex = s_preNGPointLightHookCallCount.fetch_add(1, std::memory_order_relaxed) + 1;
         std::uint32_t collected = 0;
-        std::uint32_t strict = 0;
-        std::uint32_t strictShadowBitMask = 0;
         bool strictCBUploaded = false;
         bool strictCBBound = false;
         bool clusterSRVsBound = false;
@@ -1608,8 +1601,6 @@ struct PreNGPointLightSetupCall
                 requestedLightCount = static_cast<std::uint32_t>(a_lightCount);
                 collected = self->CollectLightsFromPreNGSceneLights(
                     a_pass, requestedLightCount, a_shadowArg > 0 ? static_cast<std::uint32_t>(a_shadowArg) : 0);
-                strict = self->currentStrictLightCount;
-                strictShadowBitMask = self->strictLightDataTemp.ShadowBitMask;
             }
         }
 
@@ -1619,12 +1610,9 @@ struct PreNGPointLightSetupCall
 
         if (self && !previewMenuSuppressed)
         {
-            strictCBUploaded = self->UploadPreNGStrictLightDataDiagnostic();
-            strictCBBound =
-                self->BindPreNGStrictLightDataCBToPixelShader(a_pass, requestedLightCount, strictCBUploaded);
+            strictCBUploaded = false;
+            strictCBBound = false;
             clusterSRVsBound = self->BindPreNGClusterSRVsToPixelShader(a_pass, requestedLightCount, strictCBBound);
-            strict = self->currentStrictLightCount;
-            strictShadowBitMask = self->strictLightDataTemp.ShadowBitMask;
         }
 
         const bool logThisCall = callIndex <= 8 || callIndex % 512 == 0;
@@ -1637,13 +1625,13 @@ struct PreNGPointLightSetupCall
         if (logThisCall)
         {
             logger::info("[LightLimitFix] PreNG internal point-light hook reached calls={} constantGroup=0x{:X} "
-                         "pass=0x{:X} requested={} collected={} strict={} strictCB={} b3={} t35t37={} "
-                         "previewMenuSuppressed={} bindOrder=post-vanilla shadowArg={} strictShadowMask=0x{:08X} "
+                         "pass=0x{:X} requested={} collected={} strictCB={} b3={} t35t37={} "
+                         "previewMenuSuppressed={} bindOrder=post-vanilla shadowArg={} "
                          "worldScale={:.3f} unknown={} currentPSEntry=0x{:X} currentPSD3D=0x{:X} currentPSId=0x{:X} "
                          "currentPSEntryReadable={} currentPSSlots(88={},89={},94={},96={})",
                          callIndex, a_pixelShader, reinterpret_cast<std::uintptr_t>(a_pass), a_lightCount, collected,
-                         strict, strictCBUploaded ? "uploaded" : "held", strictCBBound ? "bound" : "held",
-                         clusterSRVsBound ? "bound" : "held", previewMenuSuppressed, a_shadowArg, strictShadowBitMask,
+                         strictCBUploaded ? "uploaded" : "held", strictCBBound ? "bound" : "held",
+                         clusterSRVsBound ? "bound" : "held", previewMenuSuppressed, a_shadowArg,
                          a_worldScale, a_unknown, currentPixelShader.entry, currentPixelShader.d3dObject,
                          currentPixelShader.id, currentPixelShader.entryReadable,
                          static_cast<std::uint32_t>(currentPixelShader.slot88),
@@ -1812,7 +1800,6 @@ void LightLimitFix::DrawSettings()
         }
 
         ImGui::Text("Lights: %u", currentLightCount);
-        ImGui::Text("Strict lights: %u", currentStrictLightCount);
         ImGui::Text("Clusters: %ux%ux%u", clusterSize[0], clusterSize[1], clusterSize[2]);
 
         if (changed)
@@ -1929,17 +1916,6 @@ void LightLimitFix::SetupResources()
         desc.ByteWidth = sizeof(LightCullingCB);
         if (!createBuffer("CreateBuffer(lightCullingCB)", desc, lightCullingCB))
             return;
-    }
-    {
-        D3D11_BUFFER_DESC desc{};
-        desc.Usage = D3D11_USAGE_DYNAMIC;
-        desc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
-        desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
-        desc.ByteWidth = sizeof(StrictLightDataCB);
-        if (!createBuffer("CreateBuffer(strictLightDataCB)", desc, strictLightDataCB))
-        {
-            logger::warn("[LightLimitFix] Strict light diagnostic CB unavailable; continuing without it");
-        }
     }
 
     // Lights structured buffer
@@ -2417,15 +2393,13 @@ void LightLimitFix::RunClusterPrepass()
             if (holdIndex <= 8 || holdIndex % 512 == 0)
             {
                 logger::info("[LightLimitFix] PreNG clustered Prepass prepared state retained for DFLight proof pass "
-                             "holds={} lights={} strict={} shadowMask=0x{:08X}",
-                             holdIndex, currentLightCount, currentStrictLightCount, strictLightDataTemp.ShadowBitMask);
+                             "holds={} lights={}",
+                             holdIndex, currentLightCount);
             }
         }
         else
         {
             currentLightCount = 0;
-            currentStrictLightCount = 0;
-            strictLightDataTemp = {};
             clusterPayloadCacheValid = false;
             clusterPayloadCache = {};
             shadowSceneFastReuseValid = false;
@@ -2472,8 +2446,6 @@ void LightLimitFix::RunClusterPrepass()
 #if defined(FALLOUT_PRE_NG)
     std::vector<LightData> preNGSceneLightFallback;
     preNGSceneLightFallback.swap(frameLights);
-    const auto preNGSceneLightFallbackStrictData = strictLightDataTemp;
-    const auto preNGSceneLightFallbackStrictCount = currentStrictLightCount;
 
     seenLights.clear();
     seenThisPass.clear();
@@ -2483,17 +2455,13 @@ void LightLimitFix::RunClusterPrepass()
         if (!preNGSceneLightFallback.empty())
         {
             frameLights.swap(preNGSceneLightFallback);
-            strictLightDataTemp = preNGSceneLightFallbackStrictData;
-            currentStrictLightCount = preNGSceneLightFallbackStrictCount;
 
             static std::atomic_uint32_t fallbackUseCount = 0;
             const auto fallbackIndex = ++fallbackUseCount;
             if (fallbackIndex <= 8 || fallbackIndex % 512 == 0)
             {
-                logger::info("[LightLimitFix] PreNG scene-light fallback feeds clustered prepass uses={} lights={} "
-                             "strict={} shadowMask=0x{:08X}",
-                             fallbackIndex, static_cast<std::uint32_t>(frameLights.size()), currentStrictLightCount,
-                             strictLightDataTemp.ShadowBitMask);
+                logger::info("[LightLimitFix] PreNG scene-light fallback feeds clustered prepass uses={} lights={}",
+                             fallbackIndex, static_cast<std::uint32_t>(frameLights.size()));
             }
         }
         else
@@ -2515,8 +2483,8 @@ void LightLimitFix::RunClusterPrepass()
     currentLightCount = static_cast<std::uint32_t>(frameLights.size());
 #if defined(FALLOUT_PRE_NG)
     const auto preNGClusterPayloadCurrent =
-        MakePreNGClusterPayloadCacheState(frameLights, strictLightDataTemp, currentLightCount, currentStrictLightCount,
-                                          viewTransposed, CameraNear, CameraFar, clusterSize);
+        MakePreNGClusterPayloadCacheState(frameLights, currentLightCount, viewTransposed, CameraNear, CameraFar,
+                                          clusterSize);
     // Skyrim-parity step 1 (BOSS): never reuse the cached payload — dispatch the
     // cluster build+cull compute EVERY frame like Skyrim CS. The ViewHash/inputs
     // reuse was the mechanism that, combined with periodic resubmit, produced the
@@ -2560,10 +2528,9 @@ void LightLimitFix::RunClusterPrepass()
             const auto uploadIndex = ++nonZeroClusterUploadCount;
             if (uploadIndex <= 8 || uploadIndex % 512 == 0)
             {
-                logger::info("[LightLimitFix] PreNG clustered prepass uploaded uploads={} frame={} lights={} strict={} "
-                             "clusters={} shadowMask=0x{:08X}",
-                             uploadIndex, frameNumber, currentLightCount, currentStrictLightCount,
-                             clusterSize[0] * clusterSize[1] * clusterSize[2], strictLightDataTemp.ShadowBitMask);
+                logger::info("[LightLimitFix] PreNG clustered prepass uploaded uploads={} frame={} lights={} clusters={}",
+                             uploadIndex, frameNumber, currentLightCount,
+                             clusterSize[0] * clusterSize[1] * clusterSize[2]);
             }
         }
 #endif
@@ -2686,7 +2653,6 @@ void LightLimitFix::RunClusterPrepass()
             ResolvePreNGClusterGpuTimer(context, gpuTimerSlot, frameNumber, currentLightCount);
         }
         clusterPayloadCache = preNGClusterPayloadCurrent;
-        clusterPayloadCache.StrictCBUploaded = false;
         clusterPayloadCacheValid = true;
 #endif
     }
@@ -2695,34 +2661,6 @@ void LightLimitFix::RunClusterPrepass()
 #if defined(FALLOUT_PRE_NG)
     if (ShouldBindPreNGPrepassResources())
     {
-        // Skyrim-parity step 1 (BOSS): every frame, upload+bind strict CB (b3) and
-        // bind clustered SRVs (t35-t37). No persistent/reuse/hold branches — Skyrim
-        // CS binds these from Prepass unconditionally each frame.
-        bool prepassStrictCBUploaded = false;
-        if (ShouldBindPreNGStrictLightCB())
-        {
-            prepassStrictCBUploaded = UploadPreNGStrictLightDataDiagnostic();
-        }
-        const bool prepassStrictCBBound =
-            BindPreNGStrictLightDataCBToPixelShader(nullptr, currentLightCount, prepassStrictCBUploaded);
-        if ((prepassStrictCBBound || prepassStrictCBUploaded) && clusterPayloadCacheValid)
-        {
-            clusterPayloadCache.StrictCBUploaded = true;
-        }
-        if (prepassStrictCBBound)
-        {
-            static std::atomic_uint32_t prepassStrictCBBindCount = 0;
-            const auto prepassStrictCBBindIndex = ++prepassStrictCBBindCount;
-            if (prepassStrictCBBindIndex <= 8 || prepassStrictCBBindIndex % 512 == 0)
-            {
-                logger::info(
-                    "[LightLimitFix] PreNG strict-light CB bound to PS b3 from Prepass (Skyrim parity) binds={} "
-                    "frame={} lights={} strict={} clusters={} shadowMask=0x{:08X} uploadedBeforeBind={}",
-                    prepassStrictCBBindIndex, frameNumber, currentLightCount, currentStrictLightCount,
-                    clusterSize[0] * clusterSize[1] * clusterSize[2], strictLightDataTemp.ShadowBitMask,
-                    prepassStrictCBUploaded);
-            }
-        }
         if (ShouldBindPreNGClusterSRVs())
         {
             ID3D11ShaderResourceView *views[3]{lightsSRV.get(), lightIndexListSRV.get(), lightGridSRV.get()};
@@ -2732,10 +2670,10 @@ void LightLimitFix::RunClusterPrepass()
             const auto prepassBindIndex = ++prepassBindCount;
             if (prepassBindIndex <= 8 || prepassBindIndex % 512 == 0)
             {
-                logger::info("[LightLimitFix] PreNG cluster SRVs bound to PS t35-t37 from Prepass (Skyrim parity) "
-                             "binds={} frame={} lights={} strict={} clusters={} shadowMask=0x{:08X}",
-                             prepassBindIndex, frameNumber, currentLightCount, currentStrictLightCount,
-                             clusterSize[0] * clusterSize[1] * clusterSize[2], strictLightDataTemp.ShadowBitMask);
+                logger::info("[LightLimitFix] PreNG cluster SRVs bound to PS t35-t37 from Prepass "
+                             "binds={} frame={} lights={} clusters={}",
+                             prepassBindIndex, frameNumber, currentLightCount,
+                             clusterSize[0] * clusterSize[1] * clusterSize[2]);
             }
         }
     }
@@ -2766,17 +2704,17 @@ bool LightLimitFix::HasResources() const
 #if defined(FALLOUT_PRE_NG)
 bool LightLimitFix::HasPreNGDFLightDescriptorConsumerData() const
 {
-    return HasResources() && strictLightDataCB && currentLightCount > 0 && currentStrictLightCount > 0;
+    return HasResources() && currentLightCount > 0;
 }
 
 bool LightLimitFix::HasPreNGDFCompositeDescriptorConsumerData() const
 {
-    return HasResources() && strictLightDataCB && currentLightCount > 0;
+    return HasResources() && currentLightCount > 0;
 }
 
 bool LightLimitFix::HasPreNGBSLightingDescriptorConsumerData() const
 {
-    return HasResources() && strictLightDataCB && currentLightCount > 0;
+    return HasResources() && currentLightCount > 0;
 }
 
 bool LightLimitFix::ShouldSuppressPreNGBSLightingVisibleConsumerForMenu() const
@@ -2815,9 +2753,8 @@ void LightLimitFix::NotifyPreNGBSLightingVisibleConsumerResumeComplete()
 
     auto *runtime = CommunityShaders::Runtime::GetSingleton();
     logger::info("[LightLimitFix] PreNG UI preview LLF recovery complete frame={} lastMenu={} llfConsumerComplete=true "
-                 "strictCB=true clusterSRVs=true lights={} strict={}",
-                 runtime ? runtime->GetFrameCount() : 0, GetPreNGBSLightingLastPreviewMenuReason(), currentLightCount,
-                 currentStrictLightCount);
+                 "clusterSRVs=true lights={}",
+                 runtime ? runtime->GetFrameCount() : 0, GetPreNGBSLightingLastPreviewMenuReason(), currentLightCount);
 }
 
 void LightLimitFix::NotifyPreNGDFLightLLFConsumerDescriptorObserved(std::uint32_t a_vertexDescriptor,
@@ -2933,10 +2870,6 @@ std::uint32_t LightLimitFix::CollectLightsFromPreNGSceneLights(RE::BSRenderPass 
                                                                std::uint32_t a_requestedLightCount,
                                                                std::uint32_t a_shadowArg)
 {
-    strictLightDataTemp = {};
-    strictLightDataTemp.RoomIndex = -1;
-    currentStrictLightCount = 0;
-
     if (!a_pass)
     {
         return 0;
@@ -2962,7 +2895,6 @@ std::uint32_t LightLimitFix::CollectLightsFromPreNGSceneLights(RE::BSRenderPass 
     }
 
     std::uint32_t collected = 0;
-    std::uint32_t strictWriteCount = 0;
     std::uint32_t missingEntryCount = 0;
     std::uint32_t missingWrapperDataCount = 0;
     std::uint32_t invalidNiLightDataCount = 0;
@@ -2971,8 +2903,7 @@ std::uint32_t LightLimitFix::CollectLightsFromPreNGSceneLights(RE::BSRenderPass 
     std::uint32_t unreadableShadowMaskCount = 0;
     std::uint32_t invalidShadowMaskCount = 0;
 
-    for (std::uint32_t i = 0;
-         i < availableLightCount && (frameLights.size() < kMaxLights || strictWriteCount < kMaxStrictLights); ++i)
+    for (std::uint32_t i = 0; i < availableLightCount && frameLights.size() < kMaxLights; ++i)
     {
         std::uintptr_t wrapperAddress = 0;
         if (!passView.ReadSceneLightWrapper(i, wrapperAddress) || wrapperAddress == 0)
@@ -3004,10 +2935,6 @@ std::uint32_t LightLimitFix::CollectLightsFromPreNGSceneLights(RE::BSRenderPass 
             continue;
         }
 
-        if (shadowMaskBit != 0)
-        {
-            strictLightDataTemp.ShadowBitMask |= shadowMaskBit;
-        }
         if (shadowMaskUnreadable)
         {
             ++unreadableShadowMaskCount;
@@ -3015,11 +2942,6 @@ std::uint32_t LightLimitFix::CollectLightsFromPreNGSceneLights(RE::BSRenderPass 
         else if (shadowMaskInvalid)
         {
             ++invalidShadowMaskCount;
-        }
-
-        if (strictWriteCount < kMaxStrictLights)
-        {
-            strictLightDataTemp.StrictLights[strictWriteCount++] = data;
         }
 
         auto *lightKey = reinterpret_cast<RE::BSLight *>(niLightAddress);
@@ -3035,9 +2957,6 @@ std::uint32_t LightLimitFix::CollectLightsFromPreNGSceneLights(RE::BSRenderPass 
         ++collected;
     }
 
-    strictLightDataTemp.NumStrictLights = strictWriteCount;
-    currentStrictLightCount = strictWriteCount;
-
     static std::atomic_uint32_t decodeDiagCount = 0;
     if (availableLightCount > 0 && (collected > 0 || missingEntryCount > 0 || missingWrapperDataCount > 0 ||
                                     invalidNiLightDataCount > 0 || inactiveLightDataCount > 0))
@@ -3047,12 +2966,12 @@ std::uint32_t LightLimitFix::CollectLightsFromPreNGSceneLights(RE::BSRenderPass 
         {
             logger::info(
                 "[LightLimitFix] PreNG scene-light decode pass=0x{:X} table=0x{:X} raw={} requested={} available={} "
-                "collected={} strict={} shadowArg={} strictShadowMask=0x{:08X} skips(entry={}, wrapper={}, niLight={}, "
+                "collected={} shadowArg={} skips(entry={}, wrapper={}, niLight={}, "
                 "inactive={}, duplicate={}, shadowMaskUnreadable={}, shadowMaskInvalid={})",
                 passAddress, sceneLightsAddress, static_cast<std::uint32_t>(rawLightCount), a_requestedLightCount,
-                availableLightCount, collected, strictWriteCount, a_shadowArg, strictLightDataTemp.ShadowBitMask,
-                missingEntryCount, missingWrapperDataCount, invalidNiLightDataCount, inactiveLightDataCount,
-                duplicateLightCount, unreadableShadowMaskCount, invalidShadowMaskCount);
+                availableLightCount, collected, a_shadowArg, missingEntryCount, missingWrapperDataCount,
+                invalidNiLightDataCount, inactiveLightDataCount, duplicateLightCount, unreadableShadowMaskCount,
+                invalidShadowMaskCount);
         }
     }
 
@@ -3061,10 +2980,6 @@ std::uint32_t LightLimitFix::CollectLightsFromPreNGSceneLights(RE::BSRenderPass 
 
 std::uint32_t LightLimitFix::CollectLightsFromPreNGShadowScene()
 {
-    strictLightDataTemp = {};
-    strictLightDataTemp.RoomIndex = -1;
-    currentStrictLightCount = 0;
-
     std::uintptr_t activeLightsAddress = 0;
     std::uintptr_t activeShadowLightsAddress = 0;
     std::uintptr_t activeExtraLightsAddress = 0;
@@ -3169,8 +3084,6 @@ std::uint32_t LightLimitFix::CollectLightsFromPreNGShadowScene()
                  shadowSceneFastReuse.ReuseAge < fastReuseRefreshInterval)
         {
             frameLights = shadowSceneFastReuse.Lights;
-            strictLightDataTemp = shadowSceneFastReuse.StrictData;
-            currentStrictLightCount = shadowSceneFastReuse.StrictLightCount;
             ++shadowSceneFastReuse.ReuseAge;
 
             static std::atomic_uint32_t fastReuseCount = 0;
@@ -3180,22 +3093,20 @@ std::uint32_t LightLimitFix::CollectLightsFromPreNGShadowScene()
                 logger::info("[LightLimitFix] PreNG ShadowScene fast-reused decoded lights reuses={} age={} "
                              "refreshInterval={} node=0x{:X} active=(ptr=0x{:X}, count={}, hash=0x{:016X}) "
                              "shadow=(ptr=0x{:X}, count={}, hash=0x{:016X}) extra=(ptr=0x{:X}, count={}, "
-                             "hash=0x{:016X}) lights={} strict={} shadowMask=0x{:08X} lightsHash=0x{:016X}",
+                             "hash=0x{:016X}) lights={} lightsHash=0x{:016X}",
                              reuseIndex, shadowSceneFastReuse.ReuseAge, fastReuseRefreshInterval,
                              shadowSceneFastReuse.Key.Node, shadowSceneFastReuse.Key.ActiveEntries,
                              shadowSceneFastReuse.Key.ActiveCount, shadowSceneFastReuse.Key.ActiveHash,
                              shadowSceneFastReuse.Key.ShadowEntries, shadowSceneFastReuse.Key.ShadowCount,
                              shadowSceneFastReuse.Key.ShadowHash, shadowSceneFastReuse.Key.ExtraEntries,
                              shadowSceneFastReuse.Key.ExtraCount, shadowSceneFastReuse.Key.ExtraHash,
-                             shadowSceneFastReuse.LightCount, shadowSceneFastReuse.StrictLightCount,
-                             strictLightDataTemp.ShadowBitMask, shadowSceneFastReuse.LightsHash);
+                             shadowSceneFastReuse.LightCount, shadowSceneFastReuse.LightsHash);
             }
             return shadowSceneFastReuse.LightCount;
         }
     }
 
     std::uint32_t collected = 0;
-    std::uint32_t strictWriteCount = 0;
     std::uint32_t missingEntryCount = 0;
     std::uint32_t missingWrapperDataCount = 0;
     std::uint32_t invalidNiLightDataCount = 0;
@@ -3205,8 +3116,7 @@ std::uint32_t LightLimitFix::CollectLightsFromPreNGShadowScene()
     std::uint32_t invalidShadowMaskCount = 0;
 
     auto decodeBucket = [&](const F4Runtime::PreNGShadowSceneBucket &a_bucket, std::uint32_t a_count) {
-        for (std::uint32_t i = 0;
-             i < a_count && (frameLights.size() < kMaxLights || strictWriteCount < kMaxStrictLights); ++i)
+        for (std::uint32_t i = 0; i < a_count && frameLights.size() < kMaxLights; ++i)
         {
             std::uintptr_t wrapperAddress = 0;
             if (!a_bucket.ReadLightWrapper(i, wrapperAddress) || wrapperAddress == 0)
@@ -3238,10 +3148,6 @@ std::uint32_t LightLimitFix::CollectLightsFromPreNGShadowScene()
                 continue;
             }
 
-            if (shadowMaskBit != 0)
-            {
-                strictLightDataTemp.ShadowBitMask |= shadowMaskBit;
-            }
             if (shadowMaskUnreadable)
             {
                 ++unreadableShadowMaskCount;
@@ -3249,11 +3155,6 @@ std::uint32_t LightLimitFix::CollectLightsFromPreNGShadowScene()
             else if (shadowMaskInvalid)
             {
                 ++invalidShadowMaskCount;
-            }
-
-            if (strictWriteCount < kMaxStrictLights)
-            {
-                strictLightDataTemp.StrictLights[strictWriteCount++] = data;
             }
 
             auto *lightKey = reinterpret_cast<RE::BSLight *>(niLightAddress);
@@ -3274,26 +3175,23 @@ std::uint32_t LightLimitFix::CollectLightsFromPreNGShadowScene()
     decodeBucket(buckets.shadow, decodeActiveShadowLightCount);
     decodeBucket(buckets.extra, decodeActiveExtraLightCount);
 
-    strictLightDataTemp.NumStrictLights = strictWriteCount;
-    currentStrictLightCount = strictWriteCount;
-
     static std::atomic_uint32_t decodeDiagCount = 0;
     const auto diagIndex = ++decodeDiagCount;
     if (diagIndex <= 8 || diagIndex % 512 == 0)
     {
         logger::info("[LightLimitFix] PreNG shadow-scene light decode node=0x{:X} selectedIndex={} currentIndex={} "
                      "currentIndexRead={} fallback={} active=(ptr=0x{:X}, count={}, decode={}) shadow=(ptr=0x{:X}, "
-                     "count={}, decode={}) extra=(ptr=0x{:X}, count={}, decode={}) truncated={} collected={} strict={} "
-                     "shadowMask=0x{:08X} skips(entry={}, wrapper={}, niLight={}, inactive={}, duplicate={}, "
+                     "count={}, decode={}) extra=(ptr=0x{:X}, count={}, decode={}) truncated={} collected={} "
+                     "skips(entry={}, wrapper={}, niLight={}, inactive={}, duplicate={}, "
                      "shadowMaskUnreadable={}, shadowMaskInvalid={})",
                      shadowSceneNode, static_cast<std::uint32_t>(shadowSceneNodeRef.selectedIndex),
                      static_cast<std::uint32_t>(shadowSceneNodeRef.currentIndex), shadowSceneNodeRef.currentIndexRead,
                      shadowSceneNodeRef.usedFallback, activeLightsAddress, activeLightCount, decodeActiveLightCount,
                      activeShadowLightsAddress, activeShadowLightCount, decodeActiveShadowLightCount,
                      activeExtraLightsAddress, activeExtraLightCount, decodeActiveExtraLightCount,
-                     shadowSceneDecodeTruncated, collected, strictWriteCount, strictLightDataTemp.ShadowBitMask,
-                     missingEntryCount, missingWrapperDataCount, invalidNiLightDataCount, inactiveLightDataCount,
-                     duplicateLightCount, unreadableShadowMaskCount, invalidShadowMaskCount);
+                     shadowSceneDecodeTruncated, collected, missingEntryCount, missingWrapperDataCount,
+                     invalidNiLightDataCount, inactiveLightDataCount, duplicateLightCount, unreadableShadowMaskCount,
+                     invalidShadowMaskCount);
     }
 
     if (fastReuseEnabled)
@@ -3304,12 +3202,10 @@ std::uint32_t LightLimitFix::CollectLightsFromPreNGShadowScene()
             const auto lightsHash = frameLights.empty()
                                         ? kPreNGFNVOffsetBasis
                                         : HashPreNGBytes(frameLights.data(), frameLights.size() * sizeof(LightData));
-            const auto strictHash = HashPreNGBytes(&strictLightDataTemp, sizeof(strictLightDataTemp));
             const bool stableWithPrevious =
                 shadowSceneFastReuseValid && SamePreNGShadowSceneFastReuseKey(shadowSceneFastReuse.Key, fastReuseKey) &&
                 shadowSceneFastReuse.LightCount == cachedLightCount &&
-                shadowSceneFastReuse.StrictLightCount == currentStrictLightCount &&
-                shadowSceneFastReuse.LightsHash == lightsHash && shadowSceneFastReuse.StrictHash == strictHash;
+                shadowSceneFastReuse.LightsHash == lightsHash;
 
             auto stableDecodeCount = stableWithPrevious ? shadowSceneFastReuse.StableDecodeCount : 0u;
             if (stableDecodeCount != 0xFFFFFFFFu)
@@ -3319,11 +3215,8 @@ std::uint32_t LightLimitFix::CollectLightsFromPreNGShadowScene()
 
             shadowSceneFastReuse.Key = fastReuseKey;
             shadowSceneFastReuse.Lights = frameLights;
-            shadowSceneFastReuse.StrictData = strictLightDataTemp;
             shadowSceneFastReuse.LightCount = cachedLightCount;
-            shadowSceneFastReuse.StrictLightCount = currentStrictLightCount;
             shadowSceneFastReuse.LightsHash = lightsHash;
-            shadowSceneFastReuse.StrictHash = strictHash;
             shadowSceneFastReuse.StableDecodeCount = stableDecodeCount;
             shadowSceneFastReuse.ReuseAge = 0;
             shadowSceneFastReuseValid = true;
@@ -3333,12 +3226,11 @@ std::uint32_t LightLimitFix::CollectLightsFromPreNGShadowScene()
             if (captureIndex <= 8 || captureIndex % 512 == 0)
             {
                 logger::info("[LightLimitFix] PreNG ShadowScene fast-reuse captured decode captures={} "
-                             "stableDecodes={} refreshInterval={} node=0x{:X} lights={} strict={} shadowMask=0x{:08X} "
-                             "lightsHash=0x{:016X} strictHash=0x{:016X}",
+                             "stableDecodes={} refreshInterval={} node=0x{:X} lights={} "
+                             "lightsHash=0x{:016X}",
                              captureIndex, shadowSceneFastReuse.StableDecodeCount, fastReuseRefreshInterval,
                              shadowSceneFastReuse.Key.Node, shadowSceneFastReuse.LightCount,
-                             shadowSceneFastReuse.StrictLightCount, strictLightDataTemp.ShadowBitMask,
-                             shadowSceneFastReuse.LightsHash, shadowSceneFastReuse.StrictHash);
+                             shadowSceneFastReuse.LightsHash);
             }
         }
         else
@@ -3351,127 +3243,10 @@ std::uint32_t LightLimitFix::CollectLightsFromPreNGShadowScene()
     return collected;
 }
 
-bool LightLimitFix::UpdatePreNGStrictLightDataCB()
-{
-    auto *rendererData = fo4cs::GetRendererData();
-    if (!rendererData)
-    {
-        return false;
-    }
-    auto *context = reinterpret_cast<ID3D11DeviceContext *>(rendererData->context);
-    if (!context)
-    {
-        return false;
-    }
-
-    return UpdatePreNGStrictLightDataCB(context);
-}
-
-bool LightLimitFix::UpdatePreNGStrictLightDataCB(ID3D11DeviceContext *a_context)
-{
-    static bool loggedMissing = false;
-    if (!strictLightDataCB)
-    {
-        if (!loggedMissing)
-        {
-            logger::warn("[LightLimitFix] PreNG strict-light CB update requested but resource is unavailable");
-            loggedMissing = true;
-        }
-        return false;
-    }
-    if (!a_context)
-    {
-        return false;
-    }
-
-    D3D11_MAPPED_SUBRESOURCE mapped{};
-    const auto hr = a_context->Map(strictLightDataCB.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
-    if (FAILED(hr))
-    {
-        LogResourceFailure("Map(strictLightDataCB)", hr);
-        return false;
-    }
-
-    std::memcpy(mapped.pData, &strictLightDataTemp, sizeof(strictLightDataTemp));
-    a_context->Unmap(strictLightDataCB.get(), 0);
-    return true;
-}
-
-bool LightLimitFix::UploadPreNGStrictLightDataDiagnostic()
-{
-    if (!ShouldUpdatePreNGStrictLightCB())
-    {
-        return false;
-    }
-
-    return UpdatePreNGStrictLightDataCB();
-}
-
-bool LightLimitFix::BindPreNGStrictLightDataCBToPixelShader(RE::BSRenderPass *a_pass,
-                                                            std::uint32_t a_requestedLightCount,
-                                                            bool a_bufferAlreadyUploaded)
-{
-    if (!ShouldBindPreNGStrictLightCB())
-    {
-        return false;
-    }
-
-    auto logBindFailure = [&](const char *a_reason) {
-        static std::atomic_uint32_t failureCount = 0;
-        const auto failureIndex = ++failureCount;
-        if (failureIndex <= 8 || failureIndex % 512 == 0)
-        {
-            logger::warn("[LightLimitFix] PreNG strict-light CB b3 bind held failures={} reason={} pass=0x{:X} "
-                         "requested={} strict={} shadowMask=0x{:08X} uploadedBeforeBind={}",
-                         failureIndex, a_reason, reinterpret_cast<std::uintptr_t>(a_pass), a_requestedLightCount,
-                         currentStrictLightCount, strictLightDataTemp.ShadowBitMask, a_bufferAlreadyUploaded);
-        }
-    };
-
-    if (!strictLightDataCB)
-    {
-        logBindFailure("missing-strict-cb");
-        return false;
-    }
-
-    if (!a_bufferAlreadyUploaded && !UpdatePreNGStrictLightDataCB())
-    {
-        logBindFailure("upload-failed");
-        return false;
-    }
-
-    auto *rendererData = fo4cs::GetRendererData();
-    if (!rendererData)
-    {
-        logBindFailure("renderer-data-unavailable");
-        return false;
-    }
-    auto *context = reinterpret_cast<ID3D11DeviceContext *>(rendererData->context);
-    if (!context)
-    {
-        logBindFailure("context-unavailable");
-        return false;
-    }
-
-    ID3D11Buffer *buffer = strictLightDataCB.get();
-    context->PSSetConstantBuffers(3, 1, &buffer);
-
-    static std::atomic_uint32_t bindCount = 0;
-    const auto bindIndex = ++bindCount;
-    if (bindIndex <= 8 || bindIndex % 512 == 0)
-    {
-        logger::info("[LightLimitFix] PreNG strict-light CB bound to PS b3 binds={} pass=0x{:X} requested={} strict={} "
-                     "shadowMask=0x{:08X} uploadedBeforeBind={}",
-                     bindIndex, reinterpret_cast<std::uintptr_t>(a_pass), a_requestedLightCount,
-                     currentStrictLightCount, strictLightDataTemp.ShadowBitMask, a_bufferAlreadyUploaded);
-    }
-
-    return true;
-}
-
 bool LightLimitFix::BindPreNGClusterSRVsToPixelShader(RE::BSRenderPass *a_pass, std::uint32_t a_requestedLightCount,
                                                       bool a_strictCBBound)
 {
+    (void)a_strictCBBound;
     if (!ShouldBindPreNGClusterSRVs())
     {
         return false;
@@ -3483,18 +3258,11 @@ bool LightLimitFix::BindPreNGClusterSRVsToPixelShader(RE::BSRenderPass *a_pass, 
         if (failureIndex <= 8 || failureIndex % 512 == 0)
         {
             logger::warn("[LightLimitFix] PreNG cluster SRV t35-t37 bind held failures={} reason={} pass=0x{:X} "
-                         "requested={} strict={} clusterLights={} shadowMask=0x{:08X} strictCBBound={}",
+                         "requested={} clusterLights={}",
                          failureIndex, a_reason, reinterpret_cast<std::uintptr_t>(a_pass), a_requestedLightCount,
-                         currentStrictLightCount, currentLightCount, strictLightDataTemp.ShadowBitMask,
-                         a_strictCBBound);
+                         currentLightCount);
         }
     };
-
-    if (!a_strictCBBound)
-    {
-        logBindFailure("strict-cb-not-bound");
-        return false;
-    }
 
     if (currentLightCount == 0)
     {
@@ -3529,10 +3297,9 @@ bool LightLimitFix::BindPreNGClusterSRVsToPixelShader(RE::BSRenderPass *a_pass, 
     if (bindIndex <= 8 || bindIndex % 512 == 0)
     {
         logger::info("[LightLimitFix] PreNG cluster SRVs bound to PS t35-t37 binds={} pass=0x{:X} requested={} "
-                     "strict={} clusterLights={} clusters={} shadowMask=0x{:08X} strictCBBound={}",
+                     "clusterLights={} clusters={}",
                      bindIndex, reinterpret_cast<std::uintptr_t>(a_pass), a_requestedLightCount,
-                     currentStrictLightCount, currentLightCount, clusterSize[0] * clusterSize[1] * clusterSize[2],
-                     strictLightDataTemp.ShadowBitMask, a_strictCBBound);
+                     currentLightCount, clusterSize[0] * clusterSize[1] * clusterSize[2]);
     }
 
     if (currentLightCount > 0)
@@ -3542,10 +3309,9 @@ bool LightLimitFix::BindPreNGClusterSRVsToPixelShader(RE::BSRenderPass *a_pass, 
         if (nonZeroBindIndex <= 8 || nonZeroBindIndex % 512 == 0)
         {
             logger::info("[LightLimitFix] PreNG cluster SRVs nonzero bind proof nonzeroBinds={} binds={} pass=0x{:X} "
-                         "requested={} strict={} clusterLights={} clusters={} shadowMask=0x{:08X} strictCBBound={}",
+                         "requested={} clusterLights={} clusters={}",
                          nonZeroBindIndex, bindIndex, reinterpret_cast<std::uintptr_t>(a_pass), a_requestedLightCount,
-                         currentStrictLightCount, currentLightCount, clusterSize[0] * clusterSize[1] * clusterSize[2],
-                         strictLightDataTemp.ShadowBitMask, a_strictCBBound);
+                         currentLightCount, clusterSize[0] * clusterSize[1] * clusterSize[2]);
         }
     }
 
@@ -3557,26 +3323,19 @@ LightLimitFix::PreNGDFLightResourceBindingState LightLimitFix::BindPreNGDescript
 {
     PreNGDFLightResourceBindingState state{};
     state.lightCount = currentLightCount;
-    state.strictLightCount = currentStrictLightCount;
-    state.shadowBitMask = strictLightDataTemp.ShadowBitMask;
+    state.strictLightCount = 0;
+    state.shadowBitMask = 0;
+    state.strictCBBound = false;
     const char *sourceName = a_sourceName ? a_sourceName : "descriptor";
 
-    const bool strictCBAlreadyUploaded = clusterPayloadCacheValid && clusterPayloadCache.StrictCBUploaded;
-    state.strictCBBound = BindPreNGStrictLightDataCBToPixelShader(nullptr, currentLightCount, strictCBAlreadyUploaded);
-    if (state.strictCBBound && clusterPayloadCacheValid)
-    {
-        clusterPayloadCache.StrictCBUploaded = true;
-    }
-    state.clusterSRVsBound = BindPreNGClusterSRVsToPixelShader(nullptr, currentLightCount, state.strictCBBound);
+    state.clusterSRVsBound = BindPreNGClusterSRVsToPixelShader(nullptr, currentLightCount, false);
 
     static std::atomic_uint32_t descriptorResourceBindCount = 0;
     const auto bindIndex = ++descriptorResourceBindCount;
     if (bindIndex <= 8 || bindIndex % 512 == 0)
     {
-        logger::info("[LightLimitFix] PreNG {} resources bound binds={} lights={} strict={} shadowMask=0x{:08X} "
-                     "strictCB={} clusterSRVs={} strictCBUploadedBeforeBind={}",
-                     sourceName, bindIndex, state.lightCount, state.strictLightCount, state.shadowBitMask,
-                     state.strictCBBound, state.clusterSRVsBound, strictCBAlreadyUploaded);
+        logger::info("[LightLimitFix] PreNG {} resources bound binds={} lights={} strictCB={} clusterSRVs={}",
+                     sourceName, bindIndex, state.lightCount, state.strictCBBound, state.clusterSRVsBound);
     }
 
     return state;
@@ -3707,8 +3466,8 @@ LightLimitFix::PreNGDFLightResourceBindingState LightLimitFix::BindPreNGBSLighti
 {
     PreNGDFLightResourceBindingState state{};
     state.lightCount = currentLightCount;
-    state.strictLightCount = currentStrictLightCount;
-    state.shadowBitMask = strictLightDataTemp.ShadowBitMask;
+    state.strictLightCount = 0;
+    state.shadowBitMask = 0;
 
     if (!ShouldBindPreNGBSLightingSetupGeometryResources())
     {
@@ -3727,13 +3486,10 @@ LightLimitFix::PreNGDFLightResourceBindingState LightLimitFix::BindPreNGBSLighti
 
     currentLightCount = static_cast<std::uint32_t>(frameLights.size());
     state.lightCount = currentLightCount;
-    state.strictLightCount = currentStrictLightCount;
-    state.shadowBitMask = strictLightDataTemp.ShadowBitMask;
+    state.strictLightCount = 0;
+    state.shadowBitMask = 0;
     if (currentLightCount == 0)
     {
-        currentStrictLightCount = 0;
-        strictLightDataTemp.NumStrictLights = 0;
-        strictLightDataTemp.ShadowBitMask = 0;
         state.strictLightCount = 0;
         state.shadowBitMask = 0;
         ExtendPreNGBSLightingSetupGeometryBypassWindow();
@@ -3763,10 +3519,9 @@ LightLimitFix::PreNGDFLightResourceBindingState LightLimitFix::BindPreNGBSLighti
         if (pendingIndex <= 8 || pendingIndex % 512 == 0)
         {
             logger::info("[LightLimitFix] PreNG BSLighting SetupGeometry resource bind pending payload pending={} "
-                         "pass=0x{:X} currentPS=0x{:X} currentPSId=0x{:X} lights={} strict={} shadowMask=0x{:08X}",
+                         "pass=0x{:X} currentPS=0x{:X} currentPSId=0x{:X} lights={}",
                          pendingIndex, reinterpret_cast<std::uintptr_t>(a_pass), currentPixelShader.d3dObject,
-                         currentPixelShader.id, currentLightCount, currentStrictLightCount,
-                         strictLightDataTemp.ShadowBitMask);
+                         currentPixelShader.id, currentLightCount);
         }
         return state;
     }
@@ -3783,10 +3538,10 @@ LightLimitFix::PreNGDFLightResourceBindingState LightLimitFix::BindPreNGBSLighti
                                          currentPixelShader.d3dObject);
     }
 
-    if (state.strictCBBound && state.clusterSRVsBound &&
+    if (state.clusterSRVsBound &&
         !setupGeometryResourceProofComplete.exchange(true, std::memory_order_relaxed))
     {
-        logger::info("[LightLimitFix] PreNG BSLighting SetupGeometry resource-only proof reached b3/t35-t37 completion "
+        logger::info("[LightLimitFix] PreNG BSLighting SetupGeometry resource-only proof reached t35-t37 completion "
                      "on current BSLighting path; future SetupGeometry resource binds are held until a visible-safe "
                      "consumer is implemented");
     }
@@ -3797,76 +3552,30 @@ LightLimitFix::PreNGDFLightResourceBindingState LightLimitFix::BindPreNGBSLighti
 LightLimitFix::PreNGDFLightResourceBindingState LightLimitFix::BindPreNGDFLightDrawStateStrictLightCB(
     ID3D11DeviceContext *a_context)
 {
+    // The b3 strict-light buffer is removed; this legacy draw-state entry point
+    // is retained for signature compatibility and reports the no-op strict state.
+    (void)a_context;
     PreNGDFLightResourceBindingState state{};
     state.lightCount = currentLightCount;
-    state.strictLightCount = currentStrictLightCount;
-    state.shadowBitMask = strictLightDataTemp.ShadowBitMask;
-
+    state.strictLightCount = 0;
+    state.shadowBitMask = 0;
+    state.strictCBBound = false;
     if (!ShouldBindPreNGDFLightDrawStateStrictLightCB())
     {
         return state;
     }
-
-    auto logBindFailure = [&](const char *a_reason) {
-        static std::atomic_uint32_t failureCount = 0;
-        const auto failureIndex = ++failureCount;
-        if (failureIndex <= 8 || failureIndex % 512 == 0)
-        {
-            logger::warn("[LightLimitFix] PreNG DFLight draw-state strict-light CB b3 bind held failures={} reason={} "
-                         "context=0x{:X} lights={} strict={} shadowMask=0x{:08X}",
-                         failureIndex, a_reason, reinterpret_cast<std::uintptr_t>(a_context), state.lightCount,
-                         state.strictLightCount, state.shadowBitMask);
-        }
-    };
-
-    if (!a_context)
-    {
-        logBindFailure("context-unavailable");
-        return state;
-    }
-    if (!strictLightDataCB)
-    {
-        logBindFailure("missing-strict-cb");
-        return state;
-    }
-    // No collected lights: nothing to bind, and skipping avoids the per-draw
-    // Map/WRITE_DISCARD upload below (dense scenes stalled to ~30fps).
-    if (currentLightCount == 0)
-    {
-        logBindFailure("no-lights");
-        return state;
-    }
-    if (!UpdatePreNGStrictLightDataCB(a_context))
-    {
-        logBindFailure("strict-cb-upload-failed");
-        return state;
-    }
-
-    ID3D11Buffer *strictCB = strictLightDataCB.get();
-    a_context->PSSetConstantBuffers(3, 1, &strictCB);
-    state.strictCBBound = true;
-
-    static std::atomic_uint32_t bindCount = 0;
-    const auto bindIndex = ++bindCount;
-    if (bindIndex <= 8 || bindIndex % 512 == 0)
-    {
-        logger::info("[LightLimitFix] PreNG DFLight draw-state strict-light CB bound to PS b3 binds={} context=0x{:X} "
-                     "lights={} strict={} shadowMask=0x{:08X}",
-                     bindIndex, reinterpret_cast<std::uintptr_t>(a_context), state.lightCount, state.strictLightCount,
-                     state.shadowBitMask);
-    }
-
     return state;
 }
 
 LightLimitFix::PreNGDFLightResourceBindingState LightLimitFix::BindPreNGDFLightDrawStateClusterSRVs(
     ID3D11DeviceContext *a_context, bool a_strictCBBound)
 {
+    (void)a_strictCBBound;
     PreNGDFLightResourceBindingState state{};
     state.lightCount = currentLightCount;
-    state.strictLightCount = currentStrictLightCount;
-    state.shadowBitMask = strictLightDataTemp.ShadowBitMask;
-    state.strictCBBound = a_strictCBBound;
+    state.strictLightCount = 0;
+    state.shadowBitMask = 0;
+    state.strictCBBound = false;
 
     if (!ShouldBindPreNGDFLightDrawStateClusterSRVs())
     {
@@ -3879,9 +3588,8 @@ LightLimitFix::PreNGDFLightResourceBindingState LightLimitFix::BindPreNGDFLightD
         if (failureIndex <= 8 || failureIndex % 512 == 0)
         {
             logger::warn("[LightLimitFix] PreNG DFLight draw-state cluster SRV t35-t37 bind held failures={} reason={} "
-                         "context=0x{:X} lights={} strict={} shadowMask=0x{:08X} strictCBBound={}",
-                         failureIndex, a_reason, reinterpret_cast<std::uintptr_t>(a_context), state.lightCount,
-                         state.strictLightCount, state.shadowBitMask, state.strictCBBound);
+                         "context=0x{:X} lights={}",
+                         failureIndex, a_reason, reinterpret_cast<std::uintptr_t>(a_context), state.lightCount);
         }
     };
 
@@ -3890,36 +3598,9 @@ LightLimitFix::PreNGDFLightResourceBindingState LightLimitFix::BindPreNGDFLightD
         logBindFailure("context-unavailable");
         return state;
     }
-    if (!strictLightDataCB)
-    {
-        logBindFailure("missing-strict-cb");
-        return state;
-    }
-    // No collected lights: nothing to bind; skip the PSGetConstantBuffers probe
-    // and SRV binds below (dense scenes stalled to ~30fps).
     if (currentLightCount == 0)
     {
         logBindFailure("no-lights");
-        return state;
-    }
-    if (!state.strictCBBound)
-    {
-        ID3D11Buffer *currentStrictCB = nullptr;
-        a_context->PSGetConstantBuffers(3, 1, &currentStrictCB);
-        state.strictCBBound = currentStrictCB == strictLightDataCB.get();
-        if (currentStrictCB)
-        {
-            currentStrictCB->Release();
-        }
-    }
-    if (!state.strictCBBound)
-    {
-        logBindFailure("strict-cb-not-bound");
-        return state;
-    }
-    if (currentLightCount == 0)
-    {
-        logBindFailure("cluster-prepass-not-ready");
         return state;
     }
     if (!HasResources())
@@ -3942,9 +3623,9 @@ LightLimitFix::PreNGDFLightResourceBindingState LightLimitFix::BindPreNGDFLightD
     if (bindIndex <= 8 || bindIndex % 512 == 0)
     {
         logger::info("[LightLimitFix] PreNG DFLight draw-state cluster SRVs bound to PS t35-t37 binds={} "
-                     "context=0x{:X} lights={} strict={} clusters={} shadowMask=0x{:08X} strictCBBound={}",
-                     bindIndex, reinterpret_cast<std::uintptr_t>(a_context), state.lightCount, state.strictLightCount,
-                     clusterSize[0] * clusterSize[1] * clusterSize[2], state.shadowBitMask, state.strictCBBound);
+                     "context=0x{:X} lights={} clusters={}",
+                     bindIndex, reinterpret_cast<std::uintptr_t>(a_context), state.lightCount,
+                     clusterSize[0] * clusterSize[1] * clusterSize[2]);
     }
 
     static std::atomic_uint32_t nonZeroBindCount = 0;
@@ -3952,10 +3633,9 @@ LightLimitFix::PreNGDFLightResourceBindingState LightLimitFix::BindPreNGDFLightD
     if (nonZeroBindIndex <= 8 || nonZeroBindIndex % 512 == 0)
     {
         logger::info("[LightLimitFix] PreNG DFLight draw-state cluster SRVs nonzero bind proof nonzeroBinds={} "
-                     "binds={} context=0x{:X} lights={} strict={} clusters={} shadowMask=0x{:08X} strictCBBound={}",
+                     "binds={} context=0x{:X} lights={} clusters={}",
                      nonZeroBindIndex, bindIndex, reinterpret_cast<std::uintptr_t>(a_context), state.lightCount,
-                     state.strictLightCount, clusterSize[0] * clusterSize[1] * clusterSize[2], state.shadowBitMask,
-                     state.strictCBBound);
+                     clusterSize[0] * clusterSize[1] * clusterSize[2]);
     }
 
     return state;
@@ -3966,8 +3646,9 @@ LightLimitFix::PreNGDFLightResourceBindingState LightLimitFix::BindPreNGDFLightN
 {
     PreNGDFLightResourceBindingState state{};
     state.lightCount = currentLightCount;
-    state.strictLightCount = currentStrictLightCount;
-    state.shadowBitMask = strictLightDataTemp.ShadowBitMask;
+    state.strictLightCount = 0;
+    state.shadowBitMask = 0;
+    state.strictCBBound = false;
     const char *passName = a_passName ? a_passName : "unknown no-op pass";
 
     auto logBindFailure = [&](const char *a_reason) {
@@ -3976,9 +3657,9 @@ LightLimitFix::PreNGDFLightResourceBindingState LightLimitFix::BindPreNGDFLightN
         if (failureIndex <= 8 || failureIndex % 512 == 0)
         {
             logger::warn("[LightLimitFix] PreNG DFLight {} LLF resource bind held failures={} reason={} context=0x{:X} "
-                         "lights={} strict={} shadowMask=0x{:08X}",
+                         "lights={}",
                          passName, failureIndex, a_reason, reinterpret_cast<std::uintptr_t>(a_context),
-                         state.lightCount, state.strictLightCount, state.shadowBitMask);
+                         state.lightCount);
         }
     };
 
@@ -3992,11 +3673,6 @@ LightLimitFix::PreNGDFLightResourceBindingState LightLimitFix::BindPreNGDFLightN
         logBindFailure("gpu-resources-incomplete");
         return state;
     }
-    if (!strictLightDataCB)
-    {
-        logBindFailure("missing-strict-cb");
-        return state;
-    }
     if (!lightsSRV || !lightIndexListSRV || !lightGridSRV)
     {
         logBindFailure("missing-cluster-srvs");
@@ -4007,15 +3683,6 @@ LightLimitFix::PreNGDFLightResourceBindingState LightLimitFix::BindPreNGDFLightN
         logBindFailure("cluster-prepass-not-ready");
         return state;
     }
-    if (!UpdatePreNGStrictLightDataCB())
-    {
-        logBindFailure("strict-cb-upload-failed");
-        return state;
-    }
-
-    ID3D11Buffer *strictCB = strictLightDataCB.get();
-    a_context->PSSetConstantBuffers(3, 1, &strictCB);
-    state.strictCBBound = true;
 
     ID3D11ShaderResourceView *views[3]{lightsSRV.get(), lightIndexListSRV.get(), lightGridSRV.get()};
     a_context->PSSetShaderResources(35, ARRAYSIZE(views), views);
@@ -4025,10 +3692,10 @@ LightLimitFix::PreNGDFLightResourceBindingState LightLimitFix::BindPreNGDFLightN
     const auto bindIndex = ++bindCount;
     if (bindIndex <= 8 || bindIndex % 512 == 0)
     {
-        logger::info("[LightLimitFix] PreNG DFLight {} LLF resources bound binds={} context=0x{:X} lights={} strict={} "
-                     "clusters={} shadowMask=0x{:08X}",
+        logger::info("[LightLimitFix] PreNG DFLight {} LLF resources bound binds={} context=0x{:X} lights={} "
+                     "clusters={}",
                      passName, bindIndex, reinterpret_cast<std::uintptr_t>(a_context), state.lightCount,
-                     state.strictLightCount, clusterSize[0] * clusterSize[1] * clusterSize[2], state.shadowBitMask);
+                     clusterSize[0] * clusterSize[1] * clusterSize[2]);
     }
 
     return state;
@@ -4095,9 +3762,9 @@ bool LightLimitFix::TracePreNGActiveLightingBindings(const char *a_source, std::
     std::optional<CommunityShaders::ShaderCache::ShaderMetadata> lookupPixelShaderMetadata;
 
     auto logAudit = [&](const char *a_reason, ID3D11DeviceContext *a_context, std::uintptr_t a_currentPixelShader,
-                        bool a_pixelShaderMatches, bool a_b3Matches, bool a_t35Matches, bool a_t36Matches,
-                        bool a_t37Matches, ID3D11Buffer *a_boundB3, ID3D11ShaderResourceView *a_boundT35,
-                        ID3D11ShaderResourceView *a_boundT36, ID3D11ShaderResourceView *a_boundT37) {
+                        bool a_pixelShaderMatches, bool a_t35Matches, bool a_t36Matches, bool a_t37Matches,
+                        ID3D11ShaderResourceView *a_boundT35, ID3D11ShaderResourceView *a_boundT36,
+                        ID3D11ShaderResourceView *a_boundT37) {
         static std::atomic_uint32_t setupGeometryQueriedAuditCount = 0;
         static std::atomic_uint32_t shaderLookupQueriedAuditCount = 0;
         static std::atomic_uint32_t dflightDrawStateQueriedAuditCount = 0;
@@ -4107,7 +3774,6 @@ bool LightLimitFix::TracePreNGActiveLightingBindings(const char *a_source, std::
         static std::atomic_uint32_t pointLightHookQueriedAuditCount = 0;
         static std::atomic_uint32_t otherQueriedAuditCount = 0;
         static std::atomic_uint32_t heldAuditCount = 0;
-        static std::atomic_bool dflightDrawStateB3Logged = false;
         const bool queried = std::strcmp(a_reason, "queried") == 0;
         const bool dflightDrawStateAudit = queried && sourceName == "dflight-draw-state";
         std::atomic_uint32_t *auditCounter = &heldAuditCount;
@@ -4147,7 +3813,7 @@ bool LightLimitFix::TracePreNGActiveLightingBindings(const char *a_source, std::
             }
         }
         const auto auditIndex = ++(*auditCounter);
-        const bool resourceComplete = a_b3Matches && a_t35Matches && a_t36Matches && a_t37Matches;
+        const bool resourceComplete = a_t35Matches && a_t36Matches && a_t37Matches;
         const bool complete = a_pixelShaderMatches && resourceComplete;
         const auto currentEvidence = GetPreNGShaderSlotEvidence(currentPixelShaderMetadata);
         const auto lookupEvidence = GetPreNGShaderSlotEvidence(lookupPixelShaderMetadata);
@@ -4161,9 +3827,7 @@ bool LightLimitFix::TracePreNGActiveLightingBindings(const char *a_source, std::
         const auto initialAuditLimit =
             dflightDrawStateAudit ? 64u
                                   : ((descriptorDFLightBindAudit || descriptorDFCompositeSafeBindAudit) ? 32u : 16u);
-        const bool forceFirstDFLightB3 =
-            dflightDrawStateAudit && a_b3Matches && !dflightDrawStateB3Logged.exchange(true, std::memory_order_relaxed);
-        if (!forceFirstDFLightB3 && !descriptorCompleteAudit && !descriptorDFCompositeSafeCompleteAudit &&
+        if (!descriptorCompleteAudit && !descriptorDFCompositeSafeCompleteAudit &&
             auditIndex > initialAuditLimit && auditIndex % 128 != 0)
         {
             return;
@@ -4173,15 +3837,15 @@ bool LightLimitFix::TracePreNGActiveLightingBindings(const char *a_source, std::
         const bool lookupFullShadowed = HasPreNGFullShadowedDFLightVanillaContract(lookupPixelShaderMetadata);
         logger::info(
             "[LightLimitFix] PreNG active lighting binding audit audits={} source={} shaderType={} vsDesc=0x{:X} "
-            "psDesc=0x{:X} found={} reason={} context=0x{:X} currentPS=0x{:X} lookupPS=0x{:X} psMatch={} b3={} t35={} "
+            "psDesc=0x{:X} found={} reason={} context=0x{:X} currentPS=0x{:X} lookupPS=0x{:X} psMatch={} t35={} "
             "t36={} t37={} resourceComplete={} complete={} llfConsumerComplete={} currentMeta={} lookupMeta={} "
             "currentFullShadowed={} lookupFullShadowed={} currentDecl=(meta={},cb3={},t35={},t36={},t37={}) "
             "currentSamples=(t35={},t36={},t37={}) lookupDecl=(meta={},cb3={},t35={},t36={},t37={}) "
-            "lookupSamples=(t35={},t36={},t37={}) strict={} lights={} shadowMask=0x{:08X} "
-            "bound=(b3=0x{:X},t35=0x{:X},t36=0x{:X},t37=0x{:X}) expected=(b3=0x{:X},t35=0x{:X},t36=0x{:X},t37=0x{:X})",
+            "lookupSamples=(t35={},t36={},t37={}) lights={} "
+            "bound=(t35=0x{:X},t36=0x{:X},t37=0x{:X}) expected=(t35=0x{:X},t36=0x{:X},t37=0x{:X})",
             auditIndex, a_source ? a_source : "<null>", a_shaderType, a_vertexDescriptor, a_pixelDescriptor, a_found,
             a_reason, reinterpret_cast<std::uintptr_t>(a_context), a_currentPixelShader, a_lookupPixelShader,
-            a_pixelShaderMatches, a_b3Matches, a_t35Matches, a_t36Matches, a_t37Matches, resourceComplete, complete,
+            a_pixelShaderMatches, a_t35Matches, a_t36Matches, a_t37Matches, resourceComplete, complete,
             llfConsumerComplete, FormatPreNGShaderMetadata(currentPixelShaderMetadata),
             FormatPreNGShaderMetadata(lookupPixelShaderMetadata), currentFullShadowed, lookupFullShadowed,
             currentEvidence.hasMetadata, currentEvidence.declaresCB3, currentEvidence.declaresT35,
@@ -4189,19 +3853,17 @@ bool LightLimitFix::TracePreNGActiveLightingBindings(const char *a_source, std::
             currentEvidence.samplesT36, currentEvidence.samplesT37, lookupEvidence.hasMetadata,
             lookupEvidence.declaresCB3, lookupEvidence.declaresT35, lookupEvidence.declaresT36,
             lookupEvidence.declaresT37, lookupEvidence.samplesT35, lookupEvidence.samplesT36, lookupEvidence.samplesT37,
-            currentStrictLightCount, currentLightCount, strictLightDataTemp.ShadowBitMask,
-            reinterpret_cast<std::uintptr_t>(a_boundB3), reinterpret_cast<std::uintptr_t>(a_boundT35),
-            reinterpret_cast<std::uintptr_t>(a_boundT36), reinterpret_cast<std::uintptr_t>(a_boundT37),
-            reinterpret_cast<std::uintptr_t>(strictLightDataCB.get()),
+            currentLightCount,
+            reinterpret_cast<std::uintptr_t>(a_boundT35), reinterpret_cast<std::uintptr_t>(a_boundT36),
+            reinterpret_cast<std::uintptr_t>(a_boundT37),
             reinterpret_cast<std::uintptr_t>(lightsSRV.get()),
             reinterpret_cast<std::uintptr_t>(lightIndexListSRV.get()),
             reinterpret_cast<std::uintptr_t>(lightGridSRV.get()));
     };
 
-    if (!HasResources() || !strictLightDataCB)
+    if (!HasResources())
     {
-        logAudit("resources-incomplete", nullptr, 0, false, false, false, false, false, nullptr, nullptr, nullptr,
-                 nullptr);
+        logAudit("resources-incomplete", nullptr, 0, false, false, false, false, nullptr, nullptr, nullptr);
         return false;
     }
 
@@ -4211,23 +3873,19 @@ bool LightLimitFix::TracePreNGActiveLightingBindings(const char *a_source, std::
         auto *rendererData = fo4cs::GetRendererData();
         if (!rendererData)
         {
-            logAudit("renderer-data-unavailable", nullptr, 0, false, false, false, false, false, nullptr, nullptr,
-                     nullptr, nullptr);
+            logAudit("renderer-data-unavailable", nullptr, 0, false, false, false, false, nullptr, nullptr, nullptr);
             return false;
         }
         context = reinterpret_cast<ID3D11DeviceContext *>(rendererData->context);
     }
     if (!context)
     {
-        logAudit("context-unavailable", nullptr, 0, false, false, false, false, false, nullptr, nullptr, nullptr,
-                 nullptr);
+        logAudit("context-unavailable", nullptr, 0, false, false, false, false, nullptr, nullptr, nullptr);
         return false;
     }
 
     winrt::com_ptr<ID3D11PixelShader> currentPixelShader;
     context->PSGetShader(currentPixelShader.put(), nullptr, nullptr);
-    winrt::com_ptr<ID3D11Buffer> boundStrictCB;
-    context->PSGetConstantBuffers(3, 1, boundStrictCB.put());
     winrt::com_ptr<ID3D11ShaderResourceView> boundSRVs[3];
     for (std::size_t i = 0; i < std::size(boundSRVs); ++i) {
         context->PSGetShaderResources(35 + static_cast<UINT>(i), 1, boundSRVs[i].put());
@@ -4247,11 +3905,10 @@ bool LightLimitFix::TracePreNGActiveLightingBindings(const char *a_source, std::
         }
     }
     const bool pixelShaderMatches = a_lookupPixelShader != 0 && currentPixelShaderAddress == a_lookupPixelShader;
-    const bool b3Matches = boundStrictCB.get() == strictLightDataCB.get();
     const bool t35Matches = boundSRVs[0].get() == lightsSRV.get();
     const bool t36Matches = boundSRVs[1].get() == lightIndexListSRV.get();
     const bool t37Matches = boundSRVs[2].get() == lightGridSRV.get();
-    const bool resourceComplete = b3Matches && t35Matches && t36Matches && t37Matches;
+    const bool resourceComplete = t35Matches && t36Matches && t37Matches;
     const bool complete = pixelShaderMatches && resourceComplete;
     const auto currentCompletionEvidence = GetPreNGShaderSlotEvidence(currentPixelShaderMetadata);
     const bool llfConsumerComplete =
@@ -4260,8 +3917,8 @@ bool LightLimitFix::TracePreNGActiveLightingBindings(const char *a_source, std::
         currentCompletionEvidence.declaresT37 && currentCompletionEvidence.samplesT35 > 0 &&
         currentCompletionEvidence.samplesT36 > 0 && currentCompletionEvidence.samplesT37 > 0;
 
-    logAudit("queried", context, currentPixelShaderAddress, pixelShaderMatches, b3Matches, t35Matches, t36Matches,
-             t37Matches, boundStrictCB.get(), boundSRVs[0].get(), boundSRVs[1].get(), boundSRVs[2].get());
+    logAudit("queried", context, currentPixelShaderAddress, pixelShaderMatches, t35Matches, t36Matches, t37Matches,
+             boundSRVs[0].get(), boundSRVs[1].get(), boundSRVs[2].get());
 
     if (descriptorDFLightBindAudit && llfConsumerComplete)
     {
@@ -4457,103 +4114,13 @@ void LightLimitFix::SetupGeometryAfter(RE::BSRenderPass *a_pass)
     const auto collected = CollectLightsFromPreNGSceneLights(a_pass);
     if (collected > 0)
     {
-        const bool strictCBBindGate = ShouldBindPreNGSetupGeometryStrictLightCB();
-        const bool strictCBPersistRequested = ShouldPersistPreNGSetupGeometryStrictLightCB();
-        const bool strictCBPersistentActive = strictCBPersistRequested && strictCBBindGate;
-        const bool strictCBProofRequested = ShouldUpdatePreNGStrictLightCB() || strictCBBindGate;
-        std::uint32_t strictCBProofSample = 0;
-        bool strictCBProofActive = false;
-        if (strictCBProofRequested)
-        {
-            if (strictCBPersistentActive)
-            {
-                static std::atomic_uint32_t setupGeometryPersistentStrictCBSamples = 0;
-                strictCBProofSample =
-                    setupGeometryPersistentStrictCBSamples.fetch_add(1, std::memory_order_relaxed) + 1;
-                strictCBProofActive = true;
-                static bool loggedPersistentStrictCB = false;
-                if (!loggedPersistentStrictCB)
-                {
-                    logger::info("[LightLimitFix] PreNG SetupGeometry persistent strict-CB path active; continuing "
-                                 "upload/bind beyond the {} sample proof window",
-                                 kPreNGSetupGeometryStrictCBProofMaxSamples);
-                    loggedPersistentStrictCB = true;
-                }
-            }
-            else
-            {
-                static std::atomic_uint32_t setupGeometryStrictCBProofSamples = 0;
-                const auto proofIndex = setupGeometryStrictCBProofSamples.fetch_add(1, std::memory_order_relaxed);
-                if (proofIndex < kPreNGSetupGeometryStrictCBProofMaxSamples)
-                {
-                    strictCBProofActive = true;
-                    strictCBProofSample = proofIndex + 1;
-                }
-                else
-                {
-                    static bool loggedStrictCBProofComplete = false;
-                    if (!loggedStrictCBProofComplete)
-                    {
-                        logger::info("[LightLimitFix] PreNG SetupGeometry strict-CB proof window complete; holding "
-                                     "upload/bind after {} accepted samples",
-                                     kPreNGSetupGeometryStrictCBProofMaxSamples);
-                        loggedStrictCBProofComplete = true;
-                    }
-                }
-            }
-        }
-        const bool strictCBUploaded = strictCBProofActive ? UploadPreNGStrictLightDataDiagnostic() : false;
-        const bool strictCBBindRequested = strictCBProofActive && strictCBBindGate;
-        ID3D11DeviceContext *setupGeometryContext = nullptr;
-        ID3D11Buffer *previousStrictCB = nullptr;
-        bool strictCBRestorePrepared = false;
-        if (strictCBBindRequested && !strictCBPersistRequested)
-        {
-            if (auto *rendererData = fo4cs::GetRendererData())
-            {
-                setupGeometryContext = reinterpret_cast<ID3D11DeviceContext *>(rendererData->context);
-                if (setupGeometryContext)
-                {
-                    setupGeometryContext->PSGetConstantBuffers(3, 1, &previousStrictCB);
-                    strictCBRestorePrepared = true;
-                }
-            }
-        }
-        const bool strictCBBound = strictCBBindRequested && (strictCBPersistRequested || strictCBRestorePrepared)
-                                       ? BindPreNGStrictLightDataCBToPixelShader(a_pass, collected, strictCBUploaded)
-                                       : false;
-        const bool strictCBAvailable = strictCBUploaded || strictCBBound;
-        if (strictCBBound)
-        {
-            TracePreNGActiveLightingBindings("setup-geometry", -1, 0, 0, false, 0);
-            if (!strictCBPersistRequested && strictCBRestorePrepared && setupGeometryContext)
-            {
-                setupGeometryContext->PSSetConstantBuffers(3, 1, &previousStrictCB);
-            }
-        }
-        if (previousStrictCB)
-        {
-            previousStrictCB->Release();
-        }
-        const char *strictCBRestoreState =
-            strictCBBound ? (strictCBPersistRequested ? "persistent"
-                                                      : (strictCBRestorePrepared ? "restored" : "restore-unavailable"))
-                          : "held";
-        const char *strictCBProofState =
-            strictCBProofRequested
-                ? (strictCBPersistentActive ? "persistent" : (strictCBProofActive ? "active" : "complete"))
-                : "off";
         static std::atomic_uint32_t setupGeometryCollectCount = 0;
         const auto collectIndex = ++setupGeometryCollectCount;
         if (collectIndex <= 8 || collectIndex % 512 == 0)
         {
             logger::info("[LightLimitFix] PreNG SetupGeometry scene-light collection accepted samples={} pass=0x{:X} "
-                         "collected={} strict={} strictCB={} b3={} b3Restore={} setupGeometryBindGate={} "
-                         "setupGeometryPersistGate={} strictCBProof={} proofSample={} shadowMask=0x{:08X}",
-                         collectIndex, reinterpret_cast<std::uintptr_t>(a_pass), collected, currentStrictLightCount,
-                         strictCBAvailable ? "uploaded" : "held", strictCBBound ? "bound" : "held",
-                         strictCBRestoreState, strictCBBindGate ? "on" : "off", strictCBPersistRequested ? "on" : "off",
-                         strictCBProofState, strictCBProofSample, strictLightDataTemp.ShadowBitMask);
+                         "collected={}",
+                         collectIndex, reinterpret_cast<std::uintptr_t>(a_pass), collected);
         }
     }
     else
@@ -4562,10 +4129,8 @@ void LightLimitFix::SetupGeometryAfter(RE::BSRenderPass *a_pass)
         const auto emptyIndex = ++setupGeometryEmptyCount;
         if (emptyIndex <= 8 || emptyIndex % 512 == 0)
         {
-            logger::info("[LightLimitFix] PreNG SetupGeometry scene-light collection empty samples={} pass=0x{:X} "
-                         "strict={} shadowMask=0x{:08X}",
-                         emptyIndex, reinterpret_cast<std::uintptr_t>(a_pass), currentStrictLightCount,
-                         strictLightDataTemp.ShadowBitMask);
+            logger::info("[LightLimitFix] PreNG SetupGeometry scene-light collection empty samples={} pass=0x{:X}",
+                         emptyIndex, reinterpret_cast<std::uintptr_t>(a_pass));
         }
     }
 #else
