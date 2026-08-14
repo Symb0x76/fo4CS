@@ -6,6 +6,7 @@
 #include <array>
 #include <atomic>
 #include <charconv>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -1319,17 +1320,16 @@ bool ShouldTimePreNGClusterPrepassGpu()
 
 bool ShouldSubmitPreNGClusterPrepassEarly()
 {
-    // Default ON: submit the clustered compute from the shadow-map phase
-    // (EarlyPrepass) so it overlaps the engine's shadow GPU batch instead of the
-    // frame-start idle pocket that downclocks the GPU under the FrameGen interop
-    // fence. Main_RenderShadowMaps is now detoured at its function ENTRY (the old
-    // entry-50 write_thunk_call targeted the wrong CALL and never fired), so this
-    // route actually runs every frame. Set FO4CS_LLF_PRENG_PREPASS_EARLY_HOOK=0
-    // to force the legacy Main_RenderWorld_Start site for diagnostics.
+    // Default OFF: submit the clustered compute from Main_RenderWorld_Start
+    // (Prepass). The shadow-map (EarlyPrepass) route stays opt-in: the
+    // Main_RenderShadowMaps relocation (entry base+0x2850B1B) is not a live CALL
+    // target — detouring it still never fires (0 hits), unlike World_Start
+    // (8.19M hits) — so routing the LLF prepass there silently disables light
+    // collection. Keep the World_Start route as the reliable default.
     static const bool enabled = [] {
         const auto state = ReadEnvironmentSwitch(kPreNGPrepassEarlyHookEnv);
-        const bool resolved = state.source == EnvironmentSwitchSource::kNone || state.enabled;
-        logger::info("[LightLimitFix] PreNG clustered prepass early-submit resolved {}={} source={} default=on",
+        const bool resolved = state.enabled;
+        logger::info("[LightLimitFix] PreNG clustered prepass early-submit resolved {}={} source={} default=off",
                      kPreNGPrepassEarlyHookEnv, resolved ? "on" : "off", EnvironmentSwitchSourceName(state.source));
         return resolved;
     }();
@@ -2275,6 +2275,7 @@ void LightLimitFix::EarlyPrepass()
 void LightLimitFix::RunClusterPrepass()
 {
     const auto frameNumber = ++diagFrameCounter;
+    const auto prepassWallStart = std::chrono::steady_clock::now();
 
 #if defined(FALLOUT_PRE_NG)
     auto *runtime = CommunityShaders::Runtime::GetSingleton();
@@ -2692,6 +2693,15 @@ void LightLimitFix::RunClusterPrepass()
         }
     }
 #endif
+
+    if (frameNumber % 300 == 0)
+    {
+        const auto prepassWallMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                       std::chrono::steady_clock::now() - prepassWallStart)
+                                       .count();
+        logger::info("[LightLimitFix] Prepass wall time frame={} lights={} ms={}", frameNumber, currentLightCount,
+                     prepassWallMs);
+    }
 }
 
 bool LightLimitFix::HasResources() const
