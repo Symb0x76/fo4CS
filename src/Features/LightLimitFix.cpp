@@ -328,6 +328,24 @@ bool SamePreNGShadowSceneFastReuseStructure(const LightLimitFix::ShadowSceneFast
            a_lhs.ExtraCount == a_rhs.ExtraCount;
 }
 
+// Raw reads for the per-frame shadow-scene decode hot path. The engine owns the
+// shadow scene node + light wrappers + NiLights and keeps them valid for the
+// whole frame, so a raw memcpy is safe here. The old F4Runtime::ReadValue path
+// called VirtualQuery before EVERY read (~1800 syscalls per full decode), which
+// measured ~12ms and produced the once-per-second stutter.
+template <class T>
+bool ReadPreNGRaw(std::uintptr_t a_address, T &a_value)
+{
+    std::memcpy(&a_value, reinterpret_cast<const void *>(a_address), sizeof(T));
+    return true;
+}
+
+template <class T>
+bool ReadPreNGRawField(const F4Runtime::RuntimeField &a_field, std::uintptr_t a_base, T &a_value)
+{
+    return ReadPreNGRaw(a_field.address(a_base), a_value);
+}
+
 bool ReadPreNGShadowSceneBucketHash(const F4Runtime::PreNGShadowSceneBucket &a_bucket, std::uint64_t &a_hash)
 {
     a_hash = kPreNGFNVOffsetBasis;
@@ -336,10 +354,8 @@ bool ReadPreNGShadowSceneBucketHash(const F4Runtime::PreNGShadowSceneBucket &a_b
     for (std::uint32_t i = 0; i < a_bucket.count; ++i)
     {
         std::uintptr_t wrapperAddress = 0;
-        if (!a_bucket.ReadLightWrapper(i, wrapperAddress))
-        {
-            return false;
-        }
+        const auto entryAddress = a_bucket.entries + (static_cast<std::uintptr_t>(i) * sizeof(std::uintptr_t));
+        ReadPreNGRaw(entryAddress, wrapperAddress);
         HashPreNGAppendBytes(a_hash, &wrapperAddress, sizeof(wrapperAddress));
     }
     return true;
@@ -534,16 +550,25 @@ PreNGLightDecodeResult DecodePreNGBSLightWrapper(std::uintptr_t a_wrapperAddress
     a_shadowMaskBit = 0;
 
     float wrapperFade = 1.0f;
-    const F4Runtime::PreNGLightWrapperView wrapperView{a_wrapperAddress};
-    if (a_wrapperAddress == 0 || !wrapperView.ReadFade(wrapperFade) || !wrapperView.ReadNiLight(a_niLightAddress) ||
+    if (a_wrapperAddress == 0 ||
+        !ReadPreNGRawField(F4Runtime::PreNG::BS_LIGHT_WRAPPER_FADE, a_wrapperAddress, wrapperFade) ||
+        !ReadPreNGRawField(F4Runtime::PreNG::BS_LIGHT_WRAPPER_NI_LIGHT, a_wrapperAddress, a_niLightAddress) ||
         a_niLightAddress == 0 || !std::isfinite(wrapperFade))
     {
         return PreNGLightDecodeResult::MissingWrapperData;
     }
 
     F4Runtime::PreNGNiLightData niLight{};
-    const F4Runtime::PreNGNiLightView niLightView{a_niLightAddress};
-    if (!niLightView.Read(niLight) || !std::isfinite(niLight.diffuse[0]) || !std::isfinite(niLight.diffuse[1]) ||
+    const bool niLightRead =
+        ReadPreNGRawField(F4Runtime::PreNG::NI_LIGHT_DIFFUSE, a_niLightAddress, niLight.diffuse[0]) &&
+        ReadPreNGRaw(F4Runtime::PreNG::NI_LIGHT_DIFFUSE.address(a_niLightAddress) + sizeof(float), niLight.diffuse[1]) &&
+        ReadPreNGRaw(F4Runtime::PreNG::NI_LIGHT_DIFFUSE.address(a_niLightAddress) + (2 * sizeof(float)), niLight.diffuse[2]) &&
+        ReadPreNGRawField(F4Runtime::PreNG::NI_LIGHT_RADIUS, a_niLightAddress, niLight.radius) &&
+        ReadPreNGRawField(F4Runtime::PreNG::NI_LIGHT_DIMMER, a_niLightAddress, niLight.dimmer) &&
+        ReadPreNGRawField(F4Runtime::PreNG::NI_LIGHT_WORLD_TRANSLATE, a_niLightAddress, niLight.position[0]) &&
+        ReadPreNGRaw(F4Runtime::PreNG::NI_LIGHT_WORLD_TRANSLATE.address(a_niLightAddress) + sizeof(float), niLight.position[1]) &&
+        ReadPreNGRaw(F4Runtime::PreNG::NI_LIGHT_WORLD_TRANSLATE.address(a_niLightAddress) + (2 * sizeof(float)), niLight.position[2]);
+    if (!niLightRead || !std::isfinite(niLight.diffuse[0]) || !std::isfinite(niLight.diffuse[1]) ||
         !std::isfinite(niLight.diffuse[2]) || !std::isfinite(niLight.radius) || !std::isfinite(niLight.dimmer) ||
         !std::isfinite(niLight.position[0]) || !std::isfinite(niLight.position[1]) ||
         !std::isfinite(niLight.position[2]) || niLight.radius <= 0.0f)
@@ -570,7 +595,7 @@ PreNGLightDecodeResult DecodePreNGBSLightWrapper(std::uintptr_t a_wrapperAddress
     a_data.lightFlags = static_cast<std::uint32_t>(LightLimitFix::LightFlags::Initialised);
 
     std::uint32_t shadowMaskIndex = kPreNGInvalidShadowLightMaskIndex;
-    if (wrapperView.ReadShadowMaskIndex(shadowMaskIndex))
+    if (ReadPreNGRawField(F4Runtime::PreNG::BS_SHADOW_LIGHT_MASK_INDEX, a_wrapperAddress, shadowMaskIndex))
     {
         if (shadowMaskIndex != kPreNGInvalidShadowLightMaskIndex && shadowMaskIndex < kPreNGMaxShadowLightMaskBits)
         {
@@ -3130,7 +3155,9 @@ std::uint32_t LightLimitFix::CollectLightsFromPreNGShadowScene()
         for (std::uint32_t i = 0; i < a_count && frameLights.size() < kMaxLights; ++i)
         {
             std::uintptr_t wrapperAddress = 0;
-            if (!a_bucket.ReadLightWrapper(i, wrapperAddress) || wrapperAddress == 0)
+            const auto entryAddress = a_bucket.entries + (static_cast<std::uintptr_t>(i) * sizeof(std::uintptr_t));
+            ReadPreNGRaw(entryAddress, wrapperAddress);
+            if (wrapperAddress == 0)
             {
                 ++missingEntryCount;
                 continue;
