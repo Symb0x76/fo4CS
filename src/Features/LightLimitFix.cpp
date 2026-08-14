@@ -1319,16 +1319,18 @@ bool ShouldTimePreNGClusterPrepassGpu()
 
 bool ShouldSubmitPreNGClusterPrepassEarly()
 {
-    // Default ON: submit the clustered compute from the shadow-map phase
-    // (EarlyPrepass) so it overlaps the engine's shadow GPU batch instead of the
-    // frame-start idle pocket that downclocks the GPU under the FrameGen interop
-    // fence. Confirmed to fix the post-LockpickingMenu downclock with FrameGen
-    // on. Set FO4CS_LLF_PRENG_PREPASS_EARLY_HOOK=0 to force the legacy
-    // Main_RenderWorld_Start site for diagnostics.
+    // Default OFF: submit the clustered compute from Main_RenderWorld_Start
+    // (Prepass). The shadow-map (EarlyPrepass) route is opt-in only, because the
+    // Main_RenderShadowMaps write_thunk_call callsite has never fired: across 8M+
+    // hook-fire samples the counts were ShadowMaps=0 vs World_Start=8.19M, so
+    // routing the LLF prepass there held light collection + cluster SRV binding
+    // off entirely (no "frame=N lights=N", no consumer bind). Set
+    // FO4CS_LLF_PRENG_PREPASS_EARLY_HOOK=1 to force the shadow-map phase once
+    // the ShadowMaps callsite is re-verified against the PreNG binary.
     static const bool enabled = [] {
         const auto state = ReadEnvironmentSwitch(kPreNGPrepassEarlyHookEnv);
-        const bool resolved = state.source == EnvironmentSwitchSource::kNone || state.enabled;
-        logger::info("[LightLimitFix] PreNG clustered prepass early-submit resolved {}={} source={} default=on",
+        const bool resolved = state.enabled;
+        logger::info("[LightLimitFix] PreNG clustered prepass early-submit resolved {}={} source={} default=off",
                      kPreNGPrepassEarlyHookEnv, resolved ? "on" : "off", EnvironmentSwitchSourceName(state.source));
         return resolved;
     }();
@@ -3817,7 +3819,9 @@ bool LightLimitFix::TracePreNGActiveLightingBindings(const char *a_source, std::
         const bool complete = a_pixelShaderMatches && resourceComplete;
         const auto currentEvidence = GetPreNGShaderSlotEvidence(currentPixelShaderMetadata);
         const auto lookupEvidence = GetPreNGShaderSlotEvidence(lookupPixelShaderMetadata);
-        const bool llfConsumerComplete = complete && currentEvidence.hasMetadata && currentEvidence.declaresCB3 &&
+        // FO4 forward clusters-only: no b3 strict-light CB, so cluster SRV
+        // declaration (t35-t37) is the completion signal, not a CB3 declaration.
+        const bool llfConsumerComplete = complete && currentEvidence.hasMetadata &&
                                          currentEvidence.declaresT35 && currentEvidence.declaresT36 &&
                                          currentEvidence.declaresT37 && currentEvidence.samplesT35 > 0 &&
                                          currentEvidence.samplesT36 > 0 && currentEvidence.samplesT37 > 0;
@@ -3911,8 +3915,10 @@ bool LightLimitFix::TracePreNGActiveLightingBindings(const char *a_source, std::
     const bool resourceComplete = t35Matches && t36Matches && t37Matches;
     const bool complete = pixelShaderMatches && resourceComplete;
     const auto currentCompletionEvidence = GetPreNGShaderSlotEvidence(currentPixelShaderMetadata);
+    // FO4 forward clusters-only: cluster SRV (t35-t37) declaration is the
+    // completion signal; there is no b3 strict-light CB to declare.
     const bool llfConsumerComplete =
-        complete && currentCompletionEvidence.hasMetadata && currentCompletionEvidence.declaresCB3 &&
+        complete && currentCompletionEvidence.hasMetadata &&
         currentCompletionEvidence.declaresT35 && currentCompletionEvidence.declaresT36 &&
         currentCompletionEvidence.declaresT37 && currentCompletionEvidence.samplesT35 > 0 &&
         currentCompletionEvidence.samplesT36 > 0 && currentCompletionEvidence.samplesT37 > 0;

@@ -1823,7 +1823,10 @@ namespace CommunityShaders
 		bool consumerComplete = false;
 		if (lastResourceFrame != frame) {
 			resourceState = llfFeature->BindPreNGBSLightingDescriptorResourcesToPixelShader();
-			consumerComplete = resourceState.strictCBBound && resourceState.clusterSRVsBound;
+			// FO4 forward clusters-only: the b3 strict-light buffer was removed, so
+			// cluster SRV completion (t35-t37 bound with currentLightCount > 0) is
+			// the only completion signal for the visible consumer.
+			consumerComplete = resourceState.clusterSRVsBound;
 			if (consumerComplete) {
 				s_preNGBSLightingLLFConsumerResourceBoundFrame.store(frame, std::memory_order_relaxed);
 			}
