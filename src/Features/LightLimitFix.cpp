@@ -1319,18 +1319,17 @@ bool ShouldTimePreNGClusterPrepassGpu()
 
 bool ShouldSubmitPreNGClusterPrepassEarly()
 {
-    // Default OFF: submit the clustered compute from Main_RenderWorld_Start
-    // (Prepass). The shadow-map (EarlyPrepass) route is opt-in only, because the
-    // Main_RenderShadowMaps write_thunk_call callsite has never fired: across 8M+
-    // hook-fire samples the counts were ShadowMaps=0 vs World_Start=8.19M, so
-    // routing the LLF prepass there held light collection + cluster SRV binding
-    // off entirely (no "frame=N lights=N", no consumer bind). Set
-    // FO4CS_LLF_PRENG_PREPASS_EARLY_HOOK=1 to force the shadow-map phase once
-    // the ShadowMaps callsite is re-verified against the PreNG binary.
+    // Default ON: submit the clustered compute from the shadow-map phase
+    // (EarlyPrepass) so it overlaps the engine's shadow GPU batch instead of the
+    // frame-start idle pocket that downclocks the GPU under the FrameGen interop
+    // fence. Main_RenderShadowMaps is now detoured at its function ENTRY (the old
+    // entry-50 write_thunk_call targeted the wrong CALL and never fired), so this
+    // route actually runs every frame. Set FO4CS_LLF_PRENG_PREPASS_EARLY_HOOK=0
+    // to force the legacy Main_RenderWorld_Start site for diagnostics.
     static const bool enabled = [] {
         const auto state = ReadEnvironmentSwitch(kPreNGPrepassEarlyHookEnv);
-        const bool resolved = state.enabled;
-        logger::info("[LightLimitFix] PreNG clustered prepass early-submit resolved {}={} source={} default=off",
+        const bool resolved = state.source == EnvironmentSwitchSource::kNone || state.enabled;
+        logger::info("[LightLimitFix] PreNG clustered prepass early-submit resolved {}={} source={} default=on",
                      kPreNGPrepassEarlyHookEnv, resolved ? "on" : "off", EnvironmentSwitchSourceName(state.source));
         return resolved;
     }();

@@ -1114,12 +1114,18 @@ void Deferred::Hooks::Install()
 					logger::warn("[Deferred] PreNG: Main_RenderWorld_Start missing; deferred start hook skipped");
 				}
 
-				// ShadowMaps: write_thunk_call at CALL -50 (verified)
-				const auto shadowMapsCall = resolvePreNGRelocation(F4Hooks::DEFERRED_MAIN_RENDER_SHADOW_MAPS_CALL);
-				if (shadowMapsCall) {
-					stl::write_thunk_call<Main_RenderShadowMaps>(*shadowMapsCall);
+				// ShadowMaps: detour at the function ENTRY (same as World_Start). The
+				// old write_thunk_call on DEFERRED_MAIN_RENDER_SHADOW_MAPS_CALL (entry-50)
+				// patched a CALL that targets a DIFFERENT function, so it never fired:
+				// 0 hits across 8M+ hook-fire samples vs 8.19M for World_Start. Detouring
+				// the entry makes the early prepass (EarlyPrepasses -> LLF clustered
+				// compute) actually run after the shadow batch instead of staying dead.
+				const auto shadowMapsEntry = resolvePreNGRelocation(
+					RE::FO4Runtime::RelocationID{ F4Hooks::DEFERRED_MAIN_RENDER_SHADOW_MAPS });
+				if (shadowMapsEntry) {
+					detour_thunk_at<Main_RenderShadowMaps>(*shadowMapsEntry);
 				} else {
-					logger::warn("[Deferred] PreNG: Main_RenderShadowMaps callsite missing; early prepass hook skipped");
+					logger::warn("[Deferred] PreNG: Main_RenderShadowMaps entry missing; early prepass hook skipped");
 				}
 
 				// BlendedDecals is intentionally not hooked on PreNG. Crash logs showed an AV
