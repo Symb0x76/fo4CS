@@ -258,6 +258,7 @@ public:
 	PreNGDFLightResourceBindingState BindPreNGDFCompositeDescriptorResourcesToPixelShader();
 	PreNGDFLightResourceBindingState BindPreNGBSLightingDescriptorResourcesToPixelShader();
 	PreNGDFLightResourceBindingState BindPreNGBSLightingSetupGeometryResources(RE::BSRenderPass* a_pass);
+	void TryBindPreNGBSLightingVisibleConsumerFromSetupGeometry(RE::BSShader* a_shader);
 	[[nodiscard]] bool ShouldProcessPreNGBSLightingSetupGeometryProof() const;
 	[[nodiscard]] bool HasPreNGDFLightDescriptorConsumerData() const;
 	[[nodiscard]] bool HasPreNGDFCompositeDescriptorConsumerData() const;

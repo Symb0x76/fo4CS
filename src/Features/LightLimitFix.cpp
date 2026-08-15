@@ -1387,8 +1387,10 @@ void LogPreNGHookReachabilityWatchdog(std::uint64_t a_frame)
         return;
     }
 
-    static std::atomic_bool logged = false;
-    if (logged.exchange(true, std::memory_order_relaxed))
+    // Periodic (every 600 frames) instead of once-only: lets us see whether the
+    // BSLighting SetupGeometry / point-light hooks actually fire during normal
+    // world rendering, not just during menu 3D previews.
+    if (a_frame % 600 != 0)
     {
         return;
     }
@@ -3604,6 +3606,76 @@ LightLimitFix::PreNGDFLightResourceBindingState LightLimitFix::BindPreNGBSLighti
     return state;
 }
 
+// Per-draw visible-consumer bind driven by BSLighting SetupGeometry (the forward
+// path that fires during normal world rendering), rather than the shader lookup
+// (which FO4 only performs on shader cache misses / menu 3D previews). Swaps the
+// current pixel shader to the ShaderCache consumer PS and re-asserts t35-t37.
+void LightLimitFix::TryBindPreNGBSLightingVisibleConsumerFromSetupGeometry(RE::BSShader *a_shader)
+{
+    if (!ShouldBindPreNGBSLightingLLFVisibleConsumer() || !a_shader)
+    {
+        return;
+    }
+    if (!HasPreNGBSLightingDescriptorConsumerData())
+    {
+        return;
+    }
+    if (ShouldSuppressPreNGBSLightingVisibleConsumerForMenu())
+    {
+        return;
+    }
+
+    const auto pixelState = ReadPreNGCurrentPixelShaderEntryState();
+    const auto pixelDescriptor = pixelState.id;
+    if (!F4Runtime::PreNG::IsBSLightingContractPixelDescriptor(pixelDescriptor))
+    {
+        return;
+    }
+
+    auto *consumerShader =
+        CommunityShaders::ShaderCache::GetSingleton()->GetPixelShader(*a_shader, pixelDescriptor);
+    const auto consumerPSD3D = consumerShader ? reinterpret_cast<std::uintptr_t>(consumerShader->shader) : 0;
+    const auto pixelEntry = reinterpret_cast<std::uintptr_t>(consumerShader);
+    if (!consumerShader || consumerPSD3D == 0 || pixelEntry == 0)
+    {
+        return;
+    }
+
+    const auto vertexEntry = F4Runtime::ReadPointer(F4Runtime::PreNG::CURRENT_VERTEX_SHADER_ENTRY.address());
+    const auto hullEntry = F4Runtime::ReadPointer(F4Runtime::PreNG::CURRENT_HULL_SHADER_ENTRY.address());
+    const auto domainEntry = F4Runtime::ReadPointer(F4Runtime::PreNG::CURRENT_DOMAIN_SHADER_ENTRY.address());
+    if (vertexEntry == 0)
+    {
+        return;
+    }
+
+    const auto bindAddr = F4Runtime::PreNG::BIND_SHADERS.address();
+    const auto pixelGlobal = F4Runtime::PreNG::CURRENT_PIXEL_SHADER_ENTRY.address();
+    if (!F4Runtime::IsReadableAddress(bindAddr, 16) || !F4Runtime::IsWritableAddress(pixelGlobal, sizeof(std::uintptr_t)))
+    {
+        return;
+    }
+    if (!F4Runtime::WriteValue(pixelGlobal, pixelEntry))
+    {
+        return;
+    }
+
+    using PreNGBindShadersFn = void *(*)(std::uintptr_t, std::uintptr_t, std::uintptr_t, std::uintptr_t, std::uintptr_t);
+    auto bindShaders = reinterpret_cast<PreNGBindShadersFn>(bindAddr);
+    bindShaders(F4Runtime::PreNG::RENDERER_STATE.address(), vertexEntry, hullEntry, domainEntry, pixelEntry);
+
+    BindPreNGDescriptorResourcesToPixelShader("BSLighting SetupGeometry consumer");
+
+    static std::atomic_uint32_t bindCount = 0;
+    const auto bindIndex = ++bindCount;
+    if (bindIndex <= 8 || (bindIndex & (bindIndex - 1)) == 0)
+    {
+        logger::info("[LightLimitFix] PreNG BSLighting LLF consumer bound via SetupGeometry binds={} shaderType={} "
+                     "descriptor=0x{:X} llfConsumerComplete=true lights={}",
+                     bindIndex, static_cast<std::int32_t>(a_shader->shaderType), pixelDescriptor, currentLightCount);
+    }
+}
+
 LightLimitFix::PreNGDFLightResourceBindingState LightLimitFix::BindPreNGDFLightDrawStateStrictLightCB(
     ID3D11DeviceContext *a_context)
 {
@@ -4345,6 +4417,7 @@ void LightLimitFix::Hooks::BSLightingShader_SetupGeometry::thunk(RE::BSShader *a
     self.SetupGeometryAfter(a_pass);
 #if defined(FALLOUT_PRE_NG)
     self.BindPreNGBSLightingSetupGeometryResources(a_pass);
+    self.TryBindPreNGBSLightingVisibleConsumerFromSetupGeometry(a_this);
 #endif
 }
 
