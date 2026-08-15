@@ -1823,7 +1823,10 @@ namespace CommunityShaders
 		bool consumerComplete = false;
 		if (lastResourceFrame != frame) {
 			resourceState = llfFeature->BindPreNGBSLightingDescriptorResourcesToPixelShader();
-			consumerComplete = resourceState.strictCBBound && resourceState.clusterSRVsBound;
+			// FO4 forward clusters-only: the b3 strict-light buffer was removed, so
+			// cluster SRV completion (t35-t37 bound with currentLightCount > 0) is
+			// the only completion signal for the visible consumer.
+			consumerComplete = resourceState.clusterSRVsBound;
 			if (consumerComplete) {
 				s_preNGBSLightingLLFConsumerResourceBoundFrame.store(frame, std::memory_order_relaxed);
 			}
@@ -2557,12 +2560,8 @@ namespace CommunityShaders
 			const bool dfCompositeVanillaDump =
 				ShouldDumpPreNGDFCompositeVanillaShader() &&
 				IsPreNGDFCompositeVanillaDumpLookup(a_shader);
-			const bool unifiedDeferredLightingActive =
-				Deferred::GetSingleton()->IsDeferredPassActive() &&
-				IsPreNGBSLightingContractDescriptorShader(a_shader, a_pixelDescriptor);
 			if (!shaderLookupTraceActive &&
 				!descriptorPathActive &&
-				!unifiedDeferredLightingActive &&
 				!dflightDescriptorObserveActive &&
 				!dflightFullShadowedCandidate &&
 				!bsLightingContractCompileActive &&
@@ -2588,7 +2587,6 @@ namespace CommunityShaders
 			const bool descriptorLookupActive = descriptorPathActive && isLightingDescriptor;
 			if (!shaderLookupDiagnosticActive &&
 				!descriptorLookupActive &&
-				!unifiedDeferredLightingActive &&
 				!dflightDescriptorObserveActive &&
 				!dflightFullShadowedCandidate &&
 				!bsLightingContractCompileActive &&
@@ -2718,17 +2716,6 @@ namespace CommunityShaders
 					a_domainDescriptor,
 					lookupPixelDescriptor,
 					result);
-			}
-			if (unifiedDeferredLightingActive && result != 0 && a_shader) {
-				const auto deferredDescriptorState = Deferred::GetSingleton()->BuildShaderLookupDescriptorState(
-					*a_shader,
-					static_cast<std::uint32_t>(lookupVertexDescriptor),
-					static_cast<std::uint32_t>(lookupPixelDescriptor),
-					true);
-				if (deferredDescriptorState.deferredSupported &&
-					TryBindPreNGDeferredLightingPixelShader(*a_shader, deferredDescriptorState.pixelDescriptor)) {
-					return 1;
-				}
 			}
 			if (bsLightingContractCompileActive) {
 				(void)ShaderCache::GetSingleton()->GetPixelShader(

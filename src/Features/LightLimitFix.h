@@ -9,8 +9,8 @@
 
 #include "Core/Feature.h"
 
-// Light Limit Fix removes the vanilla 6-light forward point-light cap through the Skyrim CS
-// engine-lighting route: strict-light data in b3 plus clustered SRVs t35-t37.
+// Light Limit Fix removes the vanilla 6-light forward point-light cap through clustered
+// forward lighting: the clustered SRVs t35-t37 carry every forward point light.
 //
 // FO4 Adaptation Notes (vs Skyrim CS):
 //   - BSShader::SetupGeometry is at vfunc index 7 (FO4 added SetupMaterialSecondary)
@@ -41,15 +41,13 @@ struct LightLimitFix : Feature
 			"Removes the vanilla 6-light forward cap using clustered-forward rendering.",
 			{
 				"GPU cluster building + culling via compute shaders",
-				"Strict-light CB mirror plus clustered SRV light lists",
+				"Clustered SRV light lists (no b3 strict-light buffer)",
 				"Unlimited dynamic lights per pixel"
 			}
 		};
 	}
 
 	// --- GPU Data Types (matches Skyrim CS layout for shader compatibility) ---
-	static constexpr std::uint32_t kMaxStrictLights = 15;
-
 
 	enum class LightFlags : std::uint32_t
 	{
@@ -132,18 +130,6 @@ struct LightLimitFix : Feature
 		std::uint32_t ClusterSize[4];
 	};
 
-	struct alignas(16) StrictLightDataCB
-	{
-		std::uint32_t NumStrictLights = 0;
-		std::int32_t RoomIndex = -1;
-		std::uint32_t ShadowBitMask = 0;
-		std::uint32_t pad0 = 0;
-		LightData StrictLights[kMaxStrictLights]{};
-	};
-	static_assert(alignof(StrictLightDataCB) == 16);
-	static_assert(sizeof(StrictLightDataCB) % 16 == 0);
-	static_assert(sizeof(StrictLightDataCB) == 16 + (kMaxStrictLights * sizeof(LightData)));
-
 	PerFrame GetCommonBufferData();
 
 	// --- Runtime per-frame state ---
@@ -154,7 +140,6 @@ struct LightLimitFix : Feature
 	float CameraNear = 0.1f;
 	float CameraFar = 10000.0f;
 	std::uint32_t currentLightCount = 0;
-	std::uint32_t currentStrictLightCount = 0;
 #if defined(FALLOUT_PRE_NG)
 	struct ClusterBuildCacheState
 	{
@@ -172,12 +157,8 @@ struct LightLimitFix : Feature
 		float LightsFar = 0.0f;
 		std::uint32_t ClusterSize[4]{};
 		std::uint32_t LightCount = 0;
-		std::uint32_t StrictLightCount = 0;
-		std::uint32_t ShadowBitMask = 0;
 		std::uint64_t LightsHash = 0;
-		std::uint64_t StrictHash = 0;
 		std::uint64_t ViewHash = 0;
-		bool StrictCBUploaded = false;
 	};
 
 	bool clusterPayloadCacheValid = false;
@@ -205,11 +186,8 @@ struct LightLimitFix : Feature
 	{
 		ShadowSceneFastReuseKey Key{};
 		std::vector<LightData> Lights{};
-		StrictLightDataCB StrictData{};
 		std::uint32_t LightCount = 0;
-		std::uint32_t StrictLightCount = 0;
 		std::uint64_t LightsHash = 0;
-		std::uint64_t StrictHash = 0;
 		std::uint32_t StableDecodeCount = 0;
 		std::uint32_t ReuseAge = 0;
 	};
@@ -257,12 +235,6 @@ public:
 		std::uint32_t a_requestedLightCount = 0xFFFFFFFFu,
 		std::uint32_t a_shadowArg = 0);
 	std::uint32_t CollectLightsFromPreNGShadowScene();
-	bool UpdatePreNGStrictLightDataCB();
-	bool UploadPreNGStrictLightDataDiagnostic();
-	bool BindPreNGStrictLightDataCBToPixelShader(
-		RE::BSRenderPass* a_pass,
-		std::uint32_t a_requestedLightCount,
-		bool a_bufferAlreadyUploaded);
 	bool BindPreNGClusterSRVsToPixelShader(
 		RE::BSRenderPass* a_pass,
 		std::uint32_t a_requestedLightCount,
@@ -346,7 +318,6 @@ public:
 	std::set<RE::BSLight*> seenLights;
 	std::vector<RE::BSLight*> seenThisPass;
 	std::set<std::uint64_t> seenCBHashes;
-	StrictLightDataCB strictLightDataTemp{};
 	std::uint32_t diagFrameCounter = 0;
 
 	struct Hooks
@@ -368,7 +339,6 @@ public:
 
 private:
 #if defined(FALLOUT_PRE_NG)
-	bool UpdatePreNGStrictLightDataCB(ID3D11DeviceContext* a_context);
 	PreNGDFLightResourceBindingState BindPreNGDescriptorResourcesToPixelShader(const char* a_sourceName);
 	PreNGDFLightResourceBindingState BindPreNGDFLightNoOpPassResources(
 		ID3D11DeviceContext* a_context,
@@ -386,7 +356,6 @@ private:
 	winrt::com_ptr<ID3D11ComputeShader>          clusterCullingCS;
 	winrt::com_ptr<ID3D11Buffer>                 lightBuildingCB;
 	winrt::com_ptr<ID3D11Buffer>                 lightCullingCB;
-	winrt::com_ptr<ID3D11Buffer>                 strictLightDataCB;
 	winrt::com_ptr<ID3D11Buffer>                 lightsBuffer;
 	winrt::com_ptr<ID3D11ShaderResourceView>     lightsSRV;
 	winrt::com_ptr<ID3D11Buffer>                 clustersBuffer;
