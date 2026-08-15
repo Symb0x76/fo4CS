@@ -102,6 +102,12 @@ constexpr const char *kPreNGBSLightingConsumerCompileEnv = "FO4CS_LLF_PRENG_BSLI
 constexpr const char *kPreNGBSLightingDescriptorObserveEnv = "FO4CS_LLF_PRENG_BSLIGHTING_DESCRIPTOR_OBSERVE";
 constexpr const char *kPreNGBSLightingVanillaBindEnv = "FO4CS_LLF_PRENG_BSLIGHTING_VANILLA_BIND";
 constexpr const char *kPreNGBSLightingLLFBindEnv = "FO4CS_LLF_PRENG_BSLIGHTING_LLF_BIND";
+// Diagnostic: allow the visible BSLighting LLF consumer to bind while a
+// fullscreen preview menu is open (bypasses menu suppression). The consumer
+// bind is triggered by shader lookups that FO4 only performs for the menu 3D
+// preview, so this switch exists to prove the bind path reaches
+// llfConsumerComplete=true. Keep OFF for normal play (menus stay vanilla).
+constexpr const char *kPreNGBSLightingLLFBindMenuEnv = "FO4CS_LLF_PRENG_BSLIGHTING_LLF_BIND_MENU";
 constexpr const char *kPreNGShaderObjectMetadataEnv = "FO4CS_LLF_PRENG_SHADER_OBJECT_METADATA";
 constexpr const char *kPreNGTraceLLFPixelEnv = "FO4CS_TRACE_LLF_PS";
 constexpr const char *kPreNGGpuTimingEnv = "FO4CS_LLF_PRENG_GPU_TIMING";
@@ -1326,6 +1332,12 @@ bool ShouldUsePreNGBSLightingDescriptorDemandResources()
 bool ShouldBindPreNGBSLightingLLFVisibleConsumer()
 {
     static const bool enabled = IsTruthyEnvironmentSwitch(kPreNGBSLightingLLFBindEnv);
+    return enabled;
+}
+
+bool ShouldAllowPreNGBSLightingConsumerBindInMenu()
+{
+    static const bool enabled = IsTruthyEnvironmentSwitch(kPreNGBSLightingLLFBindMenuEnv);
     return enabled;
 }
 
@@ -2755,6 +2767,11 @@ bool LightLimitFix::HasPreNGBSLightingDescriptorConsumerData() const
 
 bool LightLimitFix::ShouldSuppressPreNGBSLightingVisibleConsumerForMenu() const
 {
+    if (ShouldAllowPreNGBSLightingConsumerBindInMenu())
+    {
+        return false;
+    }
+
     const auto menuBlock = DetectPreNGBSLightingResourceProofMenuBlock();
     if (menuBlock.empty())
     {
