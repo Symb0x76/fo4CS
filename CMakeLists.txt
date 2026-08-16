@@ -155,6 +155,7 @@ if(COMMUNITY_SHADERS)
     src/Core/HooksInternal.h
     src/Core/IMenuItem.h
     src/Core/LLFPixelTracker.cpp
+    src/Core/DrawStateProof.cpp
     src/Core/Menu.cpp
     src/Core/Menu.h
     src/Core/MenuRegistry.h
