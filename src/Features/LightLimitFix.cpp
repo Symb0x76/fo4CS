@@ -10,6 +10,10 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <bit>
+#include <intrin.h>
+#include <memory>
+#include <mutex>
 #include <string_view>
 #if defined(FALLOUT_PRE_NG)
 #include "RE/Bethesda/IMenu.h"
@@ -102,6 +106,8 @@ constexpr const char *kPreNGBSLightingConsumerCompileEnv = "FO4CS_LLF_PRENG_BSLI
 constexpr const char *kPreNGBSLightingDescriptorObserveEnv = "FO4CS_LLF_PRENG_BSLIGHTING_DESCRIPTOR_OBSERVE";
 constexpr const char *kPreNGBSLightingVanillaBindEnv = "FO4CS_LLF_PRENG_BSLIGHTING_VANILLA_BIND";
 constexpr const char *kPreNGBSLightingLLFBindEnv = "FO4CS_LLF_PRENG_BSLIGHTING_LLF_BIND";
+constexpr const char *kPreNGDFLightForwardLLFBindEnv = "FO4CS_LLF_PRENG_DFLIGHT_FORWARD_LLF_BIND";
+constexpr const char *kPreNGDisablePreviewOverloadGateEnv = "FO4CS_LLF_PRENG_DISABLE_PREVIEW_OVERLOAD_GATE";
 // Diagnostic: allow the visible BSLighting LLF consumer to bind while a
 // fullscreen preview menu is open (bypasses menu suppression). The consumer
 // bind is triggered by shader lookups that FO4 only performs for the menu 3D
@@ -202,6 +208,32 @@ std::atomic_uint32_t s_preNGPointLightHookCallCount = 0;
 std::atomic_bool s_preNGBSLightingSetupGeometryHookInstalled = false;
 std::atomic_uint32_t s_preNGBSLightingSetupGeometryHookCallCount = 0;
 std::atomic_uint32_t s_preNGBSLightingSetupGeometryBypassCallCount = 0;
+std::atomic_bool s_preNGBSLightingBatchSetupHookInstalled = false;
+std::atomic_uint32_t s_preNGBSLightingBatchSetupHookCallCount = 0;
+#if defined(FALLOUT_PRE_NG)
+winrt::com_ptr<ID3D11Buffer> s_preNGDFLightCameraCB;
+std::atomic_bool s_preNGDFLightCameraCBCaptured = false;
+
+// The renderer-state base vanilla DFLight reads: TLS[TlsIndex] + 2848
+// (falling back to qword_1461DDC68 when the TLS slot is null).
+std::uintptr_t GetPreNGDFLightRendererStateBase()
+{
+    std::uint32_t tlsIndex = 0;
+    const RE::FO4Runtime::RuntimeAddressValue kPreNGTlsIndex{ 0x1467347B4 };
+    const RE::FO4Runtime::RuntimeAddressValue kPreNGRendererFallback{ 0x1461DDC68 };
+    const bool tlsIndexRead = RE::FO4Runtime::ReadValue<std::uint32_t>(kPreNGTlsIndex.address(), tlsIndex);
+    const auto teb = __readgsqword(0x30);
+    const auto tlsArray = *reinterpret_cast<std::uintptr_t *>(teb + 0x58);
+    const auto slot = (tlsArray && tlsIndex < 0x400) ?
+        *reinterpret_cast<std::uintptr_t *>(tlsArray + static_cast<std::uintptr_t>(tlsIndex) * 8) : 0;
+    const auto base = slot ? *reinterpret_cast<std::uintptr_t *>(slot + 2848) : 0;
+    if (!tlsIndexRead)
+    {
+        return RE::FO4Runtime::ReadPointer(kPreNGRendererFallback.address());
+    }
+    return base ? base : RE::FO4Runtime::ReadPointer(kPreNGRendererFallback.address());
+}
+#endif
 #endif
 
 std::string GetShaderPath()
@@ -872,6 +904,8 @@ void ExtendPreNGBSLightingSetupGeometryBypassWindow()
     }
 }
 
+bool IsTruthyEnvironmentSwitch(const char *a_name);
+
 std::string_view DetectPreNGBSLightingResourceProofMenuBlock()
 {
     auto *ui = RE::UI::GetSingleton();
@@ -970,7 +1004,8 @@ bool ShouldDeferPreNGBSLightingResourceProofForMenu()
     // scene state, not a timer, and is not a permanent light cap.
     const auto liveBucketTotal = ProbePreNGShadowSceneBucketTotal();
     s_preNGShadowSceneLastBucketTotal.store(liveBucketTotal, std::memory_order_relaxed);
-    if (liveBucketTotal >= kPreNGShadowScenePreviewOverloadLights)
+    static const bool disableOverloadGate = IsTruthyEnvironmentSwitch(kPreNGDisablePreviewOverloadGateEnv);
+    if (!disableOverloadGate && liveBucketTotal >= kPreNGShadowScenePreviewOverloadLights)
     {
         logDefer("post-menu-light-overload", frame);
         return true;
@@ -1335,6 +1370,12 @@ bool ShouldBindPreNGBSLightingLLFVisibleConsumer()
     return enabled;
 }
 
+bool ShouldBindPreNGDFLightForwardVisibleLLF()
+{
+    static const bool enabled = IsTruthyEnvironmentSwitch(kPreNGDFLightForwardLLFBindEnv);
+    return enabled;
+}
+
 bool ShouldAllowPreNGBSLightingConsumerBindInMenu()
 {
     static const bool enabled = IsTruthyEnvironmentSwitch(kPreNGBSLightingLLFBindMenuEnv);
@@ -1382,14 +1423,15 @@ void LogPreNGHookReachabilityWatchdog(std::uint64_t a_frame)
 
     const bool pointRequested = ShouldInstallPreNGInternalPointLightHook();
     const bool setupResourceRequested = ShouldBindPreNGBSLightingSetupGeometryResources();
-    if (!pointRequested && !setupResourceRequested)
+    const bool batchHookInstalled = s_preNGBSLightingBatchSetupHookInstalled.load(std::memory_order_acquire);
+    if (!pointRequested && !setupResourceRequested && !batchHookInstalled)
     {
         return;
     }
 
     // Periodic (every 600 frames) instead of once-only: lets us see whether the
-    // BSLighting SetupGeometry / point-light hooks actually fire during normal
-    // world rendering, not just during menu 3D previews.
+    // BSLighting SetupGeometry / point-light / batched hooks actually fire during
+    // normal world rendering, not just during menu 3D previews.
     if (a_frame % 600 != 0)
     {
         return;
@@ -1397,14 +1439,15 @@ void LogPreNGHookReachabilityWatchdog(std::uint64_t a_frame)
 
     logger::info("[LightLimitFix] PreNG hook reachability watchdog frame={} pointRequested={} pointInstalled={} "
                  "pointPatchVerified={} pointCalls={} setupResourceRequested={} setupInstalled={} setupCalls={} "
-                 "setupBypassCalls={}; zero-call hooks mean this run has not exercised the verified "
-                 "BSLighting/point-light route yet, so visible LLF remains held",
+                 "setupBypassCalls={} batchHookInstalled={} batchCalls={}; zero-call hooks mean this run has not "
+                 "exercised the verified BSLighting/point-light/batch route yet, so visible LLF remains held",
                  a_frame, pointRequested, s_preNGPointLightHookInstalled.load(std::memory_order_acquire),
                  s_preNGPointLightHookPatchVerified.load(std::memory_order_acquire),
                  s_preNGPointLightHookCallCount.load(std::memory_order_relaxed), setupResourceRequested,
                  s_preNGBSLightingSetupGeometryHookInstalled.load(std::memory_order_acquire),
                  s_preNGBSLightingSetupGeometryHookCallCount.load(std::memory_order_relaxed),
-                 s_preNGBSLightingSetupGeometryBypassCallCount.load(std::memory_order_relaxed));
+                 s_preNGBSLightingSetupGeometryBypassCallCount.load(std::memory_order_relaxed),
+                 batchHookInstalled, s_preNGBSLightingBatchSetupHookCallCount.load(std::memory_order_relaxed));
 }
 
 bool ShouldHoldPreNGDFLightPreparedState()
@@ -1958,11 +2001,35 @@ void LightLimitFix::SetupResources()
             return;
     }
 
-    // Lights structured buffer
+    // Lights structured buffers (triple-buffered dynamic + Map(DISCARD):
+    // a single buffer forces the driver to serialize with the previous frame's
+    // consumer draws, stalling the CPU ~12ms and lowering GPU utilisation).
+#if defined(FALLOUT_PRE_NG)
+    for (std::uint32_t i = 0; i < kPreNGLightsBufferFrames; ++i)
     {
         D3D11_BUFFER_DESC desc{};
-        desc.Usage = D3D11_USAGE_DEFAULT;
+        desc.Usage = D3D11_USAGE_DYNAMIC;
         desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+        desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+        desc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
+        desc.StructureByteStride = sizeof(LightData);
+        desc.ByteWidth = static_cast<UINT>(kMaxLights * sizeof(LightData));
+        if (!createBuffer("CreateBuffer(lightsBuffer)", desc, lightsBuffers[i]))
+            return;
+
+        D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc{};
+        srvDesc.Format = DXGI_FORMAT_UNKNOWN;
+        srvDesc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
+        srvDesc.Buffer.NumElements = kMaxLights;
+        if (!createSRV("CreateShaderResourceView(lightsSRV)", lightsBuffers[i].get(), srvDesc, lightsSRVs[i]))
+            return;
+    }
+#else
+    {
+        D3D11_BUFFER_DESC desc{};
+        desc.Usage = D3D11_USAGE_DYNAMIC;
+        desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+        desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
         desc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
         desc.StructureByteStride = sizeof(LightData);
         desc.ByteWidth = static_cast<UINT>(kMaxLights * sizeof(LightData));
@@ -1976,6 +2043,7 @@ void LightLimitFix::SetupResources()
         if (!createSRV("CreateShaderResourceView(lightsSRV)", lightsBuffer.get(), srvDesc, lightsSRV))
             return;
     }
+#endif
 
     // Clusters structured buffer
     {
@@ -2117,6 +2185,14 @@ void LightLimitFix::PostPostLoad()
 {
 #if defined(FALLOUT_PRE_NG)
     LogPreNGDiagnosticEnvironmentSnapshot();
+    if (ShouldBindPreNGBSLightingLLFVisibleConsumer() || ShouldBindPreNGDFLightForwardVisibleLLF())
+    {
+        // Normal-world batched per-item lighting setup. This is the hook that
+        // fires during gameplay where SetupGeometry (vfunc 7) stays silent.
+        // Serves both the legacy BSLighting consumer bind and the DFLight
+        // forward clustered replacement.
+        InstallPreNGBSLightingBatchHook();
+    }
     const auto pointLightHookState = PreparePreNGPointLightHook();
     const auto setupGeometryHookState = ReadEnvironmentSwitch(kPreNGSetupGeometryHookOptInEnv);
     const auto bsLightingSetupGeometryResourceBindState =
@@ -2314,7 +2390,6 @@ void LightLimitFix::EarlyPrepass()
 void LightLimitFix::RunClusterPrepass()
 {
     const auto frameNumber = ++diagFrameCounter;
-    const auto prepassWallStart = std::chrono::steady_clock::now();
 
 #if defined(FALLOUT_PRE_NG)
     auto *runtime = CommunityShaders::Runtime::GetSingleton();
@@ -2470,9 +2545,10 @@ void LightLimitFix::RunClusterPrepass()
     }
 
     DirectX::XMFLOAT4X4 viewTransposed;
+    DirectX::XMFLOAT4X4 viewMatrix;
     {
-        DirectX::XMMATRIX view =
-            DirectX::XMLoadFloat4x4(reinterpret_cast<const DirectX::XMFLOAT4X4 *>(camView.viewMat));
+        viewMatrix = *reinterpret_cast<const DirectX::XMFLOAT4X4 *>(camView.viewMat);
+        DirectX::XMMATRIX view = DirectX::XMLoadFloat4x4(&viewMatrix);
         DirectX::XMStoreFloat4x4(&viewTransposed, DirectX::XMMatrixTranspose(view));
     }
     if (!IsFiniteMatrix(viewTransposed))
@@ -2483,6 +2559,45 @@ void LightLimitFix::RunClusterPrepass()
         }
         return;
     }
+
+#if defined(FALLOUT_PRE_NG)
+    // TEMP RE DUMP: log every camera matrix row once so the cluster-building
+    // projection convention can be compared against vanilla DFLight's dual
+    // inverse-projection rows (cb12[20..27]).
+    if (frameNumber == 1 || frameNumber % 600 == 0)
+    {
+        const auto *viewData = std::addressof(camView);
+        auto dumpMatrix = [&](const char *a_name, const __m128 *a_rows) {
+            const auto *floats = reinterpret_cast<const float *>(a_rows);
+            logger::info("[LightLimitFix] PreNG camera matrix dump frame={} name={} "
+                         "m00={:.6f} m01={:.6f} m02={:.6f} m03={:.6f} m10={:.6f} m11={:.6f} m12={:.6f} m13={:.6f} "
+                         "m20={:.6f} m21={:.6f} m22={:.6f} m23={:.6f} m30={:.6f} m31={:.6f} m32={:.6f} m33={:.6f}",
+                         frameNumber, a_name,
+                         floats[0], floats[1], floats[2], floats[3],
+                         floats[4], floats[5], floats[6], floats[7],
+                         floats[8], floats[9], floats[10], floats[11],
+                         floats[12], floats[13], floats[14], floats[15]);
+        };
+        dumpMatrix("viewMat", viewData->viewMat);
+        dumpMatrix("projMat", viewData->projMat);
+        dumpMatrix("viewProjMat", viewData->viewProjMat);
+        dumpMatrix("viewProjUnjittered", viewData->viewProjUnjittered);
+        dumpMatrix("currentViewProjUnjittered", viewData->currentViewProjUnjittered);
+        dumpMatrix("inv1stPersonProjMat", viewData->inv1stPersonProjMat);
+        logger::info("[LightLimitFix] PreNG camera matrix dump frame={} near={} far={}",
+                     frameNumber, CameraNear, CameraFar);
+    }
+#endif
+
+#if defined(FALLOUT_PRE_NG)
+    if (ShouldBindPreNGDFLightForwardVisibleLLF())
+    {
+        // Keeps the DFLight forward consumer cb3 (inverse-view + cluster z
+        // domain) fresh for the per-frame clustered pass replacement. The
+        // cluster z domain now matches vanilla cb12: z in [1, 333333].
+        UpdatePreNGDFLightForwardCameraCB(viewMatrix, 1.0f, 333333.0f);
+    }
+#endif
 
 #if defined(FALLOUT_PRE_NG)
     std::vector<LightData> preNGSceneLightFallback;
@@ -2545,7 +2660,6 @@ void LightLimitFix::RunClusterPrepass()
     // Skyrim-parity: always run the compute submission block (no payload-reuse skip).
 #endif
     {
-        clearPixelClusterSRVs();
 
 #if defined(FALLOUT_PRE_NG)
         auto *timingDevice = reinterpret_cast<ID3D11Device *>(rendererData->device);
@@ -2554,12 +2668,73 @@ void LightLimitFix::RunClusterPrepass()
 
         if (currentLightCount > 0)
         {
+            // Replicate the EXACT transform vanilla sub_1428C37A0 uses for
+            // cb2[1]: read the renderer-base camera position (+8736) and the
+            // view rows (base + 7024 + 114..117 * 16), then
+            // viewPos = (lightWorld - camWorld) * viewRows (row-vector, with
+            // perspective divide). This is the only source guaranteed to match
+            // the space of vanilla cb2[1].
+            const auto rendererBase = GetPreNGDFLightRendererStateBase();
+            DirectX::XMFLOAT4X4 viewRows{};
+            bool viewRowsValid = false;
+            DirectX::XMFLOAT3 camPos{};
+            bool camPosValid = false;
+            if (rendererBase != 0 && F4Runtime::IsReadableAddress(rendererBase + 7024 + 114 * 16, 4 * 16) &&
+                F4Runtime::IsReadableAddress(rendererBase + 8736, sizeof(float) * 3))
+            {
+                std::memcpy(&viewRows, reinterpret_cast<const void *>(rendererBase + 7024 + 114 * 16), sizeof(viewRows));
+                std::memcpy(&camPos, reinterpret_cast<const void *>(rendererBase + 8736), sizeof(float) * 3);
+                viewRowsValid = true;
+                camPosValid = true;
+            }
+            if (!viewRowsValid || !camPosValid)
+            {
+                // Fallback: previous camViewData-based rotation, so lights keep
+                // a consistent (if not vanilla-exact) space rather than garbage.
+                const auto &gfxState = RE::BSGraphics::State::GetSingleton();
+                viewRows = *reinterpret_cast<const DirectX::XMFLOAT4X4 *>(gfxState.cameraState.camViewData.viewMat);
+                const auto &p = gfxState.cameraState.posAdjust;
+                camPos = DirectX::XMFLOAT3{ p.x, p.y, p.z };
+            }
+
+            preNGDFLightLastSnapshotCameraPos = DirectX::XMFLOAT4{ camPos.x, camPos.y, camPos.z, 0.0f };
+            preNGDFLightLastSnapshotViewRows = viewRows;
+            preNGDFLightLastSnapshotViewValid = viewRowsValid && camPosValid;
+
+            DirectX::XMMATRIX view = DirectX::XMLoadFloat4x4(&viewRows);
+            DirectX::XMVECTOR camPosV = DirectX::XMLoadFloat3(&camPos);
+            for (auto &light : frameLights)
+            {
+                DirectX::XMFLOAT3 worldPos{
+                    light.positionWS[0].data.x,
+                    light.positionWS[0].data.y,
+                    light.positionWS[0].data.z };
+                DirectX::XMVECTOR rel = DirectX::XMVectorSubtract(DirectX::XMLoadFloat3(&worldPos), camPosV);
+                DirectX::XMVECTOR viewPos = DirectX::XMVector3TransformCoord(rel, view);
+                DirectX::XMStoreFloat3(
+                    reinterpret_cast<DirectX::XMFLOAT3 *>(&light.positionWS[1].data),
+                    viewPos);
+                light.positionWS[1].pad = 0;
+            }
+
             const auto lightUploadBytes = static_cast<UINT>(currentLightCount * sizeof(LightData));
-            D3D11_BOX lightUploadBox{};
-            lightUploadBox.right = lightUploadBytes;
-            lightUploadBox.bottom = 1;
-            lightUploadBox.back = 1;
-            context->UpdateSubresource(lightsBuffer.get(), 0, &lightUploadBox, frameLights.data(), lightUploadBytes, 0);
+#if defined(FALLOUT_PRE_NG)
+            currentLightsBufferIndex = (currentLightsBufferIndex + 1) % kPreNGLightsBufferFrames;
+            auto &lightsBuffer = lightsBuffers[currentLightsBufferIndex];
+            D3D11_MAPPED_SUBRESOURCE lightMapped{};
+            if (SUCCEEDED(context->Map(lightsBuffer.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &lightMapped)))
+            {
+                std::memcpy(lightMapped.pData, frameLights.data(), lightUploadBytes);
+                context->Unmap(lightsBuffer.get(), 0);
+            }
+#else
+            D3D11_MAPPED_SUBRESOURCE lightMapped{};
+            if (SUCCEEDED(context->Map(lightsBuffer.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &lightMapped)))
+            {
+                std::memcpy(lightMapped.pData, frameLights.data(), lightUploadBytes);
+                context->Unmap(lightsBuffer.get(), 0);
+            }
+#endif
         }
 
 #if defined(FALLOUT_PRE_NG)
@@ -2576,12 +2751,9 @@ void LightLimitFix::RunClusterPrepass()
         }
 #endif
 
-        const UINT counterReset[4] = {0, 0, 0, 0};
-        context->ClearUnorderedAccessViewUint(lightIndexCounterUAV.get(), counterReset);
-
         LightBuildingCB buildingCBData{};
-        buildingCBData.LightsNear = CameraNear;
-        buildingCBData.LightsFar = CameraFar;
+        buildingCBData.LightsNear = 1.0f;
+        buildingCBData.LightsFar = 333333.0f;
         buildingCBData.pad0[0] = buildingCBData.pad0[1] = 0;
         buildingCBData.ClusterSize[0] = clusterSize[0];
         buildingCBData.ClusterSize[1] = clusterSize[1];
@@ -2593,6 +2765,16 @@ void LightLimitFix::RunClusterPrepass()
 #if defined(FALLOUT_PRE_NG)
         rebuildClusterAABBs =
             !clusterBuildCacheValid || !PreNGClusterBuildInputsMatch(clusterBuildCache, buildingCBData);
+        // The vanilla camera cb12 (rows 20..27) is captured on the FIRST DFLight
+        // batch pass, which happens AFTER the first Prepass. Building AABBs
+        // before that capture would reconstruct corners from an all-zero b12 and
+        // then get cached as "valid", poisoning every later frame. Defer the
+        // build until the capture exists, and never cache the empty result.
+        if (rebuildClusterAABBs && !s_preNGDFLightCameraCB)
+        {
+            rebuildClusterAABBs = false;
+            clusterBuildCacheValid = false;
+        }
 #endif
 
         if (rebuildClusterAABBs)
@@ -2611,6 +2793,13 @@ void LightLimitFix::RunClusterPrepass()
             context->CSSetShader(clusterBuildingCS.get(), nullptr, 0);
             ID3D11Buffer *cbPtr = lightBuildingCB.get();
             context->CSSetConstantBuffers(0, 1, &cbPtr);
+#if defined(FALLOUT_PRE_NG)
+            if (s_preNGDFLightCameraCB)
+            {
+                ID3D11Buffer *cameraCB = s_preNGDFLightCameraCB.get();
+                context->CSSetConstantBuffers(12, 1, &cameraCB);
+            }
+#endif
             ID3D11UnorderedAccessView *buildingUAVs[] = {clustersUAV.get()};
             context->CSSetUnorderedAccessViews(0, 1, buildingUAVs, nullptr);
             context->Dispatch(clusterSize[0], clusterSize[1], clusterSize[2]);
@@ -2666,10 +2855,46 @@ void LightLimitFix::RunClusterPrepass()
             cb->ClusterSize[1] = clusterSize[1];
             cb->ClusterSize[2] = clusterSize[2];
             cb->ClusterSize[3] = 0;
-            std::memcpy(&cb->CameraView, &viewTransposed, sizeof(viewTransposed));
+            // Culling must use the SAME camera the positionWS[1] fill just used.
+            // The TLS rows can advance between those two points, which puts the
+            // light grid in a different space than both cb2[1] and the payload.
+            // Reuse the snapshot taken above; fall back to a fresh read only if
+            // that snapshot was never populated.
+            {
+                DirectX::XMFLOAT4X4 viewRows = preNGDFLightLastSnapshotViewRows;
+                DirectX::XMFLOAT3 camPos{
+                    preNGDFLightLastSnapshotCameraPos.x,
+                    preNGDFLightLastSnapshotCameraPos.y,
+                    preNGDFLightLastSnapshotCameraPos.z };
+                bool valid = preNGDFLightLastSnapshotViewValid;
+                if (!valid)
+                {
+                    const auto rendererBase = GetPreNGDFLightRendererStateBase();
+                    valid = rendererBase != 0 &&
+                        F4Runtime::IsReadableAddress(rendererBase + 7024 + 114 * 16, 4 * 16) &&
+                        F4Runtime::IsReadableAddress(rendererBase + 8736, sizeof(float) * 3);
+                    if (valid)
+                    {
+                        std::memcpy(&viewRows, reinterpret_cast<const void *>(rendererBase + 7024 + 114 * 16), sizeof(viewRows));
+                        std::memcpy(&camPos, reinterpret_cast<const void *>(rendererBase + 8736), sizeof(camPos));
+                    }
+                }
+                if (!valid)
+                {
+                    const auto &gfxState = RE::BSGraphics::State::GetSingleton();
+                    viewRows = *reinterpret_cast<const DirectX::XMFLOAT4X4 *>(gfxState.cameraState.camViewData.viewMat);
+                    const auto &p = gfxState.cameraState.posAdjust;
+                    camPos = DirectX::XMFLOAT3{ p.x, p.y, p.z };
+                }
+                DirectX::XMMATRIX view = DirectX::XMLoadFloat4x4(&viewRows);
+                DirectX::XMFLOAT4X4 viewUpload{};
+                DirectX::XMStoreFloat4x4(&viewUpload, DirectX::XMMatrixTranspose(view));
+                std::memcpy(&cb->CameraView, &viewUpload, sizeof(viewUpload));
+                cb->CameraPos = DirectX::XMFLOAT4{ camPos.x, camPos.y, camPos.z, 0.0f };
+            }
             context->Unmap(lightCullingCB.get(), 0);
 
-            ID3D11ShaderResourceView *cullingSRVs[] = {clustersSRV.get(), lightsSRV.get()};
+            ID3D11ShaderResourceView *cullingSRVs[] = {clustersSRV.get(), GetCurrentLightsSRV()};
             context->CSSetShaderResources(0, 2, cullingSRVs);
 
             ID3D11UnorderedAccessView *cullingUAVs[] = {lightIndexCounterUAV.get(), lightIndexListUAV.get(),
@@ -2704,7 +2929,7 @@ void LightLimitFix::RunClusterPrepass()
     {
         if (ShouldBindPreNGClusterSRVs())
         {
-            ID3D11ShaderResourceView *views[3]{lightsSRV.get(), lightIndexListSRV.get(), lightGridSRV.get()};
+            ID3D11ShaderResourceView *views[3]{GetCurrentLightsSRV(), lightIndexListSRV.get(), lightGridSRV.get()};
             context->PSSetShaderResources(35, ARRAYSIZE(views), views);
 
             static std::atomic_uint32_t prepassBindCount = 0;
@@ -2722,7 +2947,7 @@ void LightLimitFix::RunClusterPrepass()
 #else
     if (frameNumber >= 3 && currentLightCount > 0)
     {
-        ID3D11ShaderResourceView *views[3]{lightsSRV.get(), lightIndexListSRV.get(), lightGridSRV.get()};
+        ID3D11ShaderResourceView *views[3]{GetCurrentLightsSRV(), lightIndexListSRV.get(), lightGridSRV.get()};
         context->PSSetShaderResources(35, ARRAYSIZE(views), views);
 
         if (frameNumber % 300 == 0)
@@ -2732,23 +2957,35 @@ void LightLimitFix::RunClusterPrepass()
         }
     }
 #endif
-
-    if (frameNumber % 300 == 0)
-    {
-        const auto prepassWallMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-                                       std::chrono::steady_clock::now() - prepassWallStart)
-                                       .count();
-        logger::info("[LightLimitFix] Prepass wall time frame={} lights={} ms={}", frameNumber, currentLightCount,
-                     prepassWallMs);
-    }
 }
 
 bool LightLimitFix::HasResources() const
 {
-    return clusterBuildingCS && clusterCullingCS && lightBuildingCB && lightCullingCB && lightsBuffer && lightsSRV &&
+#if defined(FALLOUT_PRE_NG)
+    for (std::uint32_t i = 0; i < kPreNGLightsBufferFrames; ++i)
+    {
+        if (!lightsBuffers[i] || !lightsSRVs[i])
+        {
+            return false;
+        }
+    }
+#endif
+    return clusterBuildingCS && clusterCullingCS && lightBuildingCB && lightCullingCB &&
+#if !defined(FALLOUT_PRE_NG)
+           lightsBuffer && lightsSRV &&
+#endif
            clustersBuffer && clustersSRV && clustersUAV && lightIndexCounterBuffer && lightIndexCounterSRV &&
            lightIndexCounterUAV && lightIndexListBuffer && lightIndexListSRV && lightIndexListUAV && lightGridBuffer &&
            lightGridSRV && lightGridUAV;
+}
+
+ID3D11ShaderResourceView *LightLimitFix::GetCurrentLightsSRV()
+{
+#if defined(FALLOUT_PRE_NG)
+    return lightsSRVs[currentLightsBufferIndex % kPreNGLightsBufferFrames].get();
+#else
+    return GetCurrentLightsSRV();
+#endif
 }
 
 #if defined(FALLOUT_PRE_NG)
@@ -3032,6 +3269,7 @@ std::uint32_t LightLimitFix::CollectLightsFromPreNGSceneLights(RE::BSRenderPass 
 
     return collected;
 }
+#endif
 
 std::uint32_t LightLimitFix::CollectLightsFromPreNGShadowScene()
 {
@@ -3346,7 +3584,7 @@ bool LightLimitFix::BindPreNGClusterSRVsToPixelShader(RE::BSRenderPass *a_pass, 
         return false;
     }
 
-    ID3D11ShaderResourceView *views[3]{lightsSRV.get(), lightIndexListSRV.get(), lightGridSRV.get()};
+    ID3D11ShaderResourceView *views[3]{GetCurrentLightsSRV(), lightIndexListSRV.get(), lightGridSRV.get()};
     context->PSSetShaderResources(35, ARRAYSIZE(views), views);
 
     static std::atomic_uint32_t bindCount = 0;
@@ -3606,11 +3844,12 @@ LightLimitFix::PreNGDFLightResourceBindingState LightLimitFix::BindPreNGBSLighti
     return state;
 }
 
-// Per-draw visible-consumer bind driven by BSLighting SetupGeometry (the forward
-// path that fires during normal world rendering), rather than the shader lookup
-// (which FO4 only performs on shader cache misses / menu 3D previews). Swaps the
-// current pixel shader to the ShaderCache consumer PS and re-asserts t35-t37.
-void LightLimitFix::TryBindPreNGBSLightingVisibleConsumerFromSetupGeometry(RE::BSShader *a_shader)
+// Per-draw visible-consumer bind driven by BSLighting SetupGeometry or the
+// normal-world batched per-item setup (sub_1428C37A0). Swaps the current pixel
+// shader to the ShaderCache consumer PS and re-asserts t35-t37.
+void LightLimitFix::TryBindPreNGBSLightingVisibleConsumerFromSetupGeometry(
+    RE::BSShader *a_shader,
+    const char *a_sourceName)
 {
     if (!ShouldBindPreNGBSLightingLLFVisibleConsumer() || !a_shader)
     {
@@ -3670,9 +3909,358 @@ void LightLimitFix::TryBindPreNGBSLightingVisibleConsumerFromSetupGeometry(RE::B
     const auto bindIndex = ++bindCount;
     if (bindIndex <= 8 || (bindIndex & (bindIndex - 1)) == 0)
     {
-        logger::info("[LightLimitFix] PreNG BSLighting LLF consumer bound via SetupGeometry binds={} shaderType={} "
+        logger::info("[LightLimitFix] PreNG BSLighting LLF consumer bound via {} binds={} shaderType={} "
                      "descriptor=0x{:X} llfConsumerComplete=true lights={}",
-                     bindIndex, static_cast<std::int32_t>(a_shader->shaderType), pixelDescriptor, currentLightCount);
+                     a_sourceName, bindIndex, static_cast<std::int32_t>(a_shader->shaderType), pixelDescriptor,
+                     currentLightCount);
+    }
+}
+
+#if defined(FALLOUT_PRE_NG)
+namespace
+{
+    struct PreNGDFLightForwardZeroShaderState
+    {
+        bool attempted = false;
+        winrt::com_ptr<ID3D11PixelShader> shader;
+        RE::BSGraphics::PixelShader entry{};
+    };
+    std::mutex s_preNGDFLightForwardZeroLock;
+    PreNGDFLightForwardZeroShaderState s_preNGDFLightForwardZeroState;
+}
+
+RE::BSGraphics::PixelShader *GetPreNGDFLightForwardZeroPixelShader()
+{
+    std::scoped_lock lock(s_preNGDFLightForwardZeroLock);
+    auto &state = s_preNGDFLightForwardZeroState;
+    if (state.shader && state.entry.shader)
+    {
+        return std::addressof(state.entry);
+    }
+    if (state.attempted)
+    {
+        return nullptr;
+    }
+    state.attempted = true;
+
+    auto *device = CommunityShaders::Runtime::GetSingleton()->GetDevice();
+    if (!device)
+    {
+        logger::warn("[LightLimitFix] PreNG DFLight forward zero PS create failed reason=device-unavailable");
+        return nullptr;
+    }
+
+    auto bytecode = CommunityShaders::ShaderCompiler::GetSingleton()->CompileFromFile(
+        "LightLimitFix/DFLightZeroOutputPS.hlsl", "ps_5_0", nullptr, "main");
+    if (!bytecode)
+    {
+        logger::warn("[LightLimitFix] PreNG DFLight forward zero PS create failed reason=compile-failed");
+        return nullptr;
+    }
+
+    ID3D11PixelShader *shader = nullptr;
+    const auto hr = device->CreatePixelShader(bytecode->data(), bytecode->size(), nullptr, &shader);
+    if (FAILED(hr) || !shader)
+    {
+        logger::warn("[LightLimitFix] PreNG DFLight forward zero PS create failed bytecode={} hr=0x{:08X}",
+                     bytecode->size(), static_cast<std::uint32_t>(hr));
+        return nullptr;
+    }
+
+    state.shader.attach(shader);
+    state.entry.id = F4Runtime::PreNG::DF_LIGHT_FORWARD_PIXEL_DESCRIPTOR_8004;
+    state.entry.shader = state.shader.get();
+    logger::info("[LightLimitFix] PreNG DFLight forward zero PS created psD3D=0x{:X}",
+                 reinterpret_cast<std::uintptr_t>(state.shader.get()));
+    return std::addressof(state.entry);
+}
+
+void LightLimitFix::UpdatePreNGDFLightForwardCameraCB(
+    const DirectX::XMFLOAT4X4 &a_viewMatrix,
+    float a_cameraNear,
+    float a_cameraFar)
+{
+    auto *runtime = CommunityShaders::Runtime::GetSingleton();
+    auto *device = runtime ? runtime->GetDevice() : nullptr;
+    if (!device)
+    {
+        return;
+    }
+
+    if (!dflightForwardCB)
+    {
+        D3D11_BUFFER_DESC desc{};
+        desc.ByteWidth = 96;
+        desc.Usage = D3D11_USAGE_DYNAMIC;
+        desc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+        desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+        if (FAILED(device->CreateBuffer(&desc, nullptr, dflightForwardCB.put())))
+        {
+            logger::warn("[LightLimitFix] PreNG DFLight forward cb3 create failed");
+            return;
+        }
+    }
+
+    auto *rendererData = fo4cs::GetRendererData();
+    auto *context = rendererData ? reinterpret_cast<ID3D11DeviceContext *>(rendererData->context) : nullptr;
+    if (!context)
+    {
+        return;
+    }
+
+    DirectX::XMMATRIX view = DirectX::XMLoadFloat4x4(&a_viewMatrix);
+    DirectX::XMMATRIX invView = DirectX::XMMatrixInverse(nullptr, view);
+    DirectX::XMFLOAT4X4 invViewTransposed;
+    DirectX::XMStoreFloat4x4(&invViewTransposed, DirectX::XMMatrixTranspose(invView));
+
+    D3D11_MAPPED_SUBRESOURCE mapped{};
+    if (SUCCEEDED(context->Map(dflightForwardCB.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped)))
+    {
+        struct PreNGDFLightForwardCBData
+        {
+            float invView[4][4];
+            float cameraNear;
+            float cameraFar;
+            float pad[2];
+        };
+        auto *data = static_cast<PreNGDFLightForwardCBData *>(mapped.pData);
+        std::memcpy(data->invView, &invViewTransposed, sizeof(invViewTransposed));
+        data->cameraNear = a_cameraNear;
+        data->cameraFar = a_cameraFar;
+        data->pad[0] = 0.0f;
+        data->pad[1] = 0.0f;
+        context->Unmap(dflightForwardCB.get(), 0);
+    }
+}
+
+#if defined(FALLOUT_PRE_NG)
+namespace
+{
+    struct PreNGDFLightCB12CaptureState
+    {
+        bool captured = false;
+        winrt::com_ptr<ID3D11Buffer> staging;
+    };
+    std::mutex s_preNGDFLightCB12CaptureLock;
+    PreNGDFLightCB12CaptureState s_preNGDFLightCB12CaptureState;
+
+    // Capture the vanilla DFLight camera cb12 (slot 12) on the first batch pass
+    // where it is bound. ClusterBuildingCS reads rows 20..27 from this copy.
+    void CapturePreNGDFLightCameraCBOnce()
+    {
+        if (s_preNGDFLightCameraCBCaptured.load(std::memory_order_acquire))
+        {
+            return;
+        }
+        std::scoped_lock lock(s_preNGDFLightCB12CaptureLock);
+        auto &state = s_preNGDFLightCB12CaptureState;
+        if (state.captured)
+        {
+            return;
+        }
+
+        auto *rendererData = fo4cs::GetRendererData();
+        auto *context = rendererData ? reinterpret_cast<ID3D11DeviceContext *>(rendererData->context) : nullptr;
+        auto *device = rendererData ? reinterpret_cast<ID3D11Device *>(rendererData->device) : nullptr;
+        if (!context || !device)
+        {
+            return;
+        }
+
+        ID3D11Buffer *cb12 = nullptr;
+        context->PSGetConstantBuffers(12, 1, &cb12);
+        if (!cb12)
+        {
+            return;
+        }
+
+        D3D11_BUFFER_DESC desc{};
+        cb12->GetDesc(&desc);
+        cb12->Release();
+        if (desc.ByteWidth == 0 || desc.ByteWidth > 4096)
+        {
+            return;
+        }
+
+        D3D11_BUFFER_DESC stagingDesc{};
+        stagingDesc.ByteWidth = desc.ByteWidth;
+        stagingDesc.Usage = D3D11_USAGE_STAGING;
+        stagingDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+        if (FAILED(device->CreateBuffer(&stagingDesc, nullptr, state.staging.put())))
+        {
+            return;
+        }
+
+        ID3D11Buffer *cb12Again = nullptr;
+        context->PSGetConstantBuffers(12, 1, &cb12Again);
+        if (!cb12Again)
+        {
+            return;
+        }
+        context->CopyResource(state.staging.get(), cb12Again);
+        if (!s_preNGDFLightCameraCBCaptured.exchange(true, std::memory_order_relaxed))
+        {
+            s_preNGDFLightCameraCB.copy_from(cb12Again);
+        }
+        cb12Again->Release();
+        state.captured = true;
+    }
+
+}
+#endif
+
+
+void LightLimitFix::HandlePreNGDFLightForwardBatchPostCall(RE::BSShader *a_shader)
+{
+    if (!ShouldBindPreNGDFLightForwardVisibleLLF() || !a_shader)
+    {
+        return;
+    }
+    if (a_shader->shaderType != static_cast<std::int32_t>(F4Runtime::PreNG::DF_LIGHTING_SHADER_TYPE))
+    {
+        return;
+    }
+    if (GetCachedPreNGBSLightingSetupGeometryPreviewReason() != 0)
+    {
+        // Menu 3D previews keep the vanilla BSLighting path; do not double-light.
+        return;
+    }
+
+    const auto pixelState = ReadPreNGCurrentPixelShaderEntryState();
+    if (!F4Runtime::PreNG::IsDFLightForwardPixelDescriptor(pixelState.id))
+    {
+        return;
+    }
+
+#if defined(FALLOUT_PRE_NG)
+    // Never replace a vanilla pass while the camera cb12 used to build cluster
+    // AABBs has not been captured yet; the clusters would be garbage/empty and
+    // every vanilla point-light pass would be zeroed or mis-culled.
+    if (!s_preNGDFLightCameraCB)
+    {
+        return;
+    }
+#endif
+
+    auto *runtime = CommunityShaders::Runtime::GetSingleton();
+    if (!runtime)
+    {
+        return;
+    }
+
+    static std::atomic_uint64_t s_lastDFLightConsumerBoundFrame = UINT64_MAX;
+    static std::atomic_uint64_t s_lastDFLightConsumerAttemptFrame = UINT64_MAX;
+    const auto boundFrame = s_lastDFLightConsumerBoundFrame.load(std::memory_order_relaxed);
+    auto attemptFrame = s_lastDFLightConsumerAttemptFrame.load(std::memory_order_relaxed);
+    const auto frame = runtime->GetFrameCount();
+
+    RE::BSGraphics::PixelShader *pixelEntry = nullptr;
+    bool bindConsumer = false;
+    PreNGDFLightResourceBindingState consumerResourceState{};
+    if (boundFrame == frame)
+    {
+        // Consumer already emitted this frame's clustered list; zero the
+        // remaining vanilla point-light passes so they do not double-count.
+        pixelEntry = GetPreNGDFLightForwardZeroPixelShader();
+        if (!pixelEntry)
+        {
+            return;
+        }
+    }
+    else if (attemptFrame != frame)
+    {
+        // First eligible item of the frame. Try once per frame; on failure the
+        // whole frame stays vanilla (never zero passes without a consumer).
+        if (!s_lastDFLightConsumerAttemptFrame.compare_exchange_strong(
+                attemptFrame, frame, std::memory_order_relaxed))
+        {
+            return;
+        }
+
+        // Preflight: replacing vanilla point-light passes only makes sense when
+        // the clustered payload is actually live. A held prepass (menu preview,
+        // shadow-scene overload gate) leaves currentLightCount = 0; in that
+        // case keep every pass vanilla so the scene is never blacked out.
+        if (currentLightCount == 0)
+        {
+            static std::atomic_uint32_t emptyPayloadHoldCount = 0;
+            const auto holdIndex = ++emptyPayloadHoldCount;
+            if (holdIndex <= 8 || (holdIndex & (holdIndex - 1)) == 0)
+            {
+                logger::info("[LightLimitFix] PreNG DFLight forward replacement held holds={} frame={} "
+                             "reason=clustered-payload-empty lights={}",
+                             holdIndex, frame, currentLightCount);
+            }
+            return;
+        }
+        // Vanilla cb2[1] matches the prepass camera payload; keep the grid in
+        // that same space.
+        consumerResourceState = BindPreNGDescriptorResourcesToPixelShader("DFLight forward preflight");
+        if (!consumerResourceState.clusterSRVsBound)
+        {
+            static std::atomic_uint32_t resourceHoldCount = 0;
+            const auto holdIndex = ++resourceHoldCount;
+            if (holdIndex <= 8 || (holdIndex & (holdIndex - 1)) == 0)
+            {
+                logger::info("[LightLimitFix] PreNG DFLight forward replacement held holds={} frame={} "
+                             "reason=cluster-srv-bind-failed lights={}",
+                             holdIndex, frame, consumerResourceState.lightCount);
+            }
+            return;
+        }
+
+        pixelEntry = CommunityShaders::ShaderCache::GetSingleton()->GetPixelShader(*a_shader, pixelState.id);
+        if (!pixelEntry)
+        {
+            return;
+        }
+        bindConsumer = true;
+    }
+    else
+    {
+        // Consumer compile/bind already failed earlier this frame; keep vanilla.
+        return;
+    }
+
+    const auto vertexEntry = F4Runtime::ReadPointer(F4Runtime::PreNG::CURRENT_VERTEX_SHADER_ENTRY.address());
+    const auto hullEntry = F4Runtime::ReadPointer(F4Runtime::PreNG::CURRENT_HULL_SHADER_ENTRY.address());
+    const auto domainEntry = F4Runtime::ReadPointer(F4Runtime::PreNG::CURRENT_DOMAIN_SHADER_ENTRY.address());
+    const auto pixelGlobal = F4Runtime::PreNG::CURRENT_PIXEL_SHADER_ENTRY.address();
+    const auto bindAddr = F4Runtime::PreNG::BIND_SHADERS.address();
+    if (!vertexEntry || !F4Runtime::IsReadableAddress(bindAddr, 16) ||
+        !F4Runtime::IsWritableAddress(pixelGlobal, sizeof(std::uintptr_t)))
+    {
+        return;
+    }
+    if (!F4Runtime::WriteValue(pixelGlobal, reinterpret_cast<std::uintptr_t>(pixelEntry)))
+    {
+        return;
+    }
+
+    using PreNGBindShadersFn = void *(*)(std::uintptr_t, std::uintptr_t, std::uintptr_t, std::uintptr_t, std::uintptr_t);
+    auto bindShaders = reinterpret_cast<PreNGBindShadersFn>(bindAddr);
+    bindShaders(
+        F4Runtime::PreNG::RENDERER_STATE.address(),
+        vertexEntry,
+        hullEntry,
+        domainEntry,
+        reinterpret_cast<std::uintptr_t>(pixelEntry));
+
+    if (bindConsumer)
+    {
+        auto *rendererData = fo4cs::GetRendererData();
+        auto *context = rendererData ? reinterpret_cast<ID3D11DeviceContext *>(rendererData->context) : nullptr;
+        if (context && dflightForwardCB)
+        {
+            ID3D11Buffer *cb = dflightForwardCB.get();
+            context->PSSetConstantBuffers(3, 1, &cb);
+        }
+
+        s_lastDFLightConsumerBoundFrame.store(frame, std::memory_order_relaxed);
+    }
+    else
+    {
+        // Zero pass: the consumer already emitted this frame's clustered list.
     }
 }
 
@@ -3735,13 +4323,13 @@ LightLimitFix::PreNGDFLightResourceBindingState LightLimitFix::BindPreNGDFLightD
         logBindFailure("gpu-resources-incomplete");
         return state;
     }
-    if (!lightsSRV || !lightIndexListSRV || !lightGridSRV)
+    if (!GetCurrentLightsSRV() || !lightIndexListSRV || !lightGridSRV)
     {
         logBindFailure("missing-cluster-srvs");
         return state;
     }
 
-    ID3D11ShaderResourceView *views[3]{lightsSRV.get(), lightIndexListSRV.get(), lightGridSRV.get()};
+    ID3D11ShaderResourceView *views[3]{GetCurrentLightsSRV(), lightIndexListSRV.get(), lightGridSRV.get()};
     a_context->PSSetShaderResources(35, ARRAYSIZE(views), views);
     state.clusterSRVsBound = true;
 
@@ -3800,7 +4388,7 @@ LightLimitFix::PreNGDFLightResourceBindingState LightLimitFix::BindPreNGDFLightN
         logBindFailure("gpu-resources-incomplete");
         return state;
     }
-    if (!lightsSRV || !lightIndexListSRV || !lightGridSRV)
+    if (!GetCurrentLightsSRV() || !lightIndexListSRV || !lightGridSRV)
     {
         logBindFailure("missing-cluster-srvs");
         return state;
@@ -3811,7 +4399,7 @@ LightLimitFix::PreNGDFLightResourceBindingState LightLimitFix::BindPreNGDFLightN
         return state;
     }
 
-    ID3D11ShaderResourceView *views[3]{lightsSRV.get(), lightIndexListSRV.get(), lightGridSRV.get()};
+    ID3D11ShaderResourceView *views[3]{GetCurrentLightsSRV(), lightIndexListSRV.get(), lightGridSRV.get()};
     a_context->PSSetShaderResources(35, ARRAYSIZE(views), views);
     state.clusterSRVsBound = true;
 
@@ -3985,7 +4573,7 @@ bool LightLimitFix::TracePreNGActiveLightingBindings(const char *a_source, std::
             currentLightCount,
             reinterpret_cast<std::uintptr_t>(a_boundT35), reinterpret_cast<std::uintptr_t>(a_boundT36),
             reinterpret_cast<std::uintptr_t>(a_boundT37),
-            reinterpret_cast<std::uintptr_t>(lightsSRV.get()),
+            reinterpret_cast<std::uintptr_t>(GetCurrentLightsSRV()),
             reinterpret_cast<std::uintptr_t>(lightIndexListSRV.get()),
             reinterpret_cast<std::uintptr_t>(lightGridSRV.get()));
     };
@@ -4034,7 +4622,7 @@ bool LightLimitFix::TracePreNGActiveLightingBindings(const char *a_source, std::
         }
     }
     const bool pixelShaderMatches = a_lookupPixelShader != 0 && currentPixelShaderAddress == a_lookupPixelShader;
-    const bool t35Matches = boundSRVs[0].get() == lightsSRV.get();
+    const bool t35Matches = boundSRVs[0].get() == GetCurrentLightsSRV();
     const bool t36Matches = boundSRVs[1].get() == lightIndexListSRV.get();
     const bool t37Matches = boundSRVs[2].get() == lightGridSRV.get();
     const bool resourceComplete = t35Matches && t36Matches && t37Matches;
@@ -4300,7 +4888,7 @@ LightLimitFix::PostNGClusterResourceBindingState LightLimitFix::BindPostNGBSLigh
 		return state;
 	}
 
-	ID3D11ShaderResourceView *views[3]{lightsSRV.get(), lightIndexListSRV.get(), lightGridSRV.get()};
+	ID3D11ShaderResourceView *views[3]{GetCurrentLightsSRV(), lightIndexListSRV.get(), lightGridSRV.get()};
 	context->PSSetShaderResources(35, ARRAYSIZE(views), views);
 	state.clusterSRVsBound = true;
 	state.lightCount = currentLightCount;
@@ -4330,6 +4918,32 @@ bool LightLimitFix::HasPostNGBSLightingLLFConsumerDescriptorObserved() const
 }
 #endif
 
+#if defined(FALLOUT_PRE_NG)
+void LightLimitFix::InstallPreNGBSLightingBatchHook()
+{
+    static std::atomic_bool installed = false;
+    if (installed.exchange(true, std::memory_order_acq_rel))
+    {
+        return;
+    }
+
+    const auto hookAddr = F4Runtime::PreNG::BS_LIGHTING_BATCH_SETUP.address();
+    if (!F4Runtime::IsReadableAddress(hookAddr, 16))
+    {
+        logger::warn("[LightLimitFix] PreNG BSLighting batch-setup hook held; target 0x{:X} is not readable", hookAddr);
+        return;
+    }
+
+    Hooks::PreNGBSLightingBatchSetup::func = reinterpret_cast<decltype(Hooks::PreNGBSLightingBatchSetup::func)>(
+        Detours::X64::DetourFunction(
+            hookAddr,
+            reinterpret_cast<std::uintptr_t>(Hooks::PreNGBSLightingBatchSetup::thunk)));
+    s_preNGBSLightingBatchSetupHookInstalled.store(true, std::memory_order_release);
+    logger::info("[LightLimitFix] PreNG BSLighting batch-setup hook installed at 0x{:X} original=0x{:X}",
+                 hookAddr, reinterpret_cast<std::uintptr_t>(Hooks::PreNGBSLightingBatchSetup::func));
+}
+#endif
+
 void LightLimitFix::Hooks::Install(bool a_includeEffectShader)
 {
     static std::atomic_bool lightingInstalled = false;
@@ -4340,6 +4954,9 @@ void LightLimitFix::Hooks::Install(bool a_includeEffectShader)
     if (installedLightingNow)
     {
         stl::write_vfunc<0x7, BSLightingShader_SetupGeometry>(RE::VTABLE::BSLightingShader[0]);
+#if defined(FALLOUT_PRE_NG)
+        stl::write_vfunc<0x7, BSDFLightShader_SetupGeometry>(RE::VTABLE::BSDFLightShader[0]);
+#endif
     }
 #if defined(FALLOUT_PRE_NG)
     s_preNGBSLightingSetupGeometryHookInstalled.store(true, std::memory_order_release);
@@ -4420,6 +5037,40 @@ void LightLimitFix::Hooks::BSLightingShader_SetupGeometry::thunk(RE::BSShader *a
     self.TryBindPreNGBSLightingVisibleConsumerFromSetupGeometry(a_this);
 #endif
 }
+
+#if defined(FALLOUT_PRE_NG)
+void LightLimitFix::Hooks::BSDFLightShader_SetupGeometry::thunk(RE::BSShader *a_this, RE::BSRenderPass *a_pass)
+{
+    func(a_this, a_pass);
+    auto &self = globals::features::lightLimitFix;
+    // DFLight per-pass setup runs immediately before the draw; swapping the
+    // pixel shader here sticks, unlike the earlier batch-setup hook where the
+    // renderer re-bound the vanilla shader before the draw.
+    self.HandlePreNGDFLightForwardBatchPostCall(a_this);
+}
+#endif
+
+#if defined(FALLOUT_PRE_NG)
+std::uint8_t LightLimitFix::Hooks::PreNGBSLightingBatchSetup::thunk(
+    RE::BSShader *a_shader,
+    void *a_batchData,
+    std::uint32_t a_flags,
+    std::uint8_t a_flag)
+{
+    auto &self = globals::features::lightLimitFix;
+    const auto result = func(a_shader, a_batchData, a_flags, a_flag);
+
+#if defined(FALLOUT_PRE_NG)
+    CapturePreNGDFLightCameraCBOnce();
+#endif
+
+    // Vanilla batch setup just finished the shader lookup + CB1/CB2 bind, so the
+    // current VS/PS entries describe this item; reuse the SetupGeometry consumer
+    // bind (swap PS to the ShaderCache consumer + re-assert t35-t37).
+    self.TryBindPreNGBSLightingVisibleConsumerFromSetupGeometry(a_shader, "BatchSetup");
+    return result;
+}
+#endif
 
 void LightLimitFix::Hooks::BSEffectShader_SetupGeometry::thunk(RE::BSShader *a_this, RE::BSRenderPass *a_pass)
 {
