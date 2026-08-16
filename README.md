@@ -1,9 +1,14 @@
 # fo4CS
 
-F4SE plugins for Fallout 4 that provide frame generation and upscaling support.
+F4SE plugins for Fallout 4 that provide community shader/lighting features
+(Community Shaders / LightLimitFix), frame generation, and upscaling support.
 
-This repository can build two plugin targets:
+The main plugin target is `CommunityShaders` (per-runtime builds for PreNG /
+PostNG / PostAE), which currently hosts the LLF DFLight forward consumer and the
+deferred/ExtendedMaterials work. The repository also retains the standalone
+legacy plugin targets:
 
+- `CommunityShaders` — community shaders / LightLimitFix / Deferred features.
 - `FrameGen` — frame generation support.
 - `Upscaler` — upscaling support.
 
@@ -64,6 +69,14 @@ cmake --build build\PostAE --config Release
 ```
 
 The `dist\` directory is produced only by the `BuildRelease*.bat` scripts.
+
+## CommunityShaders / shaders
+
+The `CommunityShaders` target deploys `F4SE\Plugins\CommunityShaders.dll` and the
+active LLF shader set under `Data\Shaders\LightLimitFix\` (e.g.
+`DFLightForwardConsumerPS.hlsl`, `LightLimitFix.hlsli`, `ClusterBuildingCS.hlsl`,
+`ClusterCullingCS.hlsl`, `DFLightZeroOutputPS.hlsl`). Runtime switches are read
+from `Data\F4SE\Plugins\CommunityShaders\Debug.ini` `[Switches]`.
 
 ## Package layout
 

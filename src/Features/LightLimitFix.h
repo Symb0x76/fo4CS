@@ -112,13 +112,14 @@ struct LightLimitFix : Feature
 		float4x4 CameraProjInverse;          // → 96
 	};
 
-	// Matches ClusterCullingCS.hlsl cbuffer PerFrame (register b0, 96 bytes)
+	// Matches ClusterCullingCS.hlsl cbuffer PerFrame (register b0, 112 bytes)
 	struct alignas(16) LightCullingCB
 	{
 		std::uint32_t LightCount;
 		std::uint32_t pad[3];               // → 16
 		std::uint32_t ClusterSize[4];       // → 32
 		float4x4 CameraView;                 // → 96
+		DirectX::XMFLOAT4 CameraPos;         // → 112
 	};
 
 	struct alignas(16) PerFrame
@@ -212,6 +213,9 @@ struct LightLimitFix : Feature
 	void RestoreDefaultSettings() override;
 	void DrawSettings() override;
 	[[nodiscard]] bool HasResources() const;
+	// The light-payload SRV the current frame uploaded (rotates with the
+	// triple-buffered light buffers on PreNG; single SRV elsewhere).
+	ID3D11ShaderResourceView* GetCurrentLightsSRV();
 	void PostPostLoad() override;
 	void DataLoaded() override;
 	void Prepass() override;
@@ -258,6 +262,15 @@ public:
 	PreNGDFLightResourceBindingState BindPreNGDFCompositeDescriptorResourcesToPixelShader();
 	PreNGDFLightResourceBindingState BindPreNGBSLightingDescriptorResourcesToPixelShader();
 	PreNGDFLightResourceBindingState BindPreNGBSLightingSetupGeometryResources(RE::BSRenderPass* a_pass);
+	void TryBindPreNGBSLightingVisibleConsumerFromSetupGeometry(
+		RE::BSShader* a_shader,
+		const char* a_sourceName = "SetupGeometry");
+	void InstallPreNGBSLightingBatchHook();
+	void UpdatePreNGDFLightForwardCameraCB(
+		const DirectX::XMFLOAT4X4& a_viewMatrix,
+		float a_cameraNear,
+		float a_cameraFar);
+	void HandlePreNGDFLightForwardBatchPostCall(RE::BSShader* a_shader);
 	[[nodiscard]] bool ShouldProcessPreNGBSLightingSetupGeometryProof() const;
 	[[nodiscard]] bool HasPreNGDFLightDescriptorConsumerData() const;
 	[[nodiscard]] bool HasPreNGDFCompositeDescriptorConsumerData() const;
@@ -315,6 +328,13 @@ public:
 	void CollectLightsFromBSLight();
 	void CollectLightCB();
 	std::vector<LightData> frameLights;
+#if defined(FALLOUT_PRE_NG)
+	// Camera state used to fill positionWS[1]; the culling block reuses it so
+	// the light grid and the light payload always share one camera state.
+	DirectX::XMFLOAT4 preNGDFLightLastSnapshotCameraPos{};
+	DirectX::XMFLOAT4X4 preNGDFLightLastSnapshotViewRows{};
+	bool preNGDFLightLastSnapshotViewValid = false;
+#endif
 	std::set<RE::BSLight*> seenLights;
 	std::vector<RE::BSLight*> seenThisPass;
 	std::set<std::uint64_t> seenCBHashes;
@@ -328,11 +348,36 @@ public:
 			static inline REL::Relocation<decltype(thunk)> func;
 		};
 
+		struct BSDFLightShader_SetupGeometry
+		{
+			static void thunk(RE::BSShader* a_this, RE::BSRenderPass* a_pass);
+			static inline REL::Relocation<decltype(thunk)> func;
+		};
+
 		struct BSEffectShader_SetupGeometry
 		{
 			static void thunk(RE::BSShader* a_this, RE::BSRenderPass* a_pass);
 			static inline REL::Relocation<decltype(thunk)> func;
 		};
+
+#if defined(FALLOUT_PRE_NG)
+		struct PreNGBSLightingBatchSetup
+		{
+			// sub_1428C37A0: per-item batched BSLighting setup in the normal
+			// world renderer (shader lookup + CB1/CB2 bind). a_batchData is an
+			// opaque __m128* in the vanilla signature; we only need a_shader.
+			static std::uint8_t thunk(
+				RE::BSShader* a_shader,
+				void* a_batchData,
+				std::uint32_t a_flags,
+				std::uint8_t a_flag);
+			static inline std::uint8_t (*func)(
+				RE::BSShader*,
+				void*,
+				std::uint32_t,
+				std::uint8_t) = nullptr;
+		};
+#endif
 
 		static void Install(bool a_includeEffectShader = true);
 	};
@@ -356,8 +401,19 @@ private:
 	winrt::com_ptr<ID3D11ComputeShader>          clusterCullingCS;
 	winrt::com_ptr<ID3D11Buffer>                 lightBuildingCB;
 	winrt::com_ptr<ID3D11Buffer>                 lightCullingCB;
+#if defined(FALLOUT_PRE_NG)
+	// Triple-buffered light payload: the consumer draw of frame N still reads
+	// the buffer uploaded in frame N, so a single dynamic buffer Map stalls
+	// ~12ms waiting for that draw. Rotating 3 buffers/SRVs removes the stall.
+	static constexpr std::uint32_t kPreNGLightsBufferFrames = 8;
+	winrt::com_ptr<ID3D11Buffer>                 lightsBuffers[kPreNGLightsBufferFrames];
+	winrt::com_ptr<ID3D11ShaderResourceView>     lightsSRVs[kPreNGLightsBufferFrames];
+	std::uint32_t                               currentLightsBufferIndex = 0;
+#else
 	winrt::com_ptr<ID3D11Buffer>                 lightsBuffer;
 	winrt::com_ptr<ID3D11ShaderResourceView>     lightsSRV;
+#endif
+	winrt::com_ptr<ID3D11Buffer>                 dflightForwardCB;
 	winrt::com_ptr<ID3D11Buffer>                 clustersBuffer;
 	winrt::com_ptr<ID3D11ShaderResourceView>     clustersSRV;
 	winrt::com_ptr<ID3D11UnorderedAccessView>    clustersUAV;

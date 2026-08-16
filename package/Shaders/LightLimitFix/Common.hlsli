@@ -7,8 +7,7 @@
 #define NUMTHREAD_Z 4
 #define GROUP_SIZE (NUMTHREAD_X * NUMTHREAD_Y * NUMTHREAD_Z)
 
-// Maximum visible lights per cluster. Keep this matched with
-// LightLimitFix.cpp:kClusterMaxLights.
+// Maximum visible lights per cluster (matches kClusterMaxLights in LightLimitFix.cpp)
 #define MAX_CLUSTER_LIGHTS 128
 
 namespace LightFlags
@@ -38,22 +37,29 @@ struct LightGrid
 	uint2 pad0;
 };
 
-// GPU-side layout matching LightLimitFix::LightData in C++.
-// float3 positionWS[2] → float4 positionWS[2] (float3 + uint pad per slot)
+// GPU-side layout matching LightLimitFix::LightData in C++ (sizeof == 96,
+// static_asserted in LightLimitFix.h). Field offsets MUST stay in lock-step:
+//   color/fade            0..16
+//   radius..sizeBias     16..32
+//   positionWS[2]        32..64 (float3 data + uint pad per slot)
+//   roomFlags[4]         64..80
+//   lightFlags           80
+//   shadowLightIndex     84
+//   pad0 / pad1          88 / 92
 struct Light
 {
 	float3 color;           // offset 0
-	float fade;             // offset 12 (+4 = 16 boundary)
+	float fade;             // offset 12
 	float radius;           // offset 16
 	float invRadius;        // offset 20
 	float fadeZone;         // offset 24
-	float sizeBias;         // offset 28 (+4 = 16 boundary)
-	float4 positionWS[2];   // offset 32 (+32 = 16 boundary)
-	uint4 roomFlags;        // offset 64
+	float sizeBias;         // offset 28
+	float4 positionWS[2];   // offset 32..64 (float3 data + uint pad per slot)
+	uint4 roomFlags;        // offset 64 (maps uint32_t roomFlags[4])
 	uint lightFlags;        // offset 80
-	uint shadowLightIndex;  // offset 84
+	uint shadowLightIndex;  // offset 84 (C++ shadowLightIndex)
 	uint pad0;              // offset 88
-	uint pad1;              // offset 92 (+4 = 16 boundary)
+	uint pad1;              // offset 92
 };
 
 #endif // LLF_COMMON_HLSLI

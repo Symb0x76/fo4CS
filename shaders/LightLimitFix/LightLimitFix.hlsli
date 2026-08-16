@@ -31,9 +31,13 @@ namespace LightLimitFix
 		if (logRange <= 0.0f)
 			return false;
 
-		const float z = max(viewZ, nearZ);
-		const uint clusterZ = (uint)(log(z / nearZ) * float(clusterSize.z) / logRange);
-		const uint3 cluster = uint3(uint2(uv * float2(clusterSize.xy)), clusterZ);
+		// Clamp to the last slice: z == farZ would otherwise compute clusterZ
+		// == clusterSize.z and fail the bounds check, dropping every far-plane
+		// pixel (the blue regions at distance).
+		const float z = min(max(viewZ, nearZ), farZ);
+		const uint clusterZ = min((uint)(log(z / nearZ) * float(clusterSize.z) / logRange), clusterSize.z - 1);
+		const uint2 clusterXY = min(uint2(uv * float2(clusterSize.xy)), clusterSize.xy - 1);
+		const uint3 cluster = uint3(clusterXY, clusterZ);
 
 		if (any(cluster >= clusterSize))
 			return false;
@@ -69,9 +73,15 @@ namespace LightLimitFix
 
 	bool IsLightIgnored(Light light)
 	{
+#if defined(LLF_DFLIGHT_FORWARD_CONSUMER)
+		// DFLightForwardConsumerPS replaces the vanilla DFLight forward pass
+		// itself; shadow-flagged lights ARE part of that pass and must stay.
+		return false;
+#else
 		// Shadow-casting point lights are deferred (DFLight) in FO4; skip them
 		// so forward clustered lighting never double-lights them.
 		return (light.lightFlags & LightFlags::Shadow) != 0;
+#endif
 	}
 
 	bool GetClusteredLight(in uint lightIndex, in uint clusterLightOffset, inout Light light)

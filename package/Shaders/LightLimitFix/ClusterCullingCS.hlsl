@@ -10,15 +10,18 @@ cbuffer PerFrame : register(b0)
 	uint4 ClusterSize;          // grid dimensions (x, y, z, pad)
 	                             // → 32 bytes
 
-	float4x4 CameraView;         // world → view-space transform (row-major)
+	float4x4 CameraView;         // vanilla DFLight view rows (transposed upload)
 	                             // → 96 bytes
+
+	float4 CameraPos;            // camera world position (w unused)
+	                             // → 112 bytes
 }
 
 StructuredBuffer<ClusterAABB> clusters  : register(t0);
 StructuredBuffer<Light>        lights    : register(t1);
 
-// NOTE: the host still binds a 1-element lightIndexCounter UAV at slot 0 and
-// clears it each frame, but this shader no longer reads or writes it. Slot indices
+// NOTE: the C++ side still binds a 1-element lightIndexCounter UAV at slot 0 and
+// clears it each frame, but the shader no longer reads or writes it. Slot indices
 // are kept stable (list=u1, grid=u2) so the host bindings remain correct.
 RWStructuredBuffer<uint>      lightIndexList    : register(u1);
 RWStructuredBuffer<LightGrid> lightGrid         : register(u2);
@@ -51,14 +54,18 @@ void main(
 	// Static per-cluster partition. The light index list buffer is allocated as
 	// clusterCount * MAX_CLUSTER_LIGHTS entries (see SetupResources), so cluster N
 	// owns slots [N * MAX_CLUSTER_LIGHTS, (N+1) * MAX_CLUSTER_LIGHTS). This removes
-	// the atomic counter and the 128-element per-thread array (warning X4714).
+	// the atomic counter and the 256-element per-thread array that exceeded the
+	// thread-group local-data budget of the original implementation.
 	uint base = clusterIndex * MAX_CLUSTER_LIGHTS;
 	uint visibleLightCount = 0;
 
 	for (uint i = 0; i < LightCount; i++) {
 		Light light = lights[i];
 
-		float3 positionVS = mul(CameraView, float4(light.positionWS[0].xyz, 1.0f)).xyz;
+		// Same transform the CPU uses for Light.positionWS[1] and vanilla uses
+		// for cb2[1]: (world - camera) * viewRows.
+		float3 rel = light.positionWS[0].xyz - CameraPos.xyz;
+		float3 positionVS = mul(CameraView, float4(rel, 1.0f)).xyz;
 		float radiusSq = light.radius * light.radius;
 
 		if (LightIntersectsCluster(positionVS, radiusSq, cluster)) {

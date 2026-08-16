@@ -10,8 +10,11 @@ cbuffer PerFrame : register(b0)
 	uint4 ClusterSize;          // grid dimensions (x, y, z, pad)
 	                             // → 32 bytes
 
-	float4x4 CameraView;         // world → view-space transform (row-major)
+	float4x4 CameraView;         // vanilla DFLight view rows (transposed upload)
 	                             // → 96 bytes
+
+	float4 CameraPos;            // camera world position (w unused)
+	                             // → 112 bytes
 }
 
 StructuredBuffer<ClusterAABB> clusters  : register(t0);
@@ -59,7 +62,10 @@ void main(
 	for (uint i = 0; i < LightCount; i++) {
 		Light light = lights[i];
 
-		float3 positionVS = mul(CameraView, float4(light.positionWS[0].xyz, 1.0f)).xyz;
+		// Same transform the CPU uses for Light.positionWS[1] and vanilla uses
+		// for cb2[1]: (world - camera) * viewRows.
+		float3 rel = light.positionWS[0].xyz - CameraPos.xyz;
+		float3 positionVS = mul(CameraView, float4(rel, 1.0f)).xyz;
 		float radiusSq = light.radius * light.radius;
 
 		if (LightIntersectsCluster(positionVS, radiusSq, cluster)) {

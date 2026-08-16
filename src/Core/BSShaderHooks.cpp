@@ -631,7 +631,8 @@ namespace CommunityShaders
 		const auto fxpFilename = ReadPreNGCString(a_shader->fxpFilename, kPreNGMaxFxpFilenameLength);
 		return IsPreNGDFLightFxpName(fxpFilename) &&
 		       (F4Runtime::PreNG::IsDFLightFullContractPixelDescriptor(pixelDescriptor) ||
-		        IsPreNGDFLightFullShadowedPixelDescriptor(pixelDescriptor));
+		        IsPreNGDFLightFullShadowedPixelDescriptor(pixelDescriptor) ||
+		        F4Runtime::PreNG::IsDFLightForwardPixelDescriptor(pixelDescriptor));
 	}
 
 	bool IsPreNGDFCompositeVanillaDumpLookup(RE::BSShader* a_shader)
@@ -646,6 +647,9 @@ namespace CommunityShaders
 		}
 		if (IsPreNGDFLightFullShadowedPixelDescriptor(a_pixelDescriptor)) {
 			return "DFLightFullShadowed";
+		}
+		if (F4Runtime::PreNG::IsDFLightForwardPixelDescriptor(a_pixelDescriptor)) {
+			return "DFLightForward";
 		}
 		return "DFLightUnknown";
 	}

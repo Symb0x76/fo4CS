@@ -59,6 +59,9 @@ namespace CommunityShaders
 		constexpr std::string_view kPreNGBSLightingLLFConsumerVisibleSource = "LightLimitFix/BSLightingLLFConsumerPS.hlsl";
 		constexpr std::string_view kPreNGDFLightFullContractDescriptorSource = "LightLimitFix/DFLightFullContractPS.hlsl";
 		constexpr std::string_view kPreNGDFLightFullShadowedDescriptorSource = "LightLimitFix/DFLightFullShadowedPS.hlsl";
+		constexpr std::string_view kPreNGDFLightForwardConsumerSource = "LightLimitFix/DFLightForwardConsumerPS.hlsl";
+		constexpr std::string_view kPreNGDFLightForwardZeroSource = "LightLimitFix/DFLightZeroOutputPS.hlsl";
+		constexpr const char* kPreNGDFLightForwardLLFBindEnv = "FO4CS_LLF_PRENG_DFLIGHT_FORWARD_LLF_BIND";
 		constexpr std::string_view kPreNGDFCompositeDescriptorProbeSource = "LightLimitFix/DFCompositeContractProbePS.hlsl";
 		constexpr std::string_view kPreNGDFCompositeVanilla40Source = "LightLimitFix/DFCompositeVanilla40PS.hlsl";
 		constexpr std::string_view kPreNGDFCompositeVanilla88Source = "LightLimitFix/DFCompositeVanilla88PS.hlsl";
@@ -125,6 +128,12 @@ namespace CommunityShaders
 		bool ShouldEnablePreNGDFLightFullContractVisibleLLF()
 		{
 			static const bool enabled = ReadDescriptorEnvironmentSwitch(kPreNGDFLightFullContractVisibleLLFEnv);
+			return enabled;
+		}
+
+		bool ShouldEnablePreNGDFLightForwardVisibleLLF()
+		{
+			static const bool enabled = ReadDescriptorEnvironmentSwitch(kPreNGDFLightForwardLLFBindEnv);
 			return enabled;
 		}
 
@@ -598,7 +607,9 @@ namespace CommunityShaders
 			       IsPreNGDFLightFxpName(a_normalizedFxpFilename) &&
 			       (F4Runtime::PreNG::IsDFLightLLFConsumerPixelDescriptor(a_descriptor) ||
 			        (ShouldEnablePreNGDFLightFullShadowedDescriptorConsumer() &&
-			         F4Runtime::PreNG::IsDFLightFullShadowedPixelDescriptor(a_descriptor)));
+			         F4Runtime::PreNG::IsDFLightFullShadowedPixelDescriptor(a_descriptor)) ||
+			        (ShouldEnablePreNGDFLightForwardVisibleLLF() &&
+			         F4Runtime::PreNG::IsDFLightForwardPixelDescriptor(a_descriptor)));
 #else
 			(void)a_stage;
 			(void)a_shaderType;
@@ -645,6 +656,11 @@ namespace CommunityShaders
 			           a_shaderType == kPreNGBSLightingShaderType &&
 			           F4Runtime::IsDeferredLightingPixelDescriptor(a_descriptor)) ||
 			       ReadDescriptorCompileSwitch() ||
+			       (a_stage == ShaderStage::Pixel &&
+			           a_shaderType == kPreNGDFLightingShaderType &&
+			           IsPreNGDFLightFxpName(a_normalizedFxpFilename) &&
+			           ShouldEnablePreNGDFLightForwardVisibleLLF() &&
+			           F4Runtime::PreNG::IsDFLightForwardPixelDescriptor(a_descriptor)) ||
 			       ShouldCompilePreNGBSLightingContractShader(
 				       a_stage,
 				       a_shaderType,
@@ -936,6 +952,19 @@ namespace CommunityShaders
 			std::error_code ec;
 			if (std::filesystem::exists(diskPath, ec) && std::filesystem::is_regular_file(diskPath, ec)) {
 				return std::string{ kPreNGBSLightingContractProbeSource };
+			}
+			return std::nullopt;
+		}
+
+		if (ShouldEnablePreNGDFLightForwardVisibleLLF() &&
+		    a_key.stage == ShaderStage::Pixel &&
+		    a_key.shaderType == kPreNGDFLightingShaderType &&
+		    IsPreNGDFLightFxpName(a_key.fxpFilename) &&
+		    F4Runtime::PreNG::IsDFLightForwardPixelDescriptor(a_key.descriptor)) {
+			const auto diskPath = std::filesystem::path("Data\\Shaders") / std::filesystem::path(kPreNGDFLightForwardConsumerSource);
+			std::error_code ec;
+			if (std::filesystem::exists(diskPath, ec) && std::filesystem::is_regular_file(diskPath, ec)) {
+				return std::string{ kPreNGDFLightForwardConsumerSource };
 			}
 			return std::nullopt;
 		}
