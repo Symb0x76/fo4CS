@@ -59,6 +59,8 @@ namespace CommunityShaders::Hooks
 
 	// DSP: defined in Hooks.cpp (moved out of the anonymous namespace).
 	[[nodiscard]] std::optional<ShaderCache::ShaderMetadata> GetBoundPreNGDFLightDrawStatePixelShader(ID3D11DeviceContext* a_context);
+	void TrackPreNGDFLightDrawStateBoundPixelShader(ID3D11DeviceContext* a_context, ID3D11PixelShader* a_pixelShader);
+	void TracePreNGDFLightDrawStateContext(ID3D11DeviceContext* a_context, const char* a_drawKind, std::string_view a_drawCounts);
 
 	// D3D11DeviceHooks domain (Promotion Step 1): shared state + env switches + functions
 	// defined in Hooks.cpp (moved out of the anonymous namespace).
