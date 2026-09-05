@@ -106,6 +106,14 @@ constexpr const char *kPreNGBSLightingConsumerCompileEnv = "FO4CS_LLF_PRENG_BSLI
 constexpr const char *kPreNGBSLightingDescriptorObserveEnv = "FO4CS_LLF_PRENG_BSLIGHTING_DESCRIPTOR_OBSERVE";
 constexpr const char *kPreNGBSLightingVanillaBindEnv = "FO4CS_LLF_PRENG_BSLIGHTING_VANILLA_BIND";
 constexpr const char *kPreNGBSLightingLLFBindEnv = "FO4CS_LLF_PRENG_BSLIGHTING_LLF_BIND";
+// "Last mile": generalize the visible BSLighting consumer bind from the five
+// known menu-preview contract descriptors (0x1/0x101/0x111/0x141/0x201) to the
+// descriptors normal-world rendering actually uses. WORLD_OBSERVE is learn-only
+// (records + logs the observed descriptors, never binds); WORLD_BIND performs
+// the bind and is gated behind the master FO4CS_LLF_PRENG_BSLIGHTING_LLF_BIND
+// switch plus the payload/menu/cluster-SRV safety gates in TryBind.
+constexpr const char *kPreNGBSLightingWorldObserveEnv = "FO4CS_LLF_PRENG_BSLIGHTING_WORLD_OBSERVE";
+constexpr const char *kPreNGBSLightingWorldBindEnv = "FO4CS_LLF_PRENG_BSLIGHTING_WORLD_BIND";
 constexpr const char *kPreNGDFLightForwardLLFBindEnv = "FO4CS_LLF_PRENG_DFLIGHT_FORWARD_LLF_BIND";
 constexpr const char *kPreNGDisablePreviewOverloadGateEnv = "FO4CS_LLF_PRENG_DISABLE_PREVIEW_OVERLOAD_GATE";
 // Diagnostic: allow the visible BSLighting LLF consumer to bind while a
@@ -210,6 +218,15 @@ std::atomic_uint32_t s_preNGBSLightingSetupGeometryHookCallCount = 0;
 std::atomic_uint32_t s_preNGBSLightingSetupGeometryBypassCallCount = 0;
 std::atomic_bool s_preNGBSLightingBatchSetupHookInstalled = false;
 std::atomic_uint32_t s_preNGBSLightingBatchSetupHookCallCount = 0;
+// Normal-world BSLighting pixel descriptors observed while the clustered
+// payload is live. Menu 3D previews only ever exercise the five contract
+// descriptors (0x1/0x101/0x111/0x141/0x201); normal world rendering resolves
+// the lighting PS through other descriptors, and this set records them so the
+// consumer bind can be generalized from the hard-coded contract gate.
+std::mutex s_preNGBSLightingWorldDescriptorLock;
+std::set<std::uint32_t> s_preNGBSLightingWorldDescriptors;
+std::atomic_uint32_t s_preNGBSLightingWorldDescriptorObservations = 0;
+std::atomic_uint32_t s_preNGBSLightingWorldBindCount = 0;
 #if defined(FALLOUT_PRE_NG)
 winrt::com_ptr<ID3D11Buffer> s_preNGDFLightCameraCB;
 std::atomic_bool s_preNGDFLightCameraCBCaptured = false;
@@ -1370,6 +1387,55 @@ bool ShouldBindPreNGBSLightingLLFVisibleConsumer()
     return enabled;
 }
 
+bool ShouldObservePreNGBSLightingWorldDescriptors()
+{
+    static const bool enabled = IsTruthyEnvironmentSwitch(kPreNGBSLightingWorldObserveEnv);
+    return enabled;
+}
+
+bool ShouldBindPreNGBSLightingWorldConsumer()
+{
+    static const bool enabled = IsTruthyEnvironmentSwitch(kPreNGBSLightingWorldBindEnv);
+    return enabled;
+}
+
+// FO4 BSLighting pixel descriptors carry the lighting marker in bit 0 (every
+// known contract descriptor ends in 0x1 and NormalizeLightingPixelDescriptor
+// ORs it back in). Normal-world draws use variants of the contract set that the
+// menu-preview shader lookups never expose; this cheap marker lets us recognise
+// them without a live-game descriptor dump.
+bool IsPlausiblePreNGBSLightingPixelDescriptor(std::uint32_t a_descriptor)
+{
+    return (a_descriptor & 0x1u) != 0;
+}
+
+void ObservePreNGBSLightingWorldDescriptor(std::uint32_t a_pixelDescriptor)
+{
+    bool first = false;
+    std::uint32_t observation = 0;
+    std::size_t learned = 0;
+    {
+        std::scoped_lock lock(s_preNGBSLightingWorldDescriptorLock);
+        first = s_preNGBSLightingWorldDescriptors.insert(a_pixelDescriptor).second;
+        observation = s_preNGBSLightingWorldDescriptorObservations.fetch_add(1, std::memory_order_relaxed) + 1;
+        learned = s_preNGBSLightingWorldDescriptors.size();
+    }
+
+    if (first || observation <= 16 || observation % 512 == 0)
+    {
+        auto *runtime = CommunityShaders::Runtime::GetSingleton();
+        logger::info("[LightLimitFix] PreNG BSLighting normal-world pixel descriptor observed descriptor=0x{:X} "
+                     "first={} observations={} learned={} frame={}",
+                     a_pixelDescriptor, first, observation, learned, runtime ? runtime->GetFrameCount() : 0);
+    }
+}
+
+std::size_t GetLearnedPreNGBSLightingWorldDescriptorCount()
+{
+    std::scoped_lock lock(s_preNGBSLightingWorldDescriptorLock);
+    return s_preNGBSLightingWorldDescriptors.size();
+}
+
 bool ShouldBindPreNGDFLightForwardVisibleLLF()
 {
     static const bool enabled = IsTruthyEnvironmentSwitch(kPreNGDFLightForwardLLFBindEnv);
@@ -1439,15 +1505,19 @@ void LogPreNGHookReachabilityWatchdog(std::uint64_t a_frame)
 
     logger::info("[LightLimitFix] PreNG hook reachability watchdog frame={} pointRequested={} pointInstalled={} "
                  "pointPatchVerified={} pointCalls={} setupResourceRequested={} setupInstalled={} setupCalls={} "
-                 "setupBypassCalls={} batchHookInstalled={} batchCalls={}; zero-call hooks mean this run has not "
-                 "exercised the verified BSLighting/point-light/batch route yet, so visible LLF remains held",
+                 "setupBypassCalls={} batchHookInstalled={} batchCalls={} worldDescriptors={} worldBinds={} worldObs={}; "
+                 "zero-call hooks mean this run has not exercised the verified BSLighting/point-light/batch route yet, "
+                 "so visible LLF remains held",
                  a_frame, pointRequested, s_preNGPointLightHookInstalled.load(std::memory_order_acquire),
                  s_preNGPointLightHookPatchVerified.load(std::memory_order_acquire),
                  s_preNGPointLightHookCallCount.load(std::memory_order_relaxed), setupResourceRequested,
                  s_preNGBSLightingSetupGeometryHookInstalled.load(std::memory_order_acquire),
                  s_preNGBSLightingSetupGeometryHookCallCount.load(std::memory_order_relaxed),
                  s_preNGBSLightingSetupGeometryBypassCallCount.load(std::memory_order_relaxed),
-                 batchHookInstalled, s_preNGBSLightingBatchSetupHookCallCount.load(std::memory_order_relaxed));
+                 batchHookInstalled, s_preNGBSLightingBatchSetupHookCallCount.load(std::memory_order_relaxed),
+                 GetLearnedPreNGBSLightingWorldDescriptorCount(),
+                 s_preNGBSLightingWorldBindCount.load(std::memory_order_relaxed),
+                 s_preNGBSLightingWorldDescriptorObservations.load(std::memory_order_relaxed));
 }
 
 bool ShouldHoldPreNGDFLightPreparedState()
@@ -3855,6 +3925,10 @@ void LightLimitFix::TryBindPreNGBSLightingVisibleConsumerFromSetupGeometry(
     {
         return;
     }
+    if (a_shader->shaderType != static_cast<std::int32_t>(F4Runtime::PreNG::BS_LIGHTING_SHADER_TYPE))
+    {
+        return;
+    }
     if (!HasPreNGBSLightingDescriptorConsumerData())
     {
         return;
@@ -3866,8 +3940,22 @@ void LightLimitFix::TryBindPreNGBSLightingVisibleConsumerFromSetupGeometry(
 
     const auto pixelState = ReadPreNGCurrentPixelShaderEntryState();
     const auto pixelDescriptor = pixelState.id;
-    if (!F4Runtime::PreNG::IsBSLightingContractPixelDescriptor(pixelDescriptor))
+    const bool isContractDescriptor = F4Runtime::PreNG::IsBSLightingContractPixelDescriptor(pixelDescriptor);
+    const bool isWorldDescriptor =
+        !isContractDescriptor &&
+        ShouldBindPreNGBSLightingWorldConsumer() &&
+        IsPlausiblePreNGBSLightingPixelDescriptor(pixelDescriptor);
+    if (!isContractDescriptor && !isWorldDescriptor)
     {
+        // "Last mile" learn-only path: normal-world BSLighting draws resolve the
+        // lighting PS through descriptors outside the five menu-preview contract
+        // values. Record them so the next run can generalize the bind; do not
+        // bind on this run.
+        if (ShouldObservePreNGBSLightingWorldDescriptors() &&
+            IsPlausiblePreNGBSLightingPixelDescriptor(pixelDescriptor))
+        {
+            ObservePreNGBSLightingWorldDescriptor(pixelDescriptor);
+        }
         return;
     }
 
@@ -3907,12 +3995,16 @@ void LightLimitFix::TryBindPreNGBSLightingVisibleConsumerFromSetupGeometry(
 
     static std::atomic_uint32_t bindCount = 0;
     const auto bindIndex = ++bindCount;
+    if (isWorldDescriptor)
+    {
+        s_preNGBSLightingWorldBindCount.fetch_add(1, std::memory_order_relaxed);
+    }
     if (bindIndex <= 8 || (bindIndex & (bindIndex - 1)) == 0)
     {
         logger::info("[LightLimitFix] PreNG BSLighting LLF consumer bound via {} binds={} shaderType={} "
-                     "descriptor=0x{:X} llfConsumerComplete=true lights={}",
+                     "descriptor=0x{:X} llfConsumerComplete=true worldBind={} lights={}",
                      a_sourceName, bindIndex, static_cast<std::int32_t>(a_shader->shaderType), pixelDescriptor,
-                     currentLightCount);
+                     isWorldDescriptor, currentLightCount);
     }
 }
 
@@ -5061,6 +5153,7 @@ std::uint8_t LightLimitFix::Hooks::PreNGBSLightingBatchSetup::thunk(
     const auto result = func(a_shader, a_batchData, a_flags, a_flag);
 
 #if defined(FALLOUT_PRE_NG)
+    s_preNGBSLightingBatchSetupHookCallCount.fetch_add(1, std::memory_order_relaxed);
     CapturePreNGDFLightCameraCBOnce();
 #endif
 

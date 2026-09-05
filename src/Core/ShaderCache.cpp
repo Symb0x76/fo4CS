@@ -37,6 +37,10 @@ namespace CommunityShaders
 		constexpr const char* kPreNGBSLightingContractCompileEnv = "FO4CS_LLF_PRENG_BSLIGHTING_CONTRACT_COMPILE";
 		constexpr const char* kPreNGBSLightingConsumerCompileEnv = "FO4CS_LLF_PRENG_BSLIGHTING_CONSUMER_COMPILE";
 		constexpr const char* kPreNGBSLightingLLFBindEnv = "FO4CS_LLF_PRENG_BSLIGHTING_LLF_BIND";
+		// "Last mile": compile the visible BSLighting consumer for normal-world
+		// lighting descriptors outside the five menu-preview contract values.
+		// Mirrors LightLimitFix::ShouldBindPreNGBSLightingWorldConsumer.
+		constexpr const char* kPreNGBSLightingWorldBindEnv = "FO4CS_LLF_PRENG_BSLIGHTING_WORLD_BIND";
 		constexpr const char* kPreNGDFLightFullShadowedDescriptorConsumerEnv = "FO4CS_LLF_PRENG_DFLIGHT_FULL_SHADOWED_DESCRIPTOR_CONSUMER";
 		constexpr const char* kPreNGDFLightFullShadowedDescriptorConsumerUnsafeEnv = "FO4CS_LLF_PRENG_DFLIGHT_FULL_SHADOWED_DESCRIPTOR_CONSUMER_UNSAFE";
 		constexpr const char* kPreNGDFLightFullContractVisibleLLFEnv = "FO4CS_LLF_PRENG_DFLIGHT_FULL_CONTRACT_VISIBLE_LLF";
@@ -404,6 +408,35 @@ namespace CommunityShaders
 #endif
 		}
 
+		bool ShouldBindPreNGBSLightingWorldConsumerShader(
+			ShaderStage a_stage,
+			std::int32_t a_shaderType,
+			std::string_view a_normalizedFxpFilename,
+			std::uint32_t a_descriptor)
+		{
+#if defined(FALLOUT_PRE_NG)
+			// Bit 0 is the BSLighting lighting marker (every known contract
+			// descriptor ends in 0x1); keep parity with
+			// LightLimitFix::IsPlausiblePreNGBSLightingPixelDescriptor. The
+			// master bind switch must also be on so the compile gate matches the
+			// TryBind gate (which checks the master before reaching the world
+			// descriptor branch).
+			static const bool enabled = ReadDescriptorEnvironmentSwitch(kPreNGBSLightingLLFBindEnv) &&
+			                            ReadDescriptorEnvironmentSwitch(kPreNGBSLightingWorldBindEnv);
+			return enabled &&
+			       a_stage == ShaderStage::Pixel &&
+			       a_shaderType == kPreNGBSLightingShaderType &&
+			       IsPreNGBSLightingFxpName(a_normalizedFxpFilename) &&
+			       (a_descriptor & 0x1u) != 0;
+#else
+			(void)a_stage;
+			(void)a_shaderType;
+			(void)a_normalizedFxpFilename;
+			(void)a_descriptor;
+			return false;
+#endif
+		}
+
 		bool IsPreNGDFLightFullContractDescriptorShader(
 			ShaderStage a_stage,
 			std::int32_t a_shaderType,
@@ -676,6 +709,11 @@ namespace CommunityShaders
 				       a_shaderType,
 				       a_normalizedFxpFilename,
 				       a_descriptor) ||
+			       ShouldBindPreNGBSLightingWorldConsumerShader(
+				       a_stage,
+				       a_shaderType,
+				       a_normalizedFxpFilename,
+				       a_descriptor) ||
 			       ShouldUsePreNGDFCompositeVanillaSafeBindShader(
 				       a_stage,
 				       a_shaderType,
@@ -757,6 +795,11 @@ namespace CommunityShaders
 				result.storage.emplace_back("FO4CS_BSLIGHTING_LLF_CONSUMER_DESCRIPTOR", "1");
 			}
 			if (ShouldBindPreNGBSLightingLLFVisibleConsumerShader(
+					a_stage,
+					a_shaderType,
+					PreNGEnvironment::kPreNGBSLightingFxpName,
+					a_descriptor) ||
+				ShouldBindPreNGBSLightingWorldConsumerShader(
 					a_stage,
 					a_shaderType,
 					PreNGEnvironment::kPreNGBSLightingFxpName,
@@ -929,7 +972,8 @@ namespace CommunityShaders
 		// Visible LLF consumer takes precedence over the compile-only probe when
 		// FO4CS_LLF_PRENG_BSLIGHTING_LLF_BIND is enabled. The probe path stays as
 		// the fallback for compile/observe profiles.
-		if (ShouldBindPreNGBSLightingLLFVisibleConsumerShader(a_key.stage, a_key.shaderType, a_key.fxpFilename, a_key.descriptor)) {
+		if (ShouldBindPreNGBSLightingLLFVisibleConsumerShader(a_key.stage, a_key.shaderType, a_key.fxpFilename, a_key.descriptor) ||
+		    ShouldBindPreNGBSLightingWorldConsumerShader(a_key.stage, a_key.shaderType, a_key.fxpFilename, a_key.descriptor)) {
 			const auto diskPath = std::filesystem::path("Data\\Shaders") / std::filesystem::path(kPreNGBSLightingLLFConsumerVisibleSource);
 			std::error_code ec;
 			if (std::filesystem::exists(diskPath, ec) && std::filesystem::is_regular_file(diskPath, ec)) {
