@@ -463,7 +463,7 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
 			d3d11Context->CopyResource(swapChainBufferWrapped[frameIndex]->resource11, finalFrame);
 
 		const bool uiColorAndAlphaReady =
-			upscaling->UsesDLSSFrameGeneration() &&
+			(upscaling->UsesDLSSFrameGeneration() || upscaling->UsesFSRFrameGeneration()) &&
 			upscaling->BuildUIColorAndAlphaResource(swapChainBufferWrapped[frameIndex]->resource11);
 
 		trace("wait-d3d11-to-d3d12");
@@ -846,9 +846,12 @@ HRESULT STDMETHODCALLTYPE DXGISwapChainProxy::GetDesc(_Out_ DXGI_SWAP_CHAIN_DESC
 	return swapChain->GetDesc(pDesc);
 }
 
-HRESULT STDMETHODCALLTYPE DXGISwapChainProxy::ResizeBuffers(UINT BufferCount, UINT Width, UINT Height, DXGI_FORMAT NewFormat, UINT SwapChainFlags)
+HRESULT STDMETHODCALLTYPE DXGISwapChainProxy::ResizeBuffers(UINT, UINT, UINT, DXGI_FORMAT, UINT)
 {
-	return swapChain->ResizeBuffers(BufferCount, Width, Height, NewFormat, SwapChainFlags);
+	// The D3D12/FidelityFX swap chain is created once at the display size and
+	// must not be recreated. FO4 still calls ResizeBuffers when entering
+	// exclusive fullscreen; forwarding that tears down FG (issue #25).
+	return S_OK;
 }
 
 HRESULT STDMETHODCALLTYPE DXGISwapChainProxy::ResizeTarget(_In_ const DXGI_MODE_DESC*)
