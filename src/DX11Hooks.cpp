@@ -311,7 +311,14 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 	const auto originalFeatureLevels = pFeatureLevels;
 	const auto originalFeatureLevelCount = FeatureLevels;
 
-	if (pSwapChainDesc->Windowed && ShouldCreateD3D12Proxy()) {
+	// Create the D3D12 proxy in exclusive fullscreen as well. SetFullscreenState /
+	// ResizeBuffers / ResizeTarget are no-ops on the proxy, so FO4 can believe it
+	// entered exclusive mode while the FidelityFX swap chain stays flip-model
+	// (issue #25). Previously this was gated on Windowed, so d3d12Interop stayed false.
+	if (ShouldCreateD3D12Proxy()) {
+		if (!pSwapChainDesc->Windowed) {
+			logger::info("[FrameGen] Exclusive fullscreen requested; creating D3D12 proxy anyway");
+		}
 		logger::debug("[FrameGen] Using D3D12 proxy");
 		
 		try {

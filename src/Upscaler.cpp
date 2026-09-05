@@ -180,6 +180,25 @@ namespace
 		return false;
 	}
 
+	// TYPELESS textures cannot be bound as SRV/RTV/UAV without a typed view format.
+	DXGI_FORMAT TypedColorViewFormat(DXGI_FORMAT format)
+	{
+		switch (format) {
+		case DXGI_FORMAT_R8G8B8A8_TYPELESS:
+			return DXGI_FORMAT_R8G8B8A8_UNORM;
+		case DXGI_FORMAT_B8G8R8A8_TYPELESS:
+			return DXGI_FORMAT_B8G8R8A8_UNORM;
+		case DXGI_FORMAT_R10G10B10A2_TYPELESS:
+			return DXGI_FORMAT_R10G10B10A2_UNORM;
+		case DXGI_FORMAT_R16G16B16A16_TYPELESS:
+			return DXGI_FORMAT_R16G16B16A16_FLOAT;
+		case DXGI_FORMAT_R32G32B32A32_TYPELESS:
+			return DXGI_FORMAT_R32G32B32A32_FLOAT;
+		default:
+			return format;
+		}
+	}
+
 	std::filesystem::path GetModuleDirectory(HMODULE module)
 	{
 		std::array<wchar_t, 4096> buffer{};
@@ -656,15 +675,36 @@ void Upscaling::CreateFrameGenerationResources()
 			texDesc.Width = renderWidth;
 			texDesc.Height = renderHeight;
 		}
-		texDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-		srvDesc.Format = texDesc.Format;
-		rtvDesc.Format = texDesc.Format;
-		uavDesc.Format = texDesc.Format;
+		// CopyResource requires an exact format match with the capture source.
+		// Hardcoding R8G8B8A8_UNORM (28) fails on PreNG where kFrameBuffer is
+		// R8G8B8A8_TYPELESS (26) — issue #21. Prefer the framebuffer format so
+		// the first capture candidate matches; fall back to the swap chain or
+		// kMain format (RGBA16F on some PreNG paths).
+		DXGI_FORMAT hudFormat = texDesc.Format;
+		if (auto& frameBuffer = rendererData->renderTargets[static_cast<uint>(RenderTarget::kFrameBuffer)]; frameBuffer.texture) {
+			D3D11_TEXTURE2D_DESC frameBufferDesc{};
+			reinterpret_cast<ID3D11Texture2D*>(frameBuffer.texture)->GetDesc(&frameBufferDesc);
+			hudFormat = frameBufferDesc.Format;
+		} else if (dx12SwapChain->swapChain) {
+			hudFormat = dx12SwapChain->swapChainDesc.Format;
+		}
+		texDesc.Format = hudFormat;
+		const auto hudViewFormat = TypedColorViewFormat(hudFormat);
+		srvDesc.Format = hudViewFormat;
+		rtvDesc.Format = hudViewFormat;
+		uavDesc.Format = hudViewFormat;
 
 		HUDLessBufferShared[index] = new Texture2D(texDesc);
 		HUDLessBufferShared[index]->CreateSRV(srvDesc);
 		HUDLessBufferShared[index]->CreateRTV(rtvDesc);
 		HUDLessBufferShared[index]->CreateUAV(uavDesc);
+
+		// UI / reticle stay 8-bit UNORM so DLSS-G and FFX UI composition get a
+		// typed premultiplied overlay regardless of the HUDLess capture format.
+		texDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+		srvDesc.Format = texDesc.Format;
+		rtvDesc.Format = texDesc.Format;
+		uavDesc.Format = texDesc.Format;
 
 		uiColorAndAlphaBufferShared[index] = new Texture2D(texDesc);
 		uiColorAndAlphaBufferShared[index]->CreateSRV(srvDesc);
@@ -1122,7 +1162,7 @@ bool Upscaling::BuildUIColorAndAlphaResource(ID3D11Texture2D* a_finalFrame)
 		return false;
 
 	D3D11_SHADER_RESOURCE_VIEW_DESC finalSrvDesc{};
-	finalSrvDesc.Format = finalDesc.Format;
+	finalSrvDesc.Format = TypedColorViewFormat(finalDesc.Format);
 	finalSrvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
 	finalSrvDesc.Texture2D.MostDetailedMip = 0;
 	finalSrvDesc.Texture2D.MipLevels = 1;

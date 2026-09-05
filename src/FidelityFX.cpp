@@ -11,6 +11,7 @@
 #include "DX12SwapChain.h"
 
 #include <dx12/ffx_api_dx12.hpp>
+#include <dx12/ffx_api_framegeneration_dx12.hpp>
 
 ffxFunctions ffxModule;
 
@@ -278,9 +279,9 @@ void FidelityFX::Present(bool a_useFrameGen)
 	auto HUDLessColor = upscaling->HUDLessBufferShared12[dx12SwapChain->frameIndex].get();
 	auto depth = upscaling->depthBufferShared12[dx12SwapChain->frameIndex].get();
 	auto motionVectors = upscaling->motionVectorBufferShared12[dx12SwapChain->frameIndex].get();
+	const bool hudLessReady = HUDLessColor && upscaling->hudLessFrameValid[dx12SwapChain->frameIndex];
 	const bool canUseFrameGen = a_useFrameGen &&
 		commandList &&
-		HUDLessColor &&
 		depth &&
 		motionVectors;
 
@@ -306,7 +307,7 @@ void FidelityFX::Present(bool a_useFrameGen)
 			};
 		configParameters.frameGenerationCallbackUserContext = &frameGenContext;
 
-		configParameters.HUDLessColor = ffxApiGetResourceDX12(HUDLessColor);
+		configParameters.HUDLessColor = hudLessReady ? ffxApiGetResourceDX12(HUDLessColor) : FfxApiResource({});
 
 	}
 	else {
@@ -335,6 +336,23 @@ void FidelityFX::Present(bool a_useFrameGen)
 
 	if (ffx::Configure(frameGenContext, configParameters) != ffx::ReturnCode::Ok) {
 		logger::critical("[FidelityFX] Failed to configure frame generation!");
+	}
+
+	if (swapChainContext != nullptr) {
+		ffx::ConfigureDescFrameGenerationSwapChainRegisterUiResourceDX12 uiConfig{};
+		auto* uiResource12 = upscaling->uiColorAndAlphaBufferShared12[dx12SwapChain->frameIndex].get();
+		if (uiResource12) {
+			uiConfig.uiResource = ffxApiGetResourceDX12(uiResource12);
+			uiConfig.flags = FFX_FRAMEGENERATION_UI_COMPOSITION_FLAG_USE_PREMUL_ALPHA |
+				FFX_FRAMEGENERATION_UI_COMPOSITION_FLAG_ENABLE_INTERNAL_UI_DOUBLE_BUFFERING;
+		}
+		if (ffx::Configure(swapChainContext, uiConfig) != ffx::ReturnCode::Ok) {
+			static bool loggedUiConfigFailure = false;
+			if (!loggedUiConfigFailure) {
+				logger::warn("[FidelityFX] Failed to configure UI composition");
+				loggedUiConfigFailure = true;
+			}
+		}
 	}
 
 	static LARGE_INTEGER frequency = []() {
@@ -404,21 +422,35 @@ void FidelityFX::Present(bool a_useFrameGen)
 
 			static bool loggedFirstPrepare = false;
 			if (!loggedFirstPrepare) {
-				const auto hudDesc = HUDLessColor->GetDesc();
 				const auto depthDesc = depth->GetDesc();
 				const auto motionDesc = motionVectors->GetDesc();
-				logger::info("[FidelityFX] First FSR frame generation prepare (render={}x{}, hud={}x{} fmt={}, depth={}x{} fmt={}, motion={}x{} fmt={})",
-					dispatchParameters.renderSize.width,
-					dispatchParameters.renderSize.height,
-					hudDesc.Width,
-					hudDesc.Height,
-					static_cast<uint32_t>(hudDesc.Format),
-					depthDesc.Width,
-					depthDesc.Height,
-					static_cast<uint32_t>(depthDesc.Format),
-					motionDesc.Width,
-					motionDesc.Height,
-					static_cast<uint32_t>(motionDesc.Format));
+				if (HUDLessColor) {
+					const auto hudDesc = HUDLessColor->GetDesc();
+					logger::info("[FidelityFX] First FSR frame generation prepare (render={}x{}, hudLess={} hud={}x{} fmt={}, depth={}x{} fmt={}, motion={}x{} fmt={})",
+						dispatchParameters.renderSize.width,
+						dispatchParameters.renderSize.height,
+						hudLessReady,
+						hudDesc.Width,
+						hudDesc.Height,
+						static_cast<uint32_t>(hudDesc.Format),
+						depthDesc.Width,
+						depthDesc.Height,
+						static_cast<uint32_t>(depthDesc.Format),
+						motionDesc.Width,
+						motionDesc.Height,
+						static_cast<uint32_t>(motionDesc.Format));
+				} else {
+					logger::info("[FidelityFX] First FSR frame generation prepare (render={}x{}, hudLess={}, depth={}x{} fmt={}, motion={}x{} fmt={})",
+						dispatchParameters.renderSize.width,
+						dispatchParameters.renderSize.height,
+						hudLessReady,
+						depthDesc.Width,
+						depthDesc.Height,
+						static_cast<uint32_t>(depthDesc.Format),
+						motionDesc.Width,
+						motionDesc.Height,
+						static_cast<uint32_t>(motionDesc.Format));
+				}
 				loggedFirstPrepare = true;
 			}
 
