@@ -45,20 +45,8 @@
 			"vendor": {
 				"microsoft.com/VisualStudioSettings/CMake/1.0": {
 					"intelliSenseMode": "windows-msvc-x64",
-					"enableMicrosoftCodeAnalysis": true,
-					"enableClangTidyCodeAnalysis": true
+					"enableMicrosoftCodeAnalysis": true
 				}
-			}
-		},
-		{
-			"name": "clangd",
-			"hidden": true,
-			"generator": "Ninja",
-			"cacheVariables": {
-				"CMAKE_CXX_STANDARD": "23",
-				"CMAKE_CXX_STANDARD_REQUIRED": true,
-				"CMAKE_CXX_EXTENSIONS": true,
-				"COMMUNITY_SHADERS": true
 			}
 		},
 		{
@@ -114,7 +102,7 @@
 		{
 			"name": "PreNG",
 			"displayName": "PreNG",
-			"description": "Runtime build preset. After configuring, run the VS Code task 'clangd: Activate PreNG analysis tree'.",
+			"description": "Runtime build preset.",
 			"binaryDir": "${sourceDir}/build/PreNG",
 			"cacheVariables": {
 				"BUILD_PRE_NG": true,
@@ -132,7 +120,7 @@
 		{
 			"name": "PostNG",
 			"displayName": "PostNG",
-			"description": "Runtime build preset. After configuring, run the VS Code task 'clangd: Activate PostNG analysis tree'.",
+			"description": "Runtime build preset.",
 			"binaryDir": "${sourceDir}/build/PostNG",
 			"cacheVariables": {
 				"BUILD_PRE_NG": false,
@@ -150,7 +138,7 @@
 		{
 			"name": "PostAE",
 			"displayName": "PostAE",
-			"description": "Runtime build preset. After configuring, run the VS Code task 'clangd: Activate PostAE analysis tree'.",
+			"description": "Runtime build preset.",
 			"binaryDir": "${sourceDir}/build/PostAE",
 			"cacheVariables": {
 				"BUILD_PRE_NG": false,
