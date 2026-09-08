@@ -84,10 +84,16 @@ Baseline facts:
        stays the single PRIVATE include root. `Fo4cs.Platform` and
        `Fo4cs.Diagnostics` exist as header-only INTERFACE targets linked by
        `Fo4cs.Render` / `Fo4cs.Upscaling` to make ownership visible.
-4. [ ] Represent runtime variants as INTERFACE targets `Fo4cs.PreNG` /
-       `Fo4cs.PostNG` / `Fo4cs.PostAE` carrying the `FALLOUT_*` definitions instead of
-       `add_compile_definitions` in `XSEPlugin.cmake`. Print a one-line configure
-       summary (variant, enabled plugins).
+4. [x] Runtime variant as a target: `Fo4cs.Runtime` (INTERFACE) carries the
+       `FALLOUT_*` macros of the selected variant and every fo4CS target links it from
+       `fo4cs_configure_target`; the directory-wide `add_compile_definitions` is gone
+       (verified: no CommonLibF4 variant reads the macros, so CommonLibF4 no longer
+       compiles with them). One target instead of three because only one variant can
+       exist per build tree (the CommonLibF4 subproject is variant-specific).
+       `xseplugin_resolve_commonlib_root` now rejects more than one `BUILD_*` flag and
+       exports `FO4CS_RUNTIME_VARIANT` / `FO4CS_RUNTIME_DEFINITIONS`. Configure prints
+       one summary line. Removed dead variables `FO4CS_BUILD_*`, `GamePath`,
+       `FO4CS_RUNTIME_FLAVOR` (no readers anywhere).
 
 ## Phase 2 — File decomposition (move-only)
 

@@ -44,6 +44,8 @@ function(fo4cs_configure_target target)
         _AMD64_
         "$<$<OR:$<CONFIG:Debug>,$<CONFIG:RelWithDebInfo>>:FO4CS_ENABLE_DEBUG_SETTINGS=1>"
     )
+    # Game runtime variant macros (FALLOUT_PRE_NG / FALLOUT_POST_NG / FALLOUT_POST_AE).
+    target_link_libraries("${target}" PRIVATE Fo4cs.Runtime)
 
     if(CMAKE_GENERATOR MATCHES "Visual Studio")
         target_compile_definitions("${target}" PRIVATE _UNICODE "$<$<CONFIG:DEBUG>:DEBUG>")

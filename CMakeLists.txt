@@ -27,6 +27,11 @@ set(Boost_USE_STATIC_RUNTIME ON)
 xseplugin_resolve_commonlib_root(CommonLibRoot CommonLibName)
 xseplugin_resolve_commonlib_project(CommonLibPath "${CommonLibRoot}")
 
+# Runtime variant contract: every fo4CS target links this (fo4cs_configure_target)
+# and thereby sees FALLOUT_PRE_NG / FALLOUT_POST_NG / FALLOUT_POST_AE.
+add_library(Fo4cs.Runtime INTERFACE)
+target_compile_definitions(Fo4cs.Runtime INTERFACE ${FO4CS_RUNTIME_DEFINITIONS})
+
 # FSR runtime: all game runtimes use amd_fidelityfx_dx12.dll through the D3D12 proxy.
 
 if(F4SE_SUPPORT_XBYAK)
@@ -141,16 +146,6 @@ fo4cs_mark_third_party_sources(
 
 set(FO4CS_RUNTIME_TARGETS Fo4cs.Render Fo4cs.Upscaling Fo4cs.ImGui)
 
-if(BUILD_PRE_NG)
-    set(FO4CS_RUNTIME_FLAVOR "PreNG")
-elseif(BUILD_POST_NG)
-    set(FO4CS_RUNTIME_FLAVOR "PostNG")
-elseif(BUILD_POST_AE)
-    set(FO4CS_RUNTIME_FLAVOR "PostAE")
-else()
-    set(FO4CS_RUNTIME_FLAVOR "Unknown")
-endif()
-
 # ------------------------------------------------------------------
 # 插件目标
 # ------------------------------------------------------------------
@@ -159,6 +154,9 @@ if(AIO)
     set(REFLEX OFF)
     set(UPSCALER OFF)
 endif()
+
+message(STATUS "fo4CS ${PROJECT_VERSION}: runtime=${FO4CS_RUNTIME_VARIANT} [${FO4CS_RUNTIME_DEFINITIONS}] "
+    "plugins: NuclearGFX(AIO)=${AIO} FrameGen=${FRAMEGEN} Reflex=${REFLEX} Upscaler=${UPSCALER} Overlay=${OVERLAY}")
 
 if(FRAMEGEN)
     fo4cs_create_plugin(FrameGen FrameGen "FrameGen" ${FO4CS_COMMON_DEPENDENCIES})
