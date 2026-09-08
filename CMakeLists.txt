@@ -74,117 +74,164 @@ configure_file(
     @ONLY
 )
 
-add_library(Core OBJECT
-    src/Buffer.h
-    src/DX11Hooks.cpp
-    src/DX11Hooks.h
-    src/DX12SwapChain.cpp
-    src/DX12SwapChain.h
-    src/FidelityFX.cpp
-    src/FidelityFX.h
-    src/PresentationMenuPolicy.h
-    src/RuntimeAdapter.cpp
-    src/RuntimeAdapter.h
-    src/Streamline.cpp
-    src/Streamline.h
-    src/Upscaler.cpp
-    src/Upscaler.h
-    src/UpscalerRenderBackend.cpp
-)
-
-target_compile_features(Core PRIVATE cxx_std_23)
+# ------------------------------------------------------------------
+# Module targets. Every plugin DLL absorbs the objects of the OBJECT libraries in
+# FO4CS_RUNTIME_TARGETS via fo4cs_link_runtime(); CommunityShaders.dll adds the
+# Community Shaders layers on top. Names shared with `main` are kept identical so
+# the two branches converge.
+#
+# Shared with `main`:
+#   Fo4cs.Render      D3D11 hooks, companion D3D12 device/swap chain, interop
+#   Fo4cs.Upscaling   Upscaler orchestration, render backend, Streamline, FidelityFX
+#   Fo4cs.ImGui       ImGui core
+#   Fo4cs.Overlay     overlay host (panel registry, ImGui backends)
+# Community Shaders only:
+#   Fo4cs.Shaders     shader cache/compiler/DB and the BSShader + D3D11 hooks
+#   Fo4cs.Framework   Feature base, registry, globals, menu, state, diagnostics
+#   Fo4cs.Passes      deferred/additive/tracker render passes
+#   Fo4cs.Features    the concrete features
+#
+# src/Presentation and src/Plugins stay compiled into the plugin target itself:
+# they are the composition root, not a reusable layer.
+# ------------------------------------------------------------------
 
 # Third-party include roots must precede include/ because both extern/Streamline
 # and include/ ship an sl.h; the extern copy is the one the build has always used.
-target_include_directories(Core
-    PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/extern/Streamline/include
+set(FO4CS_STREAMLINE_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/extern/Streamline/include)
+set(FO4CS_IMGUI_INCLUDE_DIRS
     ${CMAKE_CURRENT_SOURCE_DIR}/extern/imgui
     ${CMAKE_CURRENT_SOURCE_DIR}/extern/imgui/backends
 )
-fo4cs_configure_target(Core)
-target_link_libraries(Core PUBLIC ${FO4CS_COMMON_DEPENDENCIES})
 
-# ImGui core sources in Core — shared by all consumers for panel rendering.
-# Feature DLLs call ImGui functions in their registered panel callbacks.
-# Overlay.dll owns the D3D12 backend + context.
+fo4cs_add_object_library(Fo4cs.Render
+    SOURCES
+        src/Buffer.h
+        src/DX11Hooks.cpp
+        src/DX11Hooks.h
+        src/DX12SwapChain.cpp
+        src/DX12SwapChain.h
+        src/PresentationMenuPolicy.h
+        src/RuntimeAdapter.cpp
+        src/RuntimeAdapter.h
+)
+target_include_directories(Fo4cs.Render BEFORE PUBLIC ${FO4CS_STREAMLINE_INCLUDE_DIR})
+
+fo4cs_add_object_library(Fo4cs.Upscaling
+    SOURCES
+        src/FidelityFX.cpp
+        src/FidelityFX.h
+        src/Streamline.cpp
+        src/Streamline.h
+        src/Upscaler.cpp
+        src/Upscaler.h
+        src/UpscalerRenderBackend.cpp
+)
+target_include_directories(Fo4cs.Upscaling BEFORE PUBLIC ${FO4CS_STREAMLINE_INCLUDE_DIR})
+
+# ImGui core — feature panels call ImGui from whichever DLL hosts the overlay.
 set(FO4CS_IMGUI_CORE_SOURCES
     extern/imgui/imgui.cpp
     extern/imgui/imgui_draw.cpp
     extern/imgui/imgui_tables.cpp
     extern/imgui/imgui_widgets.cpp
 )
-target_sources(Core PRIVATE ${FO4CS_IMGUI_CORE_SOURCES})
-fo4cs_add_imgui_sources(Core ${FO4CS_IMGUI_CORE_SOURCES})
+fo4cs_add_object_library(Fo4cs.ImGui NO_PCH SOURCES ${FO4CS_IMGUI_CORE_SOURCES})
+target_include_directories(Fo4cs.ImGui PUBLIC ${FO4CS_IMGUI_INCLUDE_DIRS})
+fo4cs_mark_third_party_sources(${FO4CS_IMGUI_CORE_SOURCES})
+
+set(FO4CS_RUNTIME_TARGETS Fo4cs.Render Fo4cs.Upscaling Fo4cs.ImGui)
 
 if(COMMUNITY_SHADERS)
 
-  add_library(CoreCS OBJECT
-    src/Core/BSShaderHooks.cpp
-    src/Core/BSShaderHooks.h
-    src/Core/CommunityShaders.cpp
-    src/Core/CommunityShaders.h
-    src/Core/Deferred.cpp
-    src/Core/Deferred.h
-    src/Core/D3D11DeviceHooks.cpp
-    src/Core/DiagnosticsFormatter.cpp
-    src/Core/DiagnosticsFormatter.h
-    src/Core/Feature.cpp
-    src/Core/Feature.h
-    src/Core/FeatureBuffer.cpp
-    src/Core/FeatureBuffer.h
-    src/Core/FeatureCategories.h
-    src/Core/FeatureConstraints.cpp
-    src/Core/FeatureConstraints.h
-    src/Core/FeatureIssues.h
-    src/Core/Globals.cpp
-    src/Core/Globals.h
-    src/Core/AdditivePasses.cpp
-    src/Core/Hooks.cpp
-    src/Core/Hooks.h
-    src/Core/HooksInternal.h
-    src/Core/IMenuItem.h
-    src/Core/LLFPixelTracker.cpp
-    src/Core/DrawStateProof.cpp
-    src/Core/Menu.cpp
-    src/Core/Menu.h
-    src/Core/MenuRegistry.h
-    src/Core/ShaderCache.cpp
-    src/Core/ShaderCache.h
-    src/Core/ShaderDB.cpp
-    src/Core/ShaderDB.h
-    src/Core/ShaderCompiler.cpp
-    src/Core/ShaderCompiler.h
-    src/Core/State.cpp
-    src/Core/State.h
-    src/Features/ExtendedMaterials.cpp
-    src/Features/ExtendedMaterials.h
-    src/Features/ShaderDump.cpp
-    src/Features/ShaderDump.h
-    src/Features/LightLimitFix.cpp
-    src/Features/LightLimitFix.h
-)
+  # Feature base, registry, global instances, menu, runtime state, diagnostics.
+  fo4cs_add_object_library(Fo4cs.Framework
+    SOURCES
+        src/Core/CommunityShaders.cpp
+        src/Core/CommunityShaders.h
+        src/Core/DebugSwitches.h
+        src/Core/DiagnosticsFormatter.cpp
+        src/Core/DiagnosticsFormatter.h
+        src/Core/Feature.cpp
+        src/Core/Feature.h
+        src/Core/FeatureBuffer.cpp
+        src/Core/FeatureBuffer.h
+        src/Core/FeatureCategories.h
+        src/Core/FeatureConstraints.cpp
+        src/Core/FeatureConstraints.h
+        src/Core/FeatureIssues.h
+        src/Core/Globals.cpp
+        src/Core/Globals.h
+        src/Core/IMenuItem.h
+        src/Core/Menu.cpp
+        src/Core/Menu.h
+        src/Core/MenuRegistry.h
+        src/Core/PreNGEnvironment.h
+        src/Core/State.cpp
+        src/Core/State.h
+  )
+  target_include_directories(Fo4cs.Framework PUBLIC ${FO4CS_IMGUI_INCLUDE_DIRS})
 
-  if(COMMUNITY_SHADERS)
-    target_sources(CoreCS PRIVATE
-        src/Features/Upscaling.cpp
+  # Shader cache/compiler/database plus the engine and D3D11 shader hooks.
+  fo4cs_add_object_library(Fo4cs.Shaders
+    SOURCES
+        src/Core/BSShaderHooks.cpp
+        src/Core/BSShaderHooks.h
+        src/Core/D3D11DeviceHooks.cpp
+        src/Core/Hooks.cpp
+        src/Core/Hooks.h
+        src/Core/HooksInternal.h
+        src/Core/ShaderCache.cpp
+        src/Core/ShaderCache.h
+        src/Core/ShaderCompiler.cpp
+        src/Core/ShaderCompiler.h
+        src/Core/ShaderDB.cpp
+        src/Core/ShaderDB.h
+  )
+  target_link_libraries(Fo4cs.Shaders PUBLIC Fo4cs.Framework)
+
+  # Render passes owned by Community Shaders.
+  fo4cs_add_object_library(Fo4cs.Passes
+    SOURCES
+        src/Core/AdditivePasses.cpp
+        src/Core/Deferred.cpp
+        src/Core/Deferred.h
+        src/Core/DrawStateProof.cpp
+        src/Core/LLFPixelTracker.cpp
+  )
+  target_link_libraries(Fo4cs.Passes PUBLIC Fo4cs.Framework)
+
+  # Overlay host — same target name as `main`.
+  fo4cs_add_object_library(Fo4cs.Overlay
+    SOURCES
+        src/Overlay/Overlay.cpp
+        src/Overlay/Overlay.h
+        src/Overlay/OverlayWndProc.h
+  )
+  target_link_libraries(Fo4cs.Overlay PUBLIC Fo4cs.ImGui Fo4cs.Framework)
+
+  # The concrete features.
+  fo4cs_add_object_library(Fo4cs.Features
+    SOURCES
+        src/Features/ExtendedMaterials.cpp
+        src/Features/ExtendedMaterials.h
         src/Features/FrameGeneration.cpp
-        src/Features/Reflex.cpp
+        src/Features/FrameGeneration.h
+        src/Features/LightLimitFix.cpp
+        src/Features/LightLimitFix.h
         src/Features/Overlay.cpp
-        src/Overlay/Overlay.cpp src/Overlay/Overlay.h
-    )
-    target_include_directories(CoreCS PUBLIC
-        ${CMAKE_CURRENT_SOURCE_DIR}/extern/Streamline/include
-    )
-  endif()
+        src/Features/Overlay.h
+        src/Features/Reflex.cpp
+        src/Features/Reflex.h
+        src/Features/ShaderDump.cpp
+        src/Features/ShaderDump.h
+        src/Features/Upscaling.cpp
+        src/Features/Upscaling.h
+  )
+  target_include_directories(Fo4cs.Features BEFORE PUBLIC ${FO4CS_STREAMLINE_INCLUDE_DIR})
+  target_link_libraries(Fo4cs.Features PUBLIC Fo4cs.Framework)
 
-  target_include_directories(CoreCS
-    PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/extern/imgui
-    ${CMAKE_CURRENT_SOURCE_DIR}/extern/imgui/backends
-)
-  fo4cs_configure_target(CoreCS)
-  target_link_libraries(CoreCS PUBLIC ${FO4CS_COMMON_DEPENDENCIES})
+  set(FO4CS_COMMUNITY_SHADERS_TARGETS
+      Fo4cs.Framework Fo4cs.Shaders Fo4cs.Passes Fo4cs.Features Fo4cs.Overlay)
 endif()
 
 # ------------------------------------------------------------------
@@ -215,7 +262,7 @@ if(FRAMEGEN)
         src/FrameGenPlugin.cpp
     )
   target_compile_definitions(FrameGen PRIVATE FRAMEGEN=1)
-  target_link_libraries(FrameGen PRIVATE Core)
+  fo4cs_link_runtime(FrameGen)
 endif()
 
 if(REFLEX)
@@ -224,7 +271,7 @@ if(REFLEX)
         src/ReflexPlugin.cpp
     )
   target_compile_definitions(Reflex PRIVATE REFLEX=1)
-  target_link_libraries(Reflex PRIVATE Core)
+  fo4cs_link_runtime(Reflex)
 endif()
 
 if(UPSCALER)
@@ -236,7 +283,7 @@ if(UPSCALER)
         UPSCALER=1
         UPSCALER_LDR=1
     )
-  target_link_libraries(Upscaler PRIVATE Core)
+  fo4cs_link_runtime(Upscaler)
 endif()
 
 if(AIO)
@@ -257,7 +304,7 @@ if(AIO)
         extern/imgui/backends/imgui_impl_win32.cpp
     )
   set_target_properties(NuclearGFX PROPERTIES OUTPUT_NAME "NuclearGFX")
-  target_link_libraries(NuclearGFX PRIVATE Core)
+  fo4cs_link_runtime(NuclearGFX)
 endif()
 
 if(COMMUNITY_SHADERS)
@@ -276,7 +323,8 @@ if(COMMUNITY_SHADERS)
         extern/imgui/backends/imgui_impl_win32.cpp
     )
   target_compile_definitions(CommunityShaders PRIVATE COMMUNITY_SHADERS)
-  target_link_libraries(CommunityShaders PRIVATE Core CoreCS)
+  fo4cs_link_runtime(CommunityShaders)
+  target_link_libraries(CommunityShaders PRIVATE ${FO4CS_COMMUNITY_SHADERS_TARGETS})
 endif()
 if(OVERLAY)
   fo4cs_create_plugin(Overlay Overlay "Overlay" ${FO4CS_COMMON_DEPENDENCIES})
@@ -290,7 +338,8 @@ if(OVERLAY)
         ${CMAKE_CURRENT_SOURCE_DIR}/extern/imgui
         ${CMAKE_CURRENT_SOURCE_DIR}/extern/imgui/backends
     )
-  target_link_libraries(Overlay PRIVATE Core)
+  fo4cs_link_runtime(Overlay)
+  target_link_libraries(Overlay PRIVATE Fo4cs.Overlay)
 
   # D3D12/Win32 ImGui backends — only Overlay.dll needs these
   target_sources(Overlay PRIVATE
