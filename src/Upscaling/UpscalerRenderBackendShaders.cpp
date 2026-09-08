@@ -64,27 +64,6 @@ namespace
 	}
 }
 
-ID3D11ComputeShader* Upscaling::GetDilateMotionVectorCS()
-{
-	if (!dilateMotionVectorCS)
-		dilateMotionVectorCS.attach((ID3D11ComputeShader*)CompileShaderAny(L"Data\\F4SE\\Plugins\\Upscaler\\DilateMotionVectorCS.hlsl", "cs_5_0"));
-	return dilateMotionVectorCS.get();
-}
-
-ID3D11ComputeShader* Upscaling::GetOverrideLinearDepthCS()
-{
-	if (!overrideLinearDepthCS)
-		overrideLinearDepthCS.attach((ID3D11ComputeShader*)CompileShaderAny(L"Data\\F4SE\\Plugins\\Upscaler\\OverrideLinearDepthCS.hlsl", "cs_5_0"));
-	return overrideLinearDepthCS.get();
-}
-
-ID3D11ComputeShader* Upscaling::GetOverrideDepthCS()
-{
-	if (!overrideDepthCS)
-		overrideDepthCS.attach((ID3D11ComputeShader*)CompileShaderAny(L"Data\\F4SE\\Plugins\\Upscaler\\OverrideDepthCS.hlsl", "cs_5_0"));
-	return overrideDepthCS.get();
-}
-
 ID3D11VertexShader* Upscaling::GetCopyDepthVS()
 {
 	if (!copyDepthVS)
@@ -150,13 +129,6 @@ ID3D11SamplerState* Upscaling::GetCopySamplerState()
 	return copySamplerState.get();
 }
 
-ID3D11PixelShader* Upscaling::GetBSImagespaceShaderSSLRRaytracing()
-{
-	if (!BSImagespaceShaderSSLRRaytracing)
-		BSImagespaceShaderSSLRRaytracing.attach((ID3D11PixelShader*)CompileShaderAny(L"Data\\F4SE\\Plugins\\Upscaler\\BSImagespaceShaderSSLRRaytracing.hlsl", "ps_5_0"));
-	return BSImagespaceShaderSSLRRaytracing.get();
-}
-
 ConstantBuffer* Upscaling::GetUpscalingCB()
 {
 	static std::unique_ptr<ConstantBuffer> upscalingCB;
@@ -178,10 +150,4 @@ void Upscaling::UpdateAndBindUpscalingCB(ID3D11DeviceContext* a_context, float2 
 	cb->Update(data);
 	auto buffer = cb->CB();
 	a_context->CSSetConstantBuffers(0, 1, &buffer);
-}
-
-void Upscaling::PatchSSRShader()
-{
-	auto context = reinterpret_cast<ID3D11DeviceContext*>(fo4cs::GetRendererData()->context);
-	context->PSSetShader(GetBSImagespaceShaderSSLRRaytracing(), nullptr, 0);
 }

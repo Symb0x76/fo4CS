@@ -131,15 +131,9 @@ public:
 	void CheckResources();
 
 	void UpdateRenderTargets(float a_currentWidthRatio, float a_currentHeightRatio);
-	void OverrideRenderTargets(const std::vector<int>& a_indicesToCopy = {});
-	void ResetRenderTargets(const std::vector<int>& a_indicesToCopy = {});
 	void UpdateRenderTarget(int a_index, float a_currentWidthRatio, float a_currentHeightRatio);
-	void OverrideRenderTarget(int a_index, bool a_doCopy = true);
-	void ResetRenderTarget(int a_index, bool a_doCopy = true);
 
 	void UpdateDepth(float a_currentWidthRatio, float a_currentHeightRatio);
-	void OverrideDepth(bool a_doCopy = true);
-	void ResetDepth();
 	void CopyDepth();
 
 	void UpdateSamplerStates(float a_currentMipBias);
@@ -148,18 +142,13 @@ public:
 	void UpdateGameSettings();
 	bool CreateUpscalingResources();
 	void DestroyUpscalingResources();
-	void PatchSSRShader();
 
-	ID3D11ComputeShader* GetDilateMotionVectorCS();
-	ID3D11ComputeShader* GetOverrideLinearDepthCS();
-	ID3D11ComputeShader* GetOverrideDepthCS();
 	ID3D11VertexShader* GetCopyDepthVS();
 	ID3D11PixelShader* GetCopyDepthPS();
 	ID3D11DepthStencilState* GetCopyDepthStencilState();
 	ID3D11BlendState* GetCopyBlendState();
 	ID3D11RasterizerState* GetCopyRasterizerState();
 	ID3D11SamplerState* GetCopySamplerState();
-	ID3D11PixelShader* GetBSImagespaceShaderSSLRRaytracing();
 
 	struct UpscalingCB
 	{
@@ -186,12 +175,8 @@ public:
 	std::unique_ptr<Texture2D> upscalingTexture;
 	std::unique_ptr<Texture2D> dilatedMotionVectorTexture;
 
-	winrt::com_ptr<ID3D11ComputeShader> dilateMotionVectorCS;
-	winrt::com_ptr<ID3D11ComputeShader> overrideLinearDepthCS;
-	winrt::com_ptr<ID3D11ComputeShader> overrideDepthCS;
 	winrt::com_ptr<ID3D11VertexShader> copyDepthVS;
 	winrt::com_ptr<ID3D11PixelShader> copyDepthPS;
-	winrt::com_ptr<ID3D11PixelShader> BSImagespaceShaderSSLRRaytracing;
 	winrt::com_ptr<ID3D11DepthStencilState> copyDepthStencilState;
 	winrt::com_ptr<ID3D11BlendState> copyBlendState;
 	winrt::com_ptr<ID3D11RasterizerState> copyRasterizerState;

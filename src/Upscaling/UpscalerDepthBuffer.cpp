@@ -105,24 +105,6 @@ void Upscaling::UpdateDepth(float a_currentWidthRatio, float a_currentHeightRati
 	}
 }
 
-void Upscaling::OverrideDepth(bool a_doCopy)
-{
-	if (!depthOverrideTarget.texture)
-		return;
-
-	auto rendererData = fo4cs::GetRendererData();
-	if (a_doCopy)
-		CopyDepth();
-	rendererData->depthStencilTargets[(uint)DepthStencilTarget::kMain] = depthOverrideTarget;
-}
-
-void Upscaling::ResetDepth()
-{
-	if (!depthOverrideTarget.texture)
-		return;
-	fo4cs::GetRendererData()->depthStencilTargets[(uint)DepthStencilTarget::kMain] = originalDepthStencilTarget;
-}
-
 void Upscaling::CopyDepth()
 {
 	auto rendererData = fo4cs::GetRendererData();
