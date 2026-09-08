@@ -115,12 +115,19 @@ are all ≤ ~600 lines.
 | `FramePacing.cpp` | `TimerSleepQPC`, `FrameLimiter`, `GameFrameLimiter`, `GetRefreshRate` + NVIDIA license block |
 | `UpscalingHooks.cpp` | `PostPostLoad`, four thunks, `reticleFix`, `InstallHooks` (`FALLOUT_POST_NG` REL::ID block) |
 
-Extraction order: FramePacing → ShaderCompile → RuntimeProbe → SettingsIO+Settings →
-RenderTargetIDs.h → Hooks → FrameGenResources → FrameGenCapture+Composite (one commit).
+**Done 2026-09-08 (two commits).** Result: `Upscaler.cpp` 1525 → 431 lines and
+kept as the settings/probe/policy unit; the planned `UpscalingSettingsIO` /
+`UpscalingRuntimeProbe` / `UpscalingSettings` three-way split was dropped because the
+remainder is already cohesive and under the 600-line target. New files:
+`UpscalingHooks.cpp` (94), `FramePacing.cpp` (115), `UpscalingShaderCompile.{h,cpp}`
+(57), `FrameGenResources.cpp` (268), `FrameGenCapture.cpp` (255),
+`FrameGenComposite.cpp` (274), `UpscalingRenderTargetIDs.h` (78),
+`UpscalingInternal.{h,cpp}` (shared `IsLoadingMenuOpen` / `NextHUDLessFrameID`,
+moved from the anonymous namespace to `fo4cs::upscaling`).
 
-Constraints: `IsLoadingMenuOpen` and `NextHUDLessFrameID` become shared internal
-helpers, not duplicated. `bool reticleFix` keeps external linkage. Raw `new Texture2D`
-leaks in `CreateFrameGenerationResources` are preserved (deferred finding).
+Constraints honoured: `IsLoadingMenuOpen` and `NextHUDLessFrameID` have exactly one
+definition. `bool reticleFix` keeps external linkage. Raw `new Texture2D` leaks in
+`CreateFrameGenerationResources` are preserved (deferred finding).
 
 ### 2b `UpscalerRenderBackend.cpp` (1279) → `src/Upscaling/`
 
@@ -134,9 +141,19 @@ leaks in `CreateFrameGenerationResources` are preserved (deferred finding).
 | `UpscalerRenderBackend.cpp` (kept, ~560) | `OnD3D11DeviceCreated`, `GetUpscaleMethod`, `RestoreNativeRenderState`, `UpdateGameSettings`, `UpdateUpscaling`, `Upscale`, `CheckResources`, `Create/DestroyUpscalingResources`, `CopyNativeAABorder` |
 | `UpscalerRenderBackendHooks.cpp` | four detour structs + `InstallUpscalerRenderBackendHooks` (`FALLOUT_POST_NG` REL::ID block) — extracted last |
 
-Constraints: `TraceRenderBackendStage`'s `previousStage` static lives in exactly one
-`.cpp`. `CopyDepth` save/restore block and `Upscale`'s `Release()` pairing are not
-split. `extern bool enbLoaded` in this file is unreferenced (deferred finding).
+**Done 2026-09-08 (one commit).** `UpscalerRenderBackend.cpp` 1279 → 598 lines. New:
+`UpscalerRenderTargets.cpp` (196), `UpscalerDepthBuffer.cpp` (216),
+`UpscalerSamplerStates.cpp` (67), `UpscalerRenderBackendShaders.cpp` (187),
+`UpscalerRenderBackendHooks.cpp` (92). Instead of a second
+`UpscalerRenderBackendInternal.h`, `TraceRenderBackendStage` joined
+`UpscalingInternal.{h,cpp}` (single `previousStage` latch) and the local enum copies
+were replaced by `UpscalingRenderTargetIDs.h` (value-identical subsets). Helpers used by
+one cluster only (`GetUpscaleRatio`, `ScaleRenderExtent`, `GetJitterOffset`,
+`CopyNativeAABorder`, the backend's own `IsLoadingMenuOpen`, `RestoreNativeRenderState`)
+stayed in the anonymous namespace of the unit that uses them.
+
+Constraints honoured: `CopyDepth` save/restore block and `Upscale`'s `Release()` pairing
+not split. `extern bool enbLoaded` in this file is unreferenced (deferred finding).
 
 ### 2c `Streamline.cpp` (1111) → `src/Upscaling/Streamline/`
 
@@ -153,6 +170,15 @@ split. `extern bool enbLoaded` in this file is unreferenced (deferred finding).
 
 Order: Util → DLSS → Loader → Frame → Reflex → Features → DLSSG.
 
+**Done 2026-09-08 (one commit), reduced to four units.** `Streamline.cpp` 1111 → 485
+(discovery, `LoadAndInit`, `PostDevice`, log callback, string helpers);
+`StreamlineDLSS.cpp` (242: frame token, `Upscale`, `UpdateConstants`, destroy),
+`StreamlineReflex.cpp` (126), `StreamlineFrameGeneration.cpp` (279),
+`StreamlineInternal.{h,cpp}` (`ResultToString`, `EnumToString<T>`,
+`ShouldTraceStreamlineFrame`, `GetConfiguredReflexMode` in `fo4cs::streamline`). The
+eight-way split was not needed to get under the limit and would have scattered the
+loader/feature-init sequence.
+
 ### 2d `DX12SwapChain.cpp` (872) → `src/Render/`
 
 | New file | Contents |
@@ -168,54 +194,79 @@ Order: Proxy → WrappedResource → Overlay → PresentPolicy → Create → Pr
 
 No `FALLOUT_*` conditionals exist in 2c or 2d.
 
+**Done 2026-09-08 (one commit).** `DX12SwapChain.cpp` 872 → 316 (overlay callback
+resolution, creation, accessors, fence helpers); `DX12SwapChainPresent.cpp` (430:
+`Present` with its private trace/frame-generation-block policy helpers, which no other
+function uses, so no `DX12PresentPolicy.h` was needed); `DXGISwapChainProxy.cpp` (106);
+`WrappedResource.cpp` (58); `DX12SwapChainInternal.h` declares the overlay callback
+state, now `fo4cs::render` externs instead of anonymous-namespace statics (still one
+instance per DLL).
+
+### Phase 2 result
+
+`tools/check-file-sizes.ps1`: no file over 800 lines; only `Overlay.cpp` (658) is
+above the 600 soft mark and is left for a later pass.
+
 ## Phase 3 — Diagnostics contract and log tooling
 
-1. [ ] `src/Diagnostics/LogEvents.h`: keep Codex's `Event` enum + `Code()`; add
-       `fo4cs::diagnostics::LogEvent(Event, fmt, args...)` that writes
-       `event=<CODE> <message>`. Replace the ad-hoc `[Logger] Initialized` line with
-       `BOOT` (done by Codex, uncommitted).
-2. [ ] Emit `DEVICE_READY` (DX11Hooks device-created path), `HOOK_INSTALL`
-       (`InstallHooks`, `InstallUpscalerRenderBackendHooks`, `DX11Hooks::Install`),
-       `FEATURE_STATE` (settings summary after `ApplyRuntimeFallbacks`),
-       `RESOURCE_CREATE` / `RESOURCE_RESET` (`CreateFrameGenerationResources`,
-       `CreateUpscalingResources`, `DestroyUpscalingResources`, `Reset`), `ERROR`
-       (the three catch handlers in `Present`, Streamline/FFX failures).
-       Existing log text stays; the event token is prepended so grep-based checks
-       and human reading both work.
-3. [ ] Dedupe `GetLogDirectory` (`PluginCommon.h`) vs `GetHangTraceDirectory`
-       (`HangTrace.h`) into `Diagnostics/LogPaths.h`.
-4. [ ] `tools/collect-runtime-log.ps1`: snapshot the per-plugin logs before a manual
-       session, then copy the post-session logs to `dist/logs/<timestamp>-<variant>/`.
-5. [ ] `tools/validate-runtime-log.ps1`: assert required markers (`BOOT`,
-       `DEVICE_READY`, `HOOK_INSTALL`, `FEATURE_STATE`), flag `ERROR`, flag duplicate
-       `BOOT` from the same plugin, report counts. Exit code non-zero on failure.
-6. [ ] `tools/check-file-sizes.ps1`: fail on any `src/**/*.cpp` over 800 lines
-       (soft warning at 600).
+1. [x] `src/Diagnostics/LogEvents.h`: `Event` enum + `Code()` + templated
+       `LogEvent(Event, fmt, args...)` writing `event=<CODE> <message>` (ERROR at
+       error level). BOOT emitted from `InitializeLog`.
+2. [x] Emitted: `DEVICE_READY` (`NotifyD3D11DeviceCreated` with interop flag; proxy
+       swap chain ready), `HOOK_INSTALL` (IAT hooks, game render hooks, render backend
+       hooks), `FEATURE_STATE` (three settings summaries), `RESOURCE_CREATE`
+       (frame-gen + upscaling shared resources), `RESOURCE_RESET`
+       (`DestroyUpscalingResources`), `ERROR` (proxy fallbacks, Present catch
+       handlers, `slInit`/`slSetD3DDevice`/`slUpgradeInterface`, FSR context).
+       `Reset()` is per-frame and deliberately not an event. `SHUTDOWN` is reserved:
+       F4SE plugins have no unload callback.
+3. [x] `Diagnostics/LogPaths.h::GetF4SELogDirectory()` replaces the two identical
+       copies; `HangTrace.h` moved from `fo4cs::Diagnostics` to `fo4cs::diagnostics`.
+4. [x] `tools/collect-runtime-log.ps1` (Before/After phases, change detection,
+       `dist/logs/<stamp>-<variant>/session.json`). Smoke-tested; snapshot file is
+       gitignored.
+5. [x] `tools/validate-runtime-log.ps1`. Smoke-tested with synthetic PASS and FAIL logs
+       (duplicate BOOT, missing events, ERROR all detected).
+6. [x] `tools/check-file-sizes.ps1` (counts blank lines like `wc -l`).
 
 ## Phase 4 — Duplication and ownership cleanup
 
-1. [ ] Feature settings panels are copy-pasted four times
-       (`UpscalerPlugin.cpp`, `FrameGenPlugin.cpp`, `ReflexPlugin.cpp`,
-       `AIOPlugin.cpp`: `DrawDLSSRuntimeNotice`, `DrawFrameGenerationBackendCombo`,
-       `RenderPanel`, `SavePanel`, INI paths). Move into
-       `src/Upscaling/FeaturePanels.{h,cpp}` with one `SaveUpscalerIni/SaveFrameGenIni/
-       SaveReflexIni`; entry points only register.
-2. [ ] `IsUpscalerPluginAvailable` + `GetCurrentPluginDirectory` duplicated in
-       `FrameGenPlugin.cpp` and `ReflexPlugin.cpp`, and again in `Upscaler.cpp` and
-       `Streamline.cpp` → `Platform/ModulePaths.{h,cpp}`.
-3. [ ] Verify then delete dead `Upscaling` API surface reported by the outline
-       (`OverrideRenderTargets/ResetRenderTargets/OverrideRenderTarget/ResetRenderTarget/
-       OverrideDepth/ResetDepth/PatchSSRShader/GetDilateMotionVectorCS/
-       GetOverrideLinearDepthCS/GetOverrideDepthCS/GetBSImagespaceShaderSSLRRaytracing`).
-       Requires `rg` over `src/` and `package/` HLSL references before removal.
+1. [x] `src/Upscaling/FeaturePanels.{h,cpp}` owns the three panels and INI writers;
+       entry points register `PanelSpec`s. Deliberate behaviour changes: standalone
+       registration now works (the old `TryRegister` asked the game EXE for
+       `Overlay_RegisterPanel` and never reached `Overlay.dll`); NuclearGFX's Upscaler
+       panel gains the DLSS preset combo; every save creates its INI directory.
+       Verified with a standalone build (`build/PreNG-standalone`, AIO=OFF).
+2. [x] `Platform/ModulePaths.h` (header-only, so `GetCurrentModuleDirectory` resolves
+       per DLL) replaces four copies; `IsSiblingPluginAvailable(a_f4se, name)`
+       generalises FrameGen's and Reflex's checks.
+3. [x] Dead API removed after `rg` verification (no callers outside the cluster):
+       `Override/ResetRenderTarget(s)`, `Override/ResetDepth`, `PatchSSRShader`,
+       `GetDilateMotionVectorCS`, `GetOverrideLinearDepthCS`, `GetOverrideDepthCS`,
+       `GetBSImagespaceShaderSSLRRaytracing` and their members. The four matching
+       HLSL files in `package/Upscaler/F4SE/Plugins/Upscaler/` are now unused and
+       left for a packaging decision.
 
 ## Phase 5 — Documentation
 
-- [ ] `docs/architecture.md`: target ownership, hook ownership, init order, thread
-      assumptions, PreNG/PostNG/PostAE differences.
-- [ ] `docs/validation-matrix.md`: variant × plugin × scenario table; manual
-      checklist for BOSS; how to run the collector/validator.
-- [ ] `.claude/docs/current-state.md` updated at every milestone.
+- [x] `docs/architecture.md`: targets, dependency direction (Render↔Upscaling cycle
+      recorded as debt), hook ownership, lifecycle with events, threads, variants,
+      failure behaviour, log contract.
+- [x] `docs/validation-matrix.md`: automated checks, manual matrix, procedure,
+      required events.
+- [x] `.claude/docs/current-state.md` (in the main checkout, gitignored) updated
+      2026-09-08.
+
+## Not done / follow-ups
+
+- Break the `Render` ↔ `Upscaling` include cycle (Render calls `Upscaling`,
+  `Streamline`, `FidelityFX` from `DX11Hooks.cpp` and `DX12SwapChainPresent.cpp`).
+  Candidate: a small callback/interface owned by Render that Upscaling registers.
+- `Overlay.cpp` (658 lines) is above the 600 soft mark.
+- `RuntimeContext` / `FeatureRegistry` from the review's P1 was not started; the
+  singletons remain. The module boundaries above are the prerequisite.
+- Deferred findings below are unfixed by design.
+- Manual in-game validation of all variants (see `docs/validation-matrix.md`).
 
 ## Deferred findings (do not fix during move-only phases)
 
