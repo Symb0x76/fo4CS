@@ -17,8 +17,11 @@
 #include "Upscaling/Streamline.h"
 #include "Upscaling/UpscalingInternal.h"
 #include "Upscaling/UpscalingRenderTargetIDs.h"
+#include "Diagnostics/LogEvents.h"
 
 using fo4cs::upscaling::TraceRenderBackendStage;
+using fo4cs::diagnostics::Event;
+using fo4cs::diagnostics::LogEvent;
 
 namespace
 {
@@ -27,13 +30,13 @@ namespace
 		static void thunk(RE::BSGraphics::RenderTargetManager* This, RE::NiPoint3* a2, RE::NiPoint3* a3, RE::NiPoint3* a4, RE::NiPoint3* a5)
 		{
 			TraceRenderBackendStage("hook:UpdateDynamicResolution:game");
-			fo4cs::Diagnostics::WriteHangTraceLine("hook:UpdateDynamicResolution:game:begin");
+			fo4cs::diagnostics::WriteHangTraceLine("hook:UpdateDynamicResolution:game:begin");
 			func(This, a2, a3, a4, a5);
-			fo4cs::Diagnostics::WriteHangTraceLine("hook:UpdateDynamicResolution:game:end");
+			fo4cs::diagnostics::WriteHangTraceLine("hook:UpdateDynamicResolution:game:end");
 			TraceRenderBackendStage("hook:UpdateDynamicResolution:fo4cs");
-			fo4cs::Diagnostics::WriteHangTraceLine("hook:UpdateDynamicResolution:fo4cs:begin");
+			fo4cs::diagnostics::WriteHangTraceLine("hook:UpdateDynamicResolution:fo4cs:begin");
 			Upscaling::GetSingleton()->UpdateUpscaling();
-			fo4cs::Diagnostics::WriteHangTraceLine("hook:UpdateDynamicResolution:fo4cs:end");
+			fo4cs::diagnostics::WriteHangTraceLine("hook:UpdateDynamicResolution:fo4cs:end");
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
@@ -88,5 +91,5 @@ void InstallUpscalerRenderBackendHooks()
 	stl::write_thunk_call<DrawWorld_Render_PreUI_Forward>(REL::ID(984743).address() + 0x1C9);
 #endif
 
-	logger::debug("[Upscaler] Installed render backend hooks");
+	LogEvent(Event::HookInstall, "[Upscaler] Installed render backend hooks");
 }

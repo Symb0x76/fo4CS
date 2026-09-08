@@ -22,7 +22,7 @@ namespace fo4cs::upscaling
 
 	void TraceRenderBackendStage(std::string_view stage)
 	{
-		fo4cs::Diagnostics::WriteHangTraceLine(stage);
+		fo4cs::diagnostics::WriteHangTraceLine(stage);
 
 		auto upscaling = Upscaling::GetSingleton();
 		if (!upscaling->debugTraceCurrentPresent) {

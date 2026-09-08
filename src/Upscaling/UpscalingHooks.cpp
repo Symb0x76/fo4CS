@@ -3,6 +3,11 @@
 #include "Upscaling/FidelityFX.h"
 #include "Upscaling/Streamline.h"
 
+#include "Diagnostics/LogEvents.h"
+
+using fo4cs::diagnostics::Event;
+using fo4cs::diagnostics::LogEvent;
+
 void InstallUpscalerRenderBackendHooks();
 
 void Upscaling::PostPostLoad()
@@ -90,5 +95,5 @@ void Upscaling::InstallHooks()
 	stl::write_thunk_call<DrawWorld_Reticle>(REL::ID(338205).address() + 0x253);
 #endif
 
-	logger::debug("[Upscaler] Installed hooks");
+	LogEvent(Event::HookInstall, "[Upscaler] Installed game render hooks");
 }

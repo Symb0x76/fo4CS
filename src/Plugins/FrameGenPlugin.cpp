@@ -10,6 +10,9 @@
 #include <array>
 #include <filesystem>
 
+using fo4cs::diagnostics::Event;
+using fo4cs::diagnostics::LogEvent;
+
 namespace
 {
 	struct F4SEInterfaceLayout
@@ -161,7 +164,7 @@ extern "C" DLLEXPORT bool F4SEAPI F4SEPlugin_Load(const F4SE::LoadInterface* a_f
 	if (upscalerPluginAvailable) {
 		auto upscaling = Upscaling::GetSingleton();
 		upscaling->LoadFrameGenerationSettings();
-		logger::info("[Settings] FrameGen(enabled={}, limiter={}), Debug(enabled={}, streamlineLogLevel={}, frames={})",
+		LogEvent(Event::FeatureState, "[Settings] FrameGen(enabled={}, limiter={}), Debug(enabled={}, streamlineLogLevel={}, frames={})",
 			upscaling->settings.frameGenerationMode,
 			upscaling->settings.frameLimitMode,
 			upscaling->settings.debugLogging,

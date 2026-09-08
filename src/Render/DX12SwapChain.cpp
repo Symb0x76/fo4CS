@@ -16,6 +16,7 @@
 #include "Upscaling/Streamline.h"
 #include "Upscaling/Upscaler.h"
 #include "Render/DX12SwapChainInternal.h"
+#include "Diagnostics/LogEvents.h"
 
 extern bool enbLoaded;
 
@@ -23,6 +24,8 @@ using fo4cs::render::ResolveOverlayCallbacks;
 using fo4cs::render::s_overlayInitCb;
 using fo4cs::render::s_overlayPollCb;
 using fo4cs::render::s_overlayPresentCb;
+using fo4cs::diagnostics::Event;
+using fo4cs::diagnostics::LogEvent;
 
 // Overlay callbacks resolved from Overlay.dll at init time.
 // Using file-scope statics avoids the OBJECT-library multiple-singleton problem:
@@ -172,7 +175,7 @@ void DX12SwapChain::CreateSwapChain(IDXGIFactory4* a_dxgiFactory, DXGI_SWAP_CHAI
 		ffxSwapChainDesc.swapchain = &swapChain;
 
 		if (ffx::CreateContext(fidelityFX->swapChainContext, nullptr, ffxSwapChainDesc) != ffx::ReturnCode::Ok || !swapChain) {
-			logger::error("[FidelityFX] Failed to create swap chain context, using native D3D12 swap chain");
+			LogEvent(Event::Error, "[FidelityFX] Failed to create swap chain context, using native D3D12 swap chain");
 			swapChain = nullptr;
 			fidelityFX->swapChainContext = nullptr;
 			createNativeSwapChain();
@@ -187,7 +190,7 @@ void DX12SwapChain::CreateSwapChain(IDXGIFactory4* a_dxgiFactory, DXGI_SWAP_CHAI
 	DX::ThrowIfFailed(swapChain->GetBuffer(1, IID_PPV_ARGS(&swapChainBuffers[1])));
 
 	frameIndex = swapChain->GetCurrentBackBufferIndex();
-	logger::info("[DX12SwapChain] Swap chain ready (frameIndex={}, buffers={})", frameIndex, swapChainDesc.BufferCount);
+	LogEvent(Event::DeviceReady, "[DX12SwapChain] D3D12 proxy swap chain ready (frameIndex={}, buffers={})", frameIndex, swapChainDesc.BufferCount);
 
 	if (useFidelityFXSwapChain && fidelityFX->swapChainContext != nullptr)
 		fidelityFX->SetupFrameGeneration();

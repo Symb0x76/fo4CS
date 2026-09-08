@@ -10,6 +10,10 @@
 #include "Upscaling/Streamline.h"
 
 #include "ENB/ENBSeriesAPI.h"
+#include "Diagnostics/LogEvents.h"
+
+using fo4cs::diagnostics::Event;
+using fo4cs::diagnostics::LogEvent;
 
 bool enbLoaded = false;
 
@@ -139,7 +143,7 @@ HRESULT WINAPI hk_IDXGIFactory_CreateSwapChain(IDXGIFactory2* This, _In_ ID3D11D
 
 		return S_OK;
 	} catch (const std::exception& e) {
-		logger::error("[FrameGen] D3D12 proxy swap chain creation failed: {}; falling back to D3D11", e.what());
+		LogEvent(Event::Error, "[FrameGen] D3D12 proxy swap chain creation failed: {}; falling back to D3D11", e.what());
 		Upscaling::GetSingleton()->d3d12Interop = false;
 		const auto result = ptrCreateSwapChain(reinterpret_cast<IDXGIFactory*>(This), a_device, pDesc, ppSwapChain);
 		if (SUCCEEDED(result) && ppSwapChain && *ppSwapChain) {
@@ -234,7 +238,7 @@ HRESULT WINAPI hk_IDXGIFactory2_CreateSwapChainForHwnd(
 
 		return S_OK;
 	} catch (const std::exception& e) {
-		logger::error("[FrameGen] D3D12 proxy via CreateSwapChainForHwnd failed: {}; falling back to D3D11", e.what());
+		LogEvent(Event::Error, "[FrameGen] D3D12 proxy via CreateSwapChainForHwnd failed: {}; falling back to D3D11", e.what());
 		Upscaling::GetSingleton()->d3d12Interop = false;
 		const auto result = ptrCreateSwapChainForHwnd(This, pDevice, hWnd, pDesc, pFullscreenDesc, pRestrictToOutput, ppSwapChain);
 		if (SUCCEEDED(result) && ppSwapChain && *ppSwapChain) {
@@ -381,7 +385,7 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 
 			dxgiFactory->Release();
 		} catch (const std::exception& e) {
-			logger::error("[FrameGen] D3D12 proxy initialization failed: {}; falling back to D3D11", e.what());
+			LogEvent(Event::Error, "[FrameGen] D3D12 proxy initialization failed: {}; falling back to D3D11", e.what());
 			upscaling->d3d12Interop = false;
 			ReleaseAndNull(ppImmediateContext);
 			ReleaseAndNull(ppDevice);
@@ -453,7 +457,7 @@ void DX11Hooks::Install()
 
 	(uintptr_t&)ptrD3D11CreateDeviceAndSwapChain = Detours::IATHook(moduleBase, "d3d11.dll", "D3D11CreateDeviceAndSwapChain", (uintptr_t)hk_D3D11CreateDeviceAndSwapChain);
 	(uintptr_t&)ptrD3D11CreateDevice = Detours::IATHook(moduleBase, "d3d11.dll", "D3D11CreateDevice", (uintptr_t)hk_D3D11CreateDevice);
-	logger::info("[FrameGen] D3D11 IAT hooks installed (enb={}, createDeviceAndSwapChain={}, createDevice={})",
+	LogEvent(Event::HookInstall, "[FrameGen] D3D11 IAT hooks installed (enb={}, createDeviceAndSwapChain={}, createDevice={})",
 		enbLoaded,
 		ptrD3D11CreateDeviceAndSwapChain != nullptr,
 		ptrD3D11CreateDevice != nullptr);
@@ -487,6 +491,7 @@ void DX11Hooks::SetPresentCallback(PresentCallback a_callback)
 
 void DX11Hooks::NotifyD3D11DeviceCreated(ID3D11Device* a_device)
 {
+	LogEvent(Event::DeviceReady, "[DX11Hooks] D3D11 device ready (d3d12Interop={})", Upscaling::GetSingleton()->d3d12Interop);
 	if (g_deviceCreatedCallback) {
 		g_deviceCreatedCallback(a_device);
 	}

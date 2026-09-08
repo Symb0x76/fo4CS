@@ -17,10 +17,13 @@
 #include "Upscaling/Streamline.h"
 #include "Upscaling/UpscalingInternal.h"
 #include "Upscaling/UpscalingRenderTargetIDs.h"
+#include "Diagnostics/LogEvents.h"
 
 extern bool enbLoaded;
 
 using fo4cs::upscaling::TraceRenderBackendStage;
+using fo4cs::diagnostics::Event;
+using fo4cs::diagnostics::LogEvent;
 
 namespace
 {
@@ -100,34 +103,34 @@ namespace
 
 	void RestoreNativeRenderState(RE::BSGraphics::RenderTargetManager* a_renderTargetManager, RE::BSGraphics::State* a_gameViewport)
 	{
-		fo4cs::Diagnostics::WriteHangTraceLine("RestoreNativeRenderState:begin");
+		fo4cs::diagnostics::WriteHangTraceLine("RestoreNativeRenderState:begin");
 		auto* upscaling = Upscaling::GetSingleton();
 		upscaling->upscaleMethodNoMenu = Upscaling::UpscaleMethod::kDisabled;
 		upscaling->upscaleMethod = Upscaling::UpscaleMethod::kDisabled;
 		upscaling->postLoadingSkipUpscale = true;
 
 		if (a_gameViewport) {
-			fo4cs::Diagnostics::WriteHangTraceLine("RestoreNativeRenderState:viewport-reset:begin");
+			fo4cs::diagnostics::WriteHangTraceLine("RestoreNativeRenderState:viewport-reset:begin");
 			a_gameViewport->offsetX = 0.0f;
 			a_gameViewport->offsetY = 0.0f;
-			fo4cs::Diagnostics::WriteHangTraceLine("RestoreNativeRenderState:viewport-reset:end");
+			fo4cs::diagnostics::WriteHangTraceLine("RestoreNativeRenderState:viewport-reset:end");
 		}
 
 		if (a_renderTargetManager) {
-			fo4cs::Diagnostics::WriteHangTraceLine("RestoreNativeRenderState:rtm-reset:begin");
+			fo4cs::diagnostics::WriteHangTraceLine("RestoreNativeRenderState:rtm-reset:begin");
 			a_renderTargetManager->dynamicWidthRatio = 1.0f;
 			a_renderTargetManager->dynamicHeightRatio = 1.0f;
 			a_renderTargetManager->isDynamicResolutionCurrentlyActivated = false;
-			fo4cs::Diagnostics::WriteHangTraceLine("RestoreNativeRenderState:rtm-reset:end");
+			fo4cs::diagnostics::WriteHangTraceLine("RestoreNativeRenderState:rtm-reset:end");
 		}
 
-		fo4cs::Diagnostics::WriteHangTraceLine("RestoreNativeRenderState:UpdateSamplerStates:begin");
+		fo4cs::diagnostics::WriteHangTraceLine("RestoreNativeRenderState:UpdateSamplerStates:begin");
 		upscaling->UpdateSamplerStates(0.0f);
-		fo4cs::Diagnostics::WriteHangTraceLine("RestoreNativeRenderState:UpdateSamplerStates:end");
-		fo4cs::Diagnostics::WriteHangTraceLine("RestoreNativeRenderState:UpdateRenderTargets:begin");
+		fo4cs::diagnostics::WriteHangTraceLine("RestoreNativeRenderState:UpdateSamplerStates:end");
+		fo4cs::diagnostics::WriteHangTraceLine("RestoreNativeRenderState:UpdateRenderTargets:begin");
 		upscaling->UpdateRenderTargets(1.0f, 1.0f);
-		fo4cs::Diagnostics::WriteHangTraceLine("RestoreNativeRenderState:UpdateRenderTargets:end");
-		fo4cs::Diagnostics::WriteHangTraceLine("RestoreNativeRenderState:end");
+		fo4cs::diagnostics::WriteHangTraceLine("RestoreNativeRenderState:UpdateRenderTargets:end");
+		fo4cs::diagnostics::WriteHangTraceLine("RestoreNativeRenderState:end");
 	}
 
 }
@@ -220,55 +223,55 @@ void Upscaling::UpdateGameSettings()
 
 void Upscaling::UpdateUpscaling()
 {
-	fo4cs::Diagnostics::WriteHangTraceLine("UpdateUpscaling:enter");
+	fo4cs::diagnostics::WriteHangTraceLine("UpdateUpscaling:enter");
 	if (pluginMode != PluginMode::kUpscaler)
 	{
-		fo4cs::Diagnostics::WriteHangTraceLine("UpdateUpscaling:exit:not-upscaler-mode");
+		fo4cs::diagnostics::WriteHangTraceLine("UpdateUpscaling:exit:not-upscaler-mode");
 		return;
 	}
 
-	fo4cs::Diagnostics::WriteHangTraceLine("UpdateUpscaling:IsLoadingMenuOpen:begin");
+	fo4cs::diagnostics::WriteHangTraceLine("UpdateUpscaling:IsLoadingMenuOpen:begin");
 	if (IsLoadingMenuOpen()) {
-		fo4cs::Diagnostics::WriteHangTraceLine("UpdateUpscaling:IsLoadingMenuOpen:true");
+		fo4cs::diagnostics::WriteHangTraceLine("UpdateUpscaling:IsLoadingMenuOpen:true");
 		upscaleMethodNoMenu = UpscaleMethod::kDisabled;
 		upscaleMethod = UpscaleMethod::kDisabled;
 		postLoadingSkipUpscale = true;
-		fo4cs::Diagnostics::WriteHangTraceLine("UpdateUpscaling:exit:loading-menu");
+		fo4cs::diagnostics::WriteHangTraceLine("UpdateUpscaling:exit:loading-menu");
 		return;
 	}
-	fo4cs::Diagnostics::WriteHangTraceLine("UpdateUpscaling:IsLoadingMenuOpen:false");
+	fo4cs::diagnostics::WriteHangTraceLine("UpdateUpscaling:IsLoadingMenuOpen:false");
 
 	TraceRenderBackendStage("UpdateUpscaling");
-	fo4cs::Diagnostics::WriteHangTraceLine("UpdateUpscaling:GetGraphicsState:begin");
+	fo4cs::diagnostics::WriteHangTraceLine("UpdateUpscaling:GetGraphicsState:begin");
 	auto gameViewport = fo4cs::RE::GetGraphicsState();
-	fo4cs::Diagnostics::WriteHangTraceLine("UpdateUpscaling:GetGraphicsState:end");
-	fo4cs::Diagnostics::WriteHangTraceLine("UpdateUpscaling:GetRenderTargetManager:begin");
+	fo4cs::diagnostics::WriteHangTraceLine("UpdateUpscaling:GetGraphicsState:end");
+	fo4cs::diagnostics::WriteHangTraceLine("UpdateUpscaling:GetRenderTargetManager:begin");
 	auto renderTargetManager = fo4cs::RE::GetRenderTargetManager();
-	fo4cs::Diagnostics::WriteHangTraceLine("UpdateUpscaling:GetRenderTargetManager:end");
+	fo4cs::diagnostics::WriteHangTraceLine("UpdateUpscaling:GetRenderTargetManager:end");
 	if (!gameViewport || !renderTargetManager) {
 		logger::warn("[Upscaler] Render backend globals are unavailable; disabling upscaling for this update");
 		upscaleMethodNoMenu = UpscaleMethod::kDisabled;
 		upscaleMethod = UpscaleMethod::kDisabled;
-		fo4cs::Diagnostics::WriteHangTraceLine("UpdateUpscaling:exit:missing-globals");
+		fo4cs::diagnostics::WriteHangTraceLine("UpdateUpscaling:exit:missing-globals");
 		return;
 	}
 
-	fo4cs::Diagnostics::WriteHangTraceLine("UpdateUpscaling:read-screen-size:begin");
+	fo4cs::diagnostics::WriteHangTraceLine("UpdateUpscaling:read-screen-size:begin");
 	auto screenWidth = gameViewport->screenWidth;
 	auto screenHeight = gameViewport->screenHeight;
-	fo4cs::Diagnostics::WriteHangTraceLine("UpdateUpscaling:read-screen-size:end");
+	fo4cs::diagnostics::WriteHangTraceLine("UpdateUpscaling:read-screen-size:end");
 	if (screenWidth == 0 || screenHeight == 0 || screenWidth > 16384 || screenHeight > 16384) {
 		logger::warn("[Upscaler] Invalid viewport size {}x{}; disabling upscaling for this update", screenWidth, screenHeight);
 		upscaleMethodNoMenu = UpscaleMethod::kDisabled;
 		upscaleMethod = UpscaleMethod::kDisabled;
-		fo4cs::Diagnostics::WriteHangTraceLine("UpdateUpscaling:exit:invalid-screen-size");
+		fo4cs::diagnostics::WriteHangTraceLine("UpdateUpscaling:exit:invalid-screen-size");
 		return;
 	}
 
-	fo4cs::Diagnostics::WriteHangTraceLine("UpdateUpscaling:GetUpscaleMethod:begin");
+	fo4cs::diagnostics::WriteHangTraceLine("UpdateUpscaling:GetUpscaleMethod:begin");
 	upscaleMethodNoMenu = GetUpscaleMethod(false);
 	upscaleMethod = GetUpscaleMethod(true);
-	fo4cs::Diagnostics::WriteHangTraceLine("UpdateUpscaling:GetUpscaleMethod:end");
+	fo4cs::diagnostics::WriteHangTraceLine("UpdateUpscaling:GetUpscaleMethod:end");
 
 
 	float resolutionScale = upscaleMethodNoMenu == UpscaleMethod::kDisabled ? 1.0f : 1.0f / GetUpscaleRatio(settings.qualityMode);
@@ -276,15 +279,15 @@ void Upscaling::UpdateUpscaling()
 	if (upscaleMethodNoMenu != UpscaleMethod::kDisabled)
 		currentMipBias -= 1.0f;
 
-	fo4cs::Diagnostics::WriteHangTraceLine("UpdateUpscaling:UpdateSamplerStates:begin");
+	fo4cs::diagnostics::WriteHangTraceLine("UpdateUpscaling:UpdateSamplerStates:begin");
 	UpdateSamplerStates(currentMipBias);
-	fo4cs::Diagnostics::WriteHangTraceLine("UpdateUpscaling:UpdateSamplerStates:end");
-	fo4cs::Diagnostics::WriteHangTraceLine("UpdateUpscaling:UpdateRenderTargets:begin");
+	fo4cs::diagnostics::WriteHangTraceLine("UpdateUpscaling:UpdateSamplerStates:end");
+	fo4cs::diagnostics::WriteHangTraceLine("UpdateUpscaling:UpdateRenderTargets:begin");
 	UpdateRenderTargets(resolutionScale, resolutionScale);
-	fo4cs::Diagnostics::WriteHangTraceLine("UpdateUpscaling:UpdateRenderTargets:end");
-	fo4cs::Diagnostics::WriteHangTraceLine("UpdateUpscaling:UpdateGameSettings:begin");
+	fo4cs::diagnostics::WriteHangTraceLine("UpdateUpscaling:UpdateRenderTargets:end");
+	fo4cs::diagnostics::WriteHangTraceLine("UpdateUpscaling:UpdateGameSettings:begin");
 	UpdateGameSettings();
-	fo4cs::Diagnostics::WriteHangTraceLine("UpdateUpscaling:UpdateGameSettings:end");
+	fo4cs::diagnostics::WriteHangTraceLine("UpdateUpscaling:UpdateGameSettings:end");
 
 	if (upscaleMethod == UpscaleMethod::kDisabled)
 		resolutionScale = 1.0f;
@@ -304,15 +307,15 @@ void Upscaling::UpdateUpscaling()
 	renderTargetManager->dynamicHeightRatio = resolutionScale;
 	renderTargetManager->isDynamicResolutionCurrentlyActivated = renderTargetManager->dynamicWidthRatio != 1.0f || renderTargetManager->dynamicHeightRatio != 1.0f;
 
-	fo4cs::Diagnostics::WriteHangTraceLine("UpdateUpscaling:CheckResources:begin");
+	fo4cs::diagnostics::WriteHangTraceLine("UpdateUpscaling:CheckResources:begin");
 	CheckResources();
-	fo4cs::Diagnostics::WriteHangTraceLine("UpdateUpscaling:CheckResources:end");
+	fo4cs::diagnostics::WriteHangTraceLine("UpdateUpscaling:CheckResources:end");
 	if (!renderBackendEnabled || upscaleMethodNoMenu == UpscaleMethod::kDisabled) {
-		fo4cs::Diagnostics::WriteHangTraceLine("UpdateUpscaling:RestoreNativeRenderState:disabled:begin");
+		fo4cs::diagnostics::WriteHangTraceLine("UpdateUpscaling:RestoreNativeRenderState:disabled:begin");
 		RestoreNativeRenderState(renderTargetManager, gameViewport);
-		fo4cs::Diagnostics::WriteHangTraceLine("UpdateUpscaling:RestoreNativeRenderState:disabled:end");
+		fo4cs::diagnostics::WriteHangTraceLine("UpdateUpscaling:RestoreNativeRenderState:disabled:end");
 	}
-	fo4cs::Diagnostics::WriteHangTraceLine("UpdateUpscaling:exit");
+	fo4cs::diagnostics::WriteHangTraceLine("UpdateUpscaling:exit");
 }
 
 bool Upscaling::Upscale()
@@ -558,7 +561,7 @@ bool Upscaling::CreateUpscalingResources()
 			outputColorDesc.Width,
 			outputColorDesc.Height);
 		if (!fsrSetupSucceeded) {
-			logger::error("[Upscaler] FSR upscaling context creation failed; disabling upscaling backend");
+			LogEvent(Event::Error, "[Upscaler] FSR upscaling context creation failed; disabling upscaling backend");
 			upscaleMethodNoMenu = UpscaleMethod::kDisabled;
 			upscaleMethod = UpscaleMethod::kDisabled;
 			renderBackendEnabled = false;
@@ -566,7 +569,7 @@ bool Upscaling::CreateUpscalingResources()
 		}
 	}
 
-	logger::info("[Upscaler] Upscaling shared resources created (input={}x{} fmt={}, output={}x{} fmt={}, final={}x{} fmt={}, fsr={}, dlss={})",
+	LogEvent(Event::ResourceCreate, "[Upscaler] Upscaling shared resources created (input={}x{} fmt={}, output={}x{} fmt={}, final={}x{} fmt={}, fsr={}, dlss={})",
 		inputColorDesc.Width,
 		inputColorDesc.Height,
 		static_cast<uint32_t>(inputColorDesc.Format),
@@ -594,5 +597,7 @@ void Upscaling::DestroyUpscalingResources()
 		upscalerInputShared12[index] = nullptr;
 		upscalerOutputShared12[index] = nullptr;
 	}
+
+	LogEvent(Event::ResourceReset, "[Upscaler] Upscaling shared resources destroyed");
 }
 

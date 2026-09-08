@@ -17,6 +17,7 @@
 #include "Upscaling/Upscaler.h"
 
 #include "Render/DX12SwapChainInternal.h"
+#include "Diagnostics/LogEvents.h"
 
 extern bool enbLoaded;
 
@@ -24,6 +25,8 @@ using fo4cs::render::ResolveOverlayCallbacks;
 using fo4cs::render::s_overlayInitCb;
 using fo4cs::render::s_overlayPollCb;
 using fo4cs::render::s_overlayPresentCb;
+using fo4cs::diagnostics::Event;
+using fo4cs::diagnostics::LogEvent;
 
 namespace
 {
@@ -406,21 +409,21 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
 		return S_OK;
 	} catch (const winrt::hresult_error& e) {
 		const auto hr = static_cast<HRESULT>(e.code());
-		logger::error("[DX12SwapChain] Present failed at stage '{}' with HRESULT {}", stage, FormatHRESULT(hr));
+		LogEvent(Event::Error, "[DX12SwapChain] Present failed at stage '{}' with HRESULT {}", stage, FormatHRESULT(hr));
 		commandLists[frameIndex]->Close();
 		commandAllocators[frameIndex]->Reset();
 		commandLists[frameIndex]->Reset(commandAllocators[frameIndex].get(), nullptr);
 		streamline->SetPCLMarker(sl::PCLMarker::ePresentEnd, "present-end"); streamline->AdvanceFrame();
 		return hr;
 	} catch (const std::exception& e) {
-		logger::error("[DX12SwapChain] Present failed at stage '{}': {}", stage, e.what());
+		LogEvent(Event::Error, "[DX12SwapChain] Present failed at stage '{}': {}", stage, e.what());
 		commandLists[frameIndex]->Close();
 		commandAllocators[frameIndex]->Reset();
 		commandLists[frameIndex]->Reset(commandAllocators[frameIndex].get(), nullptr);
 		streamline->SetPCLMarker(sl::PCLMarker::ePresentEnd, "present-end"); streamline->AdvanceFrame();
 		return DXGI_ERROR_DEVICE_REMOVED;
 	} catch (...) {
-		logger::error("[DX12SwapChain] Present failed at stage '{}' with unknown exception", stage);
+		LogEvent(Event::Error, "[DX12SwapChain] Present failed at stage '{}' with unknown exception", stage);
 		commandLists[frameIndex]->Close();
 		commandAllocators[frameIndex]->Reset();
 		commandLists[frameIndex]->Reset(commandAllocators[frameIndex].get(), nullptr);

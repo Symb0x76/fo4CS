@@ -8,6 +8,10 @@
 #include <string_view>
 #include <vector>
 
+#include "Diagnostics/LogEvents.h"
+
+using fo4cs::diagnostics::Event;
+using fo4cs::diagnostics::LogEvent;
 
 namespace
 {
@@ -247,7 +251,7 @@ void Upscaling::LoadReflexSettings()
 	ConfigureDebugLogging(settings);
 	ApplyRuntimeFallbacks();
 
-	logger::info(
+	LogEvent(Event::FeatureState,
 		"[Settings] Reflex(mode={}, sleep={}), Debug(enabled={}, streamlineLogLevel={}, frames={})",
 		settings.reflexMode,
 		settings.reflexSleepMode,
@@ -300,7 +304,7 @@ void Upscaling::LoadSettings()
 
 	ApplyRuntimeFallbacks();
 
-	logger::info(
+	LogEvent(Event::FeatureState,
 		"[Settings] FrameGen(enabled={}, limiter={}, backend={}), Upscaler(method={}, quality={}, dlssPreset={}), Reflex(mode={}), Debug(enabled={}, streamlineLogLevel={}, frames={})",
 		settings.frameGenerationMode,
 		settings.frameLimitMode,

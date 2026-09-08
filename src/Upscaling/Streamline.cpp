@@ -11,11 +11,14 @@
 #include "Render/DX12SwapChain.h"
 #include "Upscaling/Upscaler.h"
 #include "Upscaling/StreamlineInternal.h"
+#include "Diagnostics/LogEvents.h"
 
 using fo4cs::streamline::EnumToString;
 using fo4cs::streamline::GetConfiguredReflexMode;
 using fo4cs::streamline::ResultToString;
 using fo4cs::streamline::ShouldTraceStreamlineFrame;
+using fo4cs::diagnostics::Event;
+using fo4cs::diagnostics::LogEvent;
 
 namespace
 {
@@ -257,7 +260,7 @@ void Streamline::LoadAndInit()
 	slGetNativeInterface = (PFun_slGetNativeInterface*)GetProcAddress(interposer, "slGetNativeInterface");
 
 	if (!slInit) {
-		logger::error("[Streamline] Failed to get slInit");
+		LogEvent(Event::Error, "[Streamline] Failed to get slInit");
 		return;
 	}
 
@@ -311,7 +314,7 @@ void Streamline::LoadAndInit()
 	pref.flags = sl::PreferenceFlags::eUseManualHooking | sl::PreferenceFlags::eUseFrameBasedResourceTagging;
 
 	if (slInit(pref, sl::kSDKVersion) != sl::Result::eOk) {
-		logger::error("[Streamline] slInit failed");
+		LogEvent(Event::Error, "[Streamline] slInit failed");
 		return;
 	}
 
@@ -325,7 +328,7 @@ void Streamline::PostDevice(ID3D12Device* device, IDXGIAdapter* adapter)
 		return;
 
 	if (slSetD3DDevice(device) != sl::Result::eOk) {
-		logger::error("[Streamline] slSetD3DDevice failed");
+		LogEvent(Event::Error, "[Streamline] slSetD3DDevice failed");
 		initialized = false;
 		return;
 	}
@@ -451,7 +454,7 @@ bool Streamline::UpgradeD3D12DeviceForDLSSG(ID3D12Device** device)
 	void* upgradedInterface = *device;
 	const auto result = slUpgradeInterface(&upgradedInterface);
 	if (result != sl::Result::eOk || !upgradedInterface) {
-		logger::error("[Streamline] slUpgradeInterface failed for D3D12 device: {}", ResultToString(result));
+		LogEvent(Event::Error, "[Streamline] slUpgradeInterface failed for D3D12 device: {}", ResultToString(result));
 		DisableDLSSGAfterError("slUpgradeInterface failed for D3D12 device");
 		return false;
 	}

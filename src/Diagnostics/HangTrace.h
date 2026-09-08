@@ -5,30 +5,13 @@
 #include <optional>
 #include <string_view>
 
-#include <ShlObj_core.h>
+#include "Diagnostics/LogPaths.h"
 
-namespace fo4cs::Diagnostics
+// Opt-in hang trace (FO4CS_HANG_TRACE=1): appends timestamped stage markers to
+// <F4SE log dir>/CommunityShaders.hangtrace.log with an unbuffered write per line,
+// so the last marker survives a hard hang.
+namespace fo4cs::diagnostics
 {
-	inline std::optional<std::filesystem::path> GetHangTraceDirectory()
-	{
-		PWSTR documentsPath = nullptr;
-		if (FAILED(SHGetKnownFolderPath(FOLDERID_Documents, KF_FLAG_DEFAULT, nullptr, &documentsPath))) {
-			return std::nullopt;
-		}
-
-		std::filesystem::path path{ documentsPath };
-		CoTaskMemFree(documentsPath);
-
-		path /= "My Games/Fallout4/F4SE";
-		std::error_code ec;
-		std::filesystem::create_directories(path, ec);
-		if (ec) {
-			return std::nullopt;
-		}
-
-		return path;
-	}
-
 	inline bool IsHangTraceEnabled()
 	{
 		wchar_t value[8]{};
@@ -38,7 +21,7 @@ namespace fo4cs::Diagnostics
 
 	inline std::optional<std::filesystem::path> GetHangTracePath()
 	{
-		auto path = GetHangTraceDirectory();
+		auto path = GetF4SELogDirectory();
 		if (!path) {
 			return std::nullopt;
 		}

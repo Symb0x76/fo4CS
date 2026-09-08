@@ -76,6 +76,7 @@ set(FO4CS_GENERATED_INCLUDE_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
 add_library(Fo4cs.Diagnostics INTERFACE
     src/Diagnostics/HangTrace.h
     src/Diagnostics/LogEvents.h
+    src/Diagnostics/LogPaths.h
 )
 add_library(Fo4cs.Platform INTERFACE
     src/Platform/PluginCommon.h

@@ -2,34 +2,13 @@
 
 #include "Plugin.h"
 #include "Diagnostics/LogEvents.h"
-
-#include <ShlObj_core.h>
+#include "Diagnostics/LogPaths.h"
 
 namespace fo4cs
 {
-	inline std::optional<std::filesystem::path> GetLogDirectory()
-	{
-		PWSTR documentsPath = nullptr;
-		if (FAILED(SHGetKnownFolderPath(FOLDERID_Documents, KF_FLAG_DEFAULT, nullptr, &documentsPath))) {
-			return std::nullopt;
-		}
-
-		std::filesystem::path path{ documentsPath };
-		CoTaskMemFree(documentsPath);
-
-		path /= "My Games/Fallout4/F4SE";
-		std::error_code ec;
-		std::filesystem::create_directories(path, ec);
-		if (ec) {
-			return std::nullopt;
-		}
-
-		return path;
-	}
-
 	inline void InitializeLog()
 	{
-		auto path = GetLogDirectory();
+		auto path = diagnostics::GetF4SELogDirectory();
 		if (!path) {
 			stl::report_and_fail("Failed to find standard logging directory"sv);
 		}

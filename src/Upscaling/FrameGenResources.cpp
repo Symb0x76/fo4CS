@@ -12,11 +12,13 @@
 #include "Render/DX12SwapChain.h"
 #include "Upscaling/UpscalingInternal.h"
 #include "Upscaling/UpscalingRenderTargetIDs.h"
+#include "Upscaling/UpscalingShaderCompile.h"
+#include "Diagnostics/LogEvents.h"
 
 using fo4cs::upscaling::IsLoadingMenuOpen;
 using fo4cs::upscaling::NextHUDLessFrameID;
-
-#include "Upscaling/UpscalingShaderCompile.h"
+using fo4cs::diagnostics::Event;
+using fo4cs::diagnostics::LogEvent;
 
 void Upscaling::CreateFrameGenerationResources()
 {
@@ -229,7 +231,7 @@ void Upscaling::CreateFrameGenerationResources()
 	buildReticleUIColorAndAlphaCS = (ID3D11ComputeShader*)CompileFrameGenerationShader(L"BuildReticleUIColorAndAlphaCS.hlsl", "cs_5_0");
 	patchHUDLessReticleCS = (ID3D11ComputeShader*)CompileFrameGenerationShader(L"PatchHUDLessReticleCS.hlsl", "cs_5_0");
 	denoiseUIAlphaCS = (ID3D11ComputeShader*)CompileFrameGenerationShader(L"DenoiseUIAlphaCS.hlsl", "cs_5_0");
-	logger::info("[FrameGen] Shared resources created (render={}x{}, hud={}x{}, copyDepthCS={})",
+	LogEvent(Event::ResourceCreate, "[FrameGen] Shared resources created (render={}x{}, hud={}x{}, copyDepthCS={})",
 		depthBufferShared[0]->desc.Width,
 		depthBufferShared[0]->desc.Height,
 		HUDLessBufferShared[0]->desc.Width,
