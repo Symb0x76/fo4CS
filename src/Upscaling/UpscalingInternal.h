@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <string>
+#include <string_view>
 
 // Helpers shared by the Upscaling translation units. Each has exactly one
 // definition (UpscalingInternal.cpp); NextHUDLessFrameID owns the single
@@ -19,4 +20,9 @@ namespace fo4cs::upscaling
 	// Formats a frame-rate limit for logs: "0" for automatic, no decimals when
 	// integral, three decimals otherwise.
 	[[nodiscard]] std::string FormatRealFrameRate(float value);
+
+	// Debug-log a render-backend stage transition once (deduplicated against the
+	// previous stage) and mirror it to the hang trace. One definition, so the
+	// dedup latch stays a single instance across the render-backend units.
+	void TraceRenderBackendStage(std::string_view stage);
 }

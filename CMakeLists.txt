@@ -147,6 +147,11 @@ fo4cs_add_object_library(Fo4cs.Upscaling
         src/Upscaling/Upscaler.cpp
         src/Upscaling/Upscaler.h
         src/Upscaling/UpscalerRenderBackend.cpp
+        src/Upscaling/UpscalerRenderTargets.cpp
+        src/Upscaling/UpscalerDepthBuffer.cpp
+        src/Upscaling/UpscalerSamplerStates.cpp
+        src/Upscaling/UpscalerRenderBackendShaders.cpp
+        src/Upscaling/UpscalerRenderBackendHooks.cpp
         src/Upscaling/UpscalingHooks.cpp
         src/Upscaling/UpscalingInternal.cpp
         src/Upscaling/UpscalingInternal.h

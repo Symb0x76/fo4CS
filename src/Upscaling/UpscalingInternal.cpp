@@ -49,4 +49,22 @@ namespace fo4cs::upscaling
 			return std::format("{:.0f}", value);
 		return std::format("{:.3f}", value);
 	}
+
+	void TraceRenderBackendStage(std::string_view stage)
+	{
+		fo4cs::diagnostics::WriteHangTraceLine(stage);
+
+		auto upscaling = Upscaling::GetSingleton();
+		if (!upscaling->debugTraceCurrentPresent) {
+			return;
+		}
+
+		static std::string previousStage;
+		if (previousStage == stage) {
+			return;
+		}
+
+		previousStage = stage;
+		logger::debug("[Upscaler] Render backend stage: {}", stage);
+	}
 }
