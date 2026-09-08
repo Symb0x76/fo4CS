@@ -126,6 +126,11 @@ fo4cs_add_object_library(Fo4cs.Render
         src/Render/DX11Hooks.h
         src/Render/DX12SwapChain.cpp
         src/Render/DX12SwapChain.h
+        src/Render/DX12SwapChainInternal.h
+        src/Render/DX12SwapChainColorSpace.cpp
+        src/Render/DX12SwapChainPresent.cpp
+        src/Render/DXGISwapChainProxy.cpp
+        src/Render/WrappedResource.cpp
         src/Render/PresentationMenuPolicy.h
         src/Render/RuntimeAdapter.cpp
         src/Render/RuntimeAdapter.h
