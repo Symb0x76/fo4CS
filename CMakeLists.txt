@@ -95,6 +95,10 @@ fo4cs_add_object_library(Fo4cs.Render
         src/Render/DX11Hooks.h
         src/Render/DX12SwapChain.cpp
         src/Render/DX12SwapChain.h
+        src/Render/DX12SwapChainInternal.h
+        src/Render/DX12SwapChainPresent.cpp
+        src/Render/DXGISwapChainProxy.cpp
+        src/Render/WrappedResource.cpp
 )
 target_include_directories(Fo4cs.Render BEFORE PUBLIC ${FO4CS_STREAMLINE_INCLUDE_DIR})
 target_link_libraries(Fo4cs.Render PUBLIC Fo4cs.Platform)
