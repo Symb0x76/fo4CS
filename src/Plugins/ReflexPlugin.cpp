@@ -1,133 +1,17 @@
 #include "Platform/PluginCommon.h"
 
+#include "Platform/ModulePaths.h"
 #include "Render/DX11Hooks.h"
+#include "Upscaling/FeaturePanels.h"
 #include "Upscaling/Upscaler.h"
-
-#include <OverlayAPI.h>
-#include <SimpleIni.h>
-#include <imgui.h>
-
-#include <array>
-#include <filesystem>
 
 namespace
 {
-	struct F4SEInterfaceLayout
-	{
-		std::uint32_t f4seVersion;
-		std::uint32_t runtimeVersion;
-		std::uint32_t editorVersion;
-		std::uint32_t isEditor;
-		void*(F4SEAPI* QueryInterface)(std::uint32_t);
-		std::uint32_t(F4SEAPI* GetPluginHandle)();
-		std::uint32_t(F4SEAPI* GetReleaseIndex)();
-		const void*(F4SEAPI* GetPluginInfo)(const char*);
-	};
-
-	std::filesystem::path GetCurrentPluginDirectory()
-	{
-		HMODULE module = nullptr;
-		if (!GetModuleHandleExW(
-				GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-				reinterpret_cast<LPCWSTR>(&GetCurrentPluginDirectory),
-				&module)) {
-			return {};
-		}
-
-		std::array<wchar_t, 4096> buffer{};
-		const auto length = GetModuleFileNameW(module, buffer.data(), static_cast<DWORD>(buffer.size()));
-		if (length == 0 || length >= buffer.size()) {
-			return {};
-		}
-
-		return std::filesystem::path(buffer.data(), buffer.data() + length).parent_path();
-	}
-
-	bool IsPluginAvailable(const F4SE::LoadInterface* a_f4se, const char* pluginName, const wchar_t* dllName)
-	{
-		const auto f4se = reinterpret_cast<const F4SEInterfaceLayout*>(a_f4se);
-		if (f4se && f4se->GetPluginInfo && (f4se->GetPluginInfo(pluginName) || f4se->GetPluginInfo(std::format("{}.dll", pluginName).c_str()))) {
-			return true;
-		}
-
-		if (GetModuleHandleW(dllName) != nullptr) {
-			return true;
-		}
-
-		const auto pluginDir = GetCurrentPluginDirectory();
-		if (pluginDir.empty()) {
-			return false;
-		}
-
-		std::error_code ec;
-		std::wstring subDir(dllName);
-			auto dot = subDir.rfind(L'.');
-			if (dot != std::wstring::npos) subDir.resize(dot);
-			return std::filesystem::exists(pluginDir.parent_path() / subDir / dllName, ec);
-	}
-
+	// Upscaler or FrameGen, when present, owns the D3D12 proxy that Reflex rides on.
 	bool HasExternalProxyOwner(const F4SE::LoadInterface* a_f4se)
 	{
-		return IsPluginAvailable(a_f4se, "Upscaler", L"Upscaler.dll") ||
-			IsPluginAvailable(a_f4se, "FrameGen", L"FrameGen.dll");
-	}
-}
-
-// Panel callbacks for Overlay.dll registration
-namespace ReflexOverlay
-{
-	void DrawDLSSRuntimeNotice()
-	{
-		auto* upscaling = Upscaling::GetSingleton();
-		upscaling->ApplyRuntimeFallbacks();
-		if (const char* reason = upscaling->GetDLSSUnavailableReason()) {
-			ImGui::TextWrapped("%s", reason);
-		}
-	}
-
-	int RenderPanel(void* userData)
-	{
-		auto& s = *static_cast<Upscaling::Settings*>(userData);
-		int changed = 0;
-
-		if (ImGui::CollapsingHeader("Reflex")) {
-			DrawDLSSRuntimeNotice();
-			const char* reflexModes[] = { "Off", "Low Latency", "Low Latency + Boost" };
-			changed |= ImGui::Combo("Mode", &s.reflexMode, reflexModes, IM_ARRAYSIZE(reflexModes)) ? 1 : 0;
-			changed |= ImGui::Checkbox("Reflex Sleep Mode", &s.reflexSleepMode) ? 1 : 0;
-		}
-		if (changed) {
-			Upscaling::GetSingleton()->ApplyRuntimeFallbacks();
-		}
-		return changed;
-	}
-
-	void SavePanel(void* userData)
-	{
-		auto& s = *static_cast<Upscaling::Settings*>(userData);
-		Upscaling::GetSingleton()->ApplyRuntimeFallbacks();
-		CSimpleIniA ini;
-		ini.SetUnicode();
-		ini.SetValue("Settings", "iReflexMode", std::to_string(s.reflexMode).c_str());
-		ini.SetValue("Settings", "bReflexSleepMode", s.reflexSleepMode ? "true" : "false");
-		ini.SaveFile("Data\\F4SE\\Plugins\\Reflex\\Reflex.ini");
-	}
-
-	void TryRegister()
-	{
-		HMODULE overlay = GetModuleHandleW(nullptr);
-		if (!overlay) overlay = GetModuleHandleW(L"Overlay.dll");
-		if (!overlay) return;
-
-		auto registerFn = reinterpret_cast<decltype(&Overlay_RegisterPanel)>(
-			GetProcAddress(overlay, "Overlay_RegisterPanel"));
-		if (!registerFn) return;
-
-		static OverlayPanelCallbacks cbs;
-		cbs.render = RenderPanel;
-		cbs.save = SavePanel;
-		cbs.userData = &Upscaling::GetSingleton()->settings;
-		registerFn("Reflex", kOverlayCategory_Latency, &cbs);
+		return fo4cs::platform::IsSiblingPluginAvailable(a_f4se, "Upscaler") ||
+		       fo4cs::platform::IsSiblingPluginAvailable(a_f4se, "FrameGen");
 	}
 }
 
@@ -155,21 +39,25 @@ extern "C" DLLEXPORT bool F4SEAPI F4SEPlugin_Load(const F4SE::LoadInterface* a_f
 	upscaling->pluginMode = Upscaling::PluginMode::kReflex;
 	upscaling->LoadReflexSettings();
 
+	const auto registerPanel = [] {
+		fo4cs::panels::RegisterWithOverlayHost(fo4cs::panels::ReflexPanel());
+	};
+
 	if (!upscaling->UsesReflex()) {
 		logger::info("[Reflex] Disabled by settings; D3D12 proxy hooks not installed");
-		ReflexOverlay::TryRegister();
+		registerPanel();
 		return true;
 	}
 
 	if (HasExternalProxyOwner(a_f4se)) {
 		logger::info("[Reflex] Upscaler/FrameGen plugin detected, leaving D3D12 proxy ownership to that plugin");
-		ReflexOverlay::TryRegister();
+		registerPanel();
 		return true;
 	}
 
 	logger::info("[Reflex] Installing D3D12 proxy hooks");
 	DX11Hooks::Install();
 
-	ReflexOverlay::TryRegister();
+	registerPanel();
 	return true;
 }

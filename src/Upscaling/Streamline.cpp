@@ -12,6 +12,7 @@
 #include "Upscaling/Upscaler.h"
 #include "Upscaling/StreamlineInternal.h"
 #include "Diagnostics/LogEvents.h"
+#include "Platform/ModulePaths.h"
 
 using fo4cs::streamline::EnumToString;
 using fo4cs::streamline::GetConfiguredReflexMode;
@@ -19,6 +20,8 @@ using fo4cs::streamline::ResultToString;
 using fo4cs::streamline::ShouldTraceStreamlineFrame;
 using fo4cs::diagnostics::Event;
 using fo4cs::diagnostics::LogEvent;
+using fo4cs::platform::GetCurrentModuleDirectory;
+using fo4cs::platform::GetModuleDirectory;
 
 namespace
 {
@@ -143,30 +146,6 @@ namespace
 		return WideToUtf8(message);
 	}
 
-	std::filesystem::path GetModuleDirectory(HMODULE module)
-	{
-		std::array<wchar_t, 4096> buffer{};
-		const auto length = GetModuleFileNameW(module, buffer.data(), static_cast<DWORD>(buffer.size()));
-		if (length == 0 || length >= buffer.size()) {
-			return {};
-		}
-
-		return std::filesystem::path(buffer.data(), buffer.data() + length).parent_path();
-	}
-
-	std::filesystem::path GetCurrentPluginDirectory()
-	{
-		HMODULE module = nullptr;
-		if (!GetModuleHandleExW(
-				GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-				reinterpret_cast<LPCWSTR>(&GetCurrentPluginDirectory),
-				&module)) {
-			return {};
-		}
-
-		return GetModuleDirectory(module);
-	}
-
 	std::vector<std::filesystem::path> GetStreamlineSearchDirectories()
 	{
 		std::vector<std::filesystem::path> directories;
@@ -184,7 +163,7 @@ namespace
 			directories.push_back(path);
 		};
 
-		if (const auto pluginDir = GetCurrentPluginDirectory(); !pluginDir.empty()) {
+		if (const auto pluginDir = GetCurrentModuleDirectory(); !pluginDir.empty()) {
 			addUnique(pluginDir / L"Streamline");
 		}
 

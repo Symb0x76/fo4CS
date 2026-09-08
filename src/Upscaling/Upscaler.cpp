@@ -9,9 +9,12 @@
 #include <vector>
 
 #include "Diagnostics/LogEvents.h"
+#include "Platform/ModulePaths.h"
 
 using fo4cs::diagnostics::Event;
 using fo4cs::diagnostics::LogEvent;
+using fo4cs::platform::GetCurrentModuleDirectory;
+using fo4cs::platform::GetModuleDirectory;
 
 namespace
 {
@@ -86,30 +89,6 @@ namespace
 		return false;
 	}
 
-	std::filesystem::path GetModuleDirectory(HMODULE module)
-	{
-		std::array<wchar_t, 4096> buffer{};
-		const auto length = GetModuleFileNameW(module, buffer.data(), static_cast<DWORD>(buffer.size()));
-		if (length == 0 || length >= buffer.size()) {
-			return {};
-		}
-
-		return std::filesystem::path(buffer.data(), buffer.data() + length).parent_path();
-	}
-
-	std::filesystem::path GetCurrentPluginDirectory()
-	{
-		HMODULE module = nullptr;
-		if (!GetModuleHandleExW(
-				GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-				reinterpret_cast<LPCWSTR>(&GetCurrentPluginDirectory),
-				&module)) {
-			return {};
-		}
-
-		return GetModuleDirectory(module);
-	}
-
 	bool HasStreamlineInterposer()
 	{
 		std::error_code ec;
@@ -117,7 +96,7 @@ namespace
 			return !directory.empty() && std::filesystem::exists(directory / L"sl.interposer.dll", ec);
 		};
 
-		if (exists(GetCurrentPluginDirectory() / L"Streamline")) {
+		if (exists(GetCurrentModuleDirectory() / L"Streamline")) {
 			return true;
 		}
 		ec.clear();

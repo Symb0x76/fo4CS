@@ -80,6 +80,7 @@ add_library(Fo4cs.Diagnostics INTERFACE
 )
 add_library(Fo4cs.Platform INTERFACE
     src/Platform/PluginCommon.h
+    src/Platform/ModulePaths.h
     src/Platform/RE/CameraData.h
     src/Platform/RE/SingletonAccessors.h
 )
@@ -128,6 +129,8 @@ fo4cs_add_object_library(Fo4cs.Upscaling
         src/Upscaling/FrameGenResources.cpp
         src/Upscaling/FrameGenCapture.cpp
         src/Upscaling/FrameGenComposite.cpp
+        src/Upscaling/FeaturePanels.cpp
+        src/Upscaling/FeaturePanels.h
         src/Upscaling/UpscalerRenderTargets.cpp
         src/Upscaling/UpscalerDepthBuffer.cpp
         src/Upscaling/UpscalerSamplerStates.cpp
@@ -135,7 +138,7 @@ fo4cs_add_object_library(Fo4cs.Upscaling
         src/Upscaling/UpscalerRenderBackendHooks.cpp
 )
 target_include_directories(Fo4cs.Upscaling BEFORE PUBLIC ${FO4CS_STREAMLINE_INCLUDE_DIR})
-target_link_libraries(Fo4cs.Upscaling PUBLIC Fo4cs.Platform)
+target_link_libraries(Fo4cs.Upscaling PUBLIC Fo4cs.Platform Fo4cs.ImGui)  # ImGui headers for FeaturePanels.cpp
 
 fo4cs_add_object_library(Fo4cs.ImGui NO_PCH
     SOURCES
