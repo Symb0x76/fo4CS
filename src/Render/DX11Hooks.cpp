@@ -8,6 +8,7 @@
 
 #include "Upscaling/Upscaler.h"
 #include "Render/DX12SwapChain.h"
+#include "Render/DX12SwapChainInternal.h"
 #include "Upscaling/FidelityFX.h"
 #include "Render/RuntimeAdapter.h"
 #include "Upscaling/Streamline.h"
@@ -355,6 +356,10 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 	if (ShouldCreateD3D12Proxy()) {
 		logger::debug("[FrameGen] Using D3D12 proxy");
 		
+		// Names the step that threw. The whole proxy bring-up shares one try block,
+		// so without this a failure here only reports an HRESULT and we cannot tell
+		// whether the device, the swap chain or the interop layer rejected it.
+		const char* stage = "begin";
 		try {
 			upscaling->d3d12Interop = true;
 			upscaling->refreshRate = Upscaling::GetRefreshRate(pSwapChainDesc->OutputWindow);
@@ -362,6 +367,7 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 			IDXGIFactory4* dxgiFactory = nullptr;
 			if (!pAdapter)
 				DX::ThrowIfFailed(E_POINTER);
+			stage = "dxgi-factory";
 			DX::ThrowIfFailed(pAdapter->GetParent(IID_PPV_ARGS(&dxgiFactory)));
 
 			const D3D_FEATURE_LEVEL featureLevel = D3D_FEATURE_LEVEL_11_1;
@@ -375,6 +381,7 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 				g_swapChainVTableHooked = true;
 			}
 			else {
+				stage = "d3d11-create-device";
 				DX::ThrowIfFailed(D3D11CreateDevice(
 					pAdapter,
 					DriverType,
@@ -401,11 +408,16 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 				(*ppDevice)->GetImmediateContext(&context);
 				proxy->SetD3D11DeviceContext(context);
 
+				stage = "create-d3d12-device";
 				proxy->CreateD3D12Device(adapter);
+				stage = "streamline-post-device";
 				Streamline::GetSingleton()->PostDevice(proxy->d3d12Device.get(), adapter);
+				stage = "create-swap-chain";
 				proxy->CreateSwapChain(dxgiFactory, *pSwapChainDesc);
+				stage = "create-interop";
 				proxy->CreateInterop();
 
+				stage = "on-d3d11-device-created";
 				upscaling->OnD3D11DeviceCreated(*ppDevice, adapter);
 				DX11Hooks::NotifyD3D11DeviceCreated(*ppDevice);
 
@@ -422,7 +434,13 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 
 			dxgiFactory->Release();
 		} catch (const std::exception& e) {
-			logger::error("[FrameGen] D3D12 proxy initialization failed: {}; falling back to D3D11", e.what());
+			// Drain before reporting: with the debug layer attached the validation
+			// message explaining the rejected argument is already queued, and it is
+			// the only thing that names which argument was wrong.
+			fo4cs::render::DrainD3D12InfoQueue("d3d12-proxy-init");
+			logger::error("[FrameGen] D3D12 proxy initialization failed at stage '{}': {}; falling back to D3D11",
+				stage,
+				e.what());
 			upscaling->d3d12Interop = false;
 			ReleaseAndNull(ppImmediateContext);
 			ReleaseAndNull(ppDevice);
