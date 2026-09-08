@@ -24,88 +24,141 @@ branches, use the same target names, directory and split as `codex/main-refactor
 so a later merge sees both sides moving a file to the same place instead of a
 one-sided rename.
 
-## Starting state (2026-09-08)
+## Status at 2026-09-08
 
-Single DLL by default: `if(COMMUNITY_SHADERS)` forces `AIO`, `FRAMEGEN`, `REFLEX`,
-`UPSCALER`, `OVERLAY` off, so `Core` + `CoreCS` link into `CommunityShaders.dll`.
+Phases A and B are complete and build-verified. Phase C is partially done.
 
-| File | Lines | Shared with `main`? |
-|------|-------|---------------------|
-| `src/Features/LightLimitFix.cpp` | 5081 | CS only |
-| `src/Core/BSShaderHooks.cpp` | 3508 | CS only |
-| `src/Core/ShaderCache.cpp` | 2013 | CS only |
-| `src/Upscaler.cpp` | 1668 | yes, +229/-86 vs main |
-| `src/UpscalerRenderBackend.cpp` | 1345 | yes, +98/-32 |
-| `src/DX12SwapChain.cpp` | 1212 | yes, +1073/-733 (largely rewritten) |
-| `src/Core/Deferred.cpp` | 1198 | CS only |
-| `src/Streamline.cpp` | 1111 | **identical** to main |
-| `src/Core/AdditivePasses.cpp` | 992 | CS only |
-| `src/Core/LLFPixelTracker.cpp` | 991 | CS only |
-| `src/Overlay/Overlay.cpp` | 658 | CS only (over 600 soft mark) |
+| File | Before | Now |
+|------|--------|-----|
+| `src/Features/LightLimitFix.cpp` | 5081 | **5081 — not started** |
+| `src/Core/BSShaderHooks.cpp` | 3508 | **3508 — not started** |
+| `src/Core/ShaderCache.cpp` | 2013 | 548 (+ 5 units under `src/Core/Shaders/`) |
+| `src/Upscaling/Upscaler.cpp` | 1668 | 407 (+ 8 units) |
+| `src/Upscaling/UpscalerRenderBackend.cpp` | 1345 | 663 (+ 5 units) |
+| `src/Render/DX12SwapChain.cpp` | 1212 | 323 (+ 4 units) |
+| `src/Core/Deferred.cpp` | 1198 | **1198 — not started** |
+| `src/Upscaling/Streamline.cpp` | 1111 | 467 (+ 5 units) |
+| `src/Core/AdditivePasses.cpp` | 992 | **992 — not started** |
+| `src/Core/LLFPixelTracker.cpp` | 991 | **991 — not started** |
+| `src/Overlay/Overlay.cpp` | 658 | 658 (soft mark only) |
 
-`src/Buffer.h` is also identical to main. The branch already has
-`fo4cs_apply_msvc_compile_options()` and `fo4cs_add_imgui_sources()` in
-`cmake/XSEPlugin.cmake` — part of the CMake dedupe `main` got later, so Phase A
-absorbs rather than replaces them.
+## Phase A — Infrastructure (ported from `codex/main-refactor`) — DONE
 
-## Phase A — Infrastructure (port from `codex/main-refactor`)
-
-1. [ ] `cmake/Fo4csTargets.cmake`: `fo4cs_configure_target(<target> [NO_PCH])`,
+1. [x] `cmake/Fo4csTargets.cmake` with `fo4cs_configure_target(<target> [NO_PCH])`,
        `fo4cs_add_object_library`, `fo4cs_configure_plugin_link`,
-       `fo4cs_link_runtime`. Absorb the existing `fo4cs_apply_msvc_compile_options`
-       and `fo4cs_add_imgui_sources`. Verify generated project files are unchanged.
-2. [ ] `Fo4cs.Runtime` INTERFACE target carries `FALLOUT_*`; drop the directory-wide
-       `add_compile_definitions` and the dead `FO4CS_BUILD_*` / `GamePath` /
-       `FO4CS_RUNTIME_FLAVOR` variables. Print a configure summary.
-3. [ ] Replace `Core` + `CoreCS` with focused OBJECT libraries:
-       `Fo4cs.Render`, `Fo4cs.Upscaling`, `Fo4cs.ImGui`, `Fo4cs.Overlay`
-       (same names as `main`), plus CS-only `Fo4cs.Shaders` (shader cache,
-       compiler, DB, hooks), `Fo4cs.Features` (feature framework + features),
-       `Fo4cs.Presentation`. Header-only `Fo4cs.Platform`, `Fo4cs.Diagnostics`.
-4. [ ] Directory moves (`git mv`) to match `main`: `src/Render/`, `src/Upscaling/`,
-       `src/Platform/` (+ `RE/`), `src/Plugins/`. `src/Core/`, `src/Features/`,
-       `src/Overlay/`, `src/Presentation/`, `src/Diagnostics/` stay.
-5. [ ] `Diagnostics/LogPaths.h`, `LogEvents.h` with `LogEvent()`, and the event
-       emission sites. This branch logs to one shared `CommunityShaders.log`, so
-       the validator's per-plugin assumption is replaced by a single-log mode.
-6. [ ] `tools/check-file-sizes.ps1`, `tools/collect-runtime-log.ps1`,
-       `tools/validate-runtime-log.ps1`.
+       `fo4cs_link_runtime`, `fo4cs_mark_third_party_sources`. It absorbed this
+       branch's `fo4cs_apply_msvc_compile_options`; `fo4cs_add_imgui_sources` stays
+       as a shim. Verified against a snapshot of the generated project files:
+       `Core` and `CoreCS` byte-identical, the plugin only gaining
+       `FO4CS_ENABLE_DEBUG_SETTINGS=1` in Debug/RelWithDebInfo (read only by
+       `Upscaler.cpp`) and `Core` the generated include dir.
+2. [x] `Fo4cs.Runtime` INTERFACE target carries the `FALLOUT_*` macros; the
+       directory-wide `add_compile_definitions` is gone, so CommonLibF4 no longer
+       compiles with them. Dead `FO4CS_BUILD_*`, `GamePath` and
+       `FO4CS_RUNTIME_FLAVOR` removed. Configure prints one summary line.
+3. [x] `Core` → `Fo4cs.Render` + `Fo4cs.Upscaling` + `Fo4cs.ImGui`;
+       `CoreCS` → `Fo4cs.Framework` + `Fo4cs.Shaders` + `Fo4cs.Passes` +
+       `Fo4cs.Features` + `Fo4cs.Overlay`. Header-only `Fo4cs.Platform` and
+       `Fo4cs.Diagnostics`.
+4. [x] Directory moves to match `main`: `src/Render/`, `src/Upscaling/`,
+       `src/Platform/` (+ `RE/`), `src/Plugins/`. 65 includes rewritten from an
+       explicit header table so CommonLibF4's `RE/Fallout.h` was untouched.
+5. [x] `Diagnostics/LogPaths.h` replaces the duplicated log-directory helper;
+       `HangTrace` moved to `fo4cs::diagnostics`; `LogEvents.h` gained `LogEvent()`
+       and BOOT / DEVICE_READY / HOOK_INSTALL / FEATURE_STATE / RESOURCE_CREATE /
+       ERROR are emitted.
+6. [x] `tools/check-file-sizes.ps1`, `tools/collect-runtime-log.ps1`,
+       `tools/validate-runtime-log.ps1`, retargeted at this branch's single log.
+7. [x] `/docs` un-ignored so this plan, the architecture doc and the validation
+       matrix are tracked, matching `main`. Revert that `.gitignore` line if the
+       exclusion was deliberate.
 
-## Phase B — Port the shared-file splits from `main`
+## Phase B — Shared-file splits ported from `main` — DONE
 
-Same target files and names as `docs/main-refactor-plan.md` §2a–2d.
+1. [x] `Streamline.cpp` — byte-identical to main's pre-split version, so the split
+       landed verbatim: `StreamlineInternal.{h,cpp}`, `StreamlineDLSS.cpp`,
+       `StreamlineReflex.cpp`, `StreamlineFrameGeneration.cpp`.
+       `Platform/ModulePaths.h` came along with it.
+2. [x] `Upscaler.cpp` — same cluster shape as main, line ranges derived here:
+       `UpscalingHooks`, `FramePacing`, `FrameGenResources`, `FrameGenCapture`,
+       `FrameGenComposite`, `UpscalingRenderTargetIDs.h`, `UpscalingShaderCompile`,
+       `UpscalingInternal`. This branch's `NormalizeRealFrameRateLimit` /
+       `FormatRealFrameRate` became shared internals because both the settings code
+       and the frame-limiter policy call them.
+3. [x] `UpscalerRenderBackend.cpp` — `UpscalerRenderTargets`, `UpscalerDepthBuffer`,
+       `UpscalerSamplerStates`, `UpscalerRenderBackendShaders`,
+       `UpscalerRenderBackendHooks`. No API deleted (unlike main: the render-target
+       and depth override entry points have callers in the feature layer here).
+4. [x] `DX12SwapChain.cpp` — main's clusters plus this branch's HDR pass:
+       `DX12SwapChainPresent`, `DX12SwapChainColorSpace`, `DXGISwapChainProxy`,
+       `WrappedResource`, `DX12SwapChainInternal.h`.
 
-1. [ ] `Streamline.cpp` — identical to main, port the split verbatim
-       (`StreamlineInternal.{h,cpp}`, `StreamlineDLSS.cpp`, `StreamlineReflex.cpp`,
-       `StreamlineFrameGeneration.cpp`).
-2. [ ] `Upscaler.cpp` — port, then re-check the CS-only deltas.
-3. [ ] `UpscalerRenderBackend.cpp` — port.
-4. [ ] `DX12SwapChain.cpp` — largely rewritten here; use main's cluster shape
-       (creation / Present / proxy / wrapped resource) but derive the line ranges
-       from this branch's file.
+## Phase C — Community Shaders hotspots — PARTIALLY DONE
 
-## Phase C — Community Shaders hotspots
+Per-file outlines produced 2026-09-08 are checked in under
+`docs/refactor-outlines/`. They carry exact function line ranges, cluster
+proposals, shared-state maps, `FALLOUT_*` region lists, raw game-address
+inventories and the "cannot move without changing behaviour" list for each file.
+**Read the matching outline before touching any of these files** — but re-verify
+the line numbers first, they drift and several were off by one.
 
-Driven by per-file outlines produced 2026-09-08. Targets ≤ ~600 lines.
-
-1. [ ] `src/Features/LightLimitFix.cpp` (5081) → `src/Features/LightLimit/`
-2. [ ] `src/Core/BSShaderHooks.cpp` (3508) → `src/Core/ShaderHooks/`
-3. [ ] `src/Core/ShaderCache.cpp` (2013) → `src/Core/Shaders/`
-4. [ ] `src/Core/Deferred.cpp` (1198)
-5. [ ] `src/Core/AdditivePasses.cpp` (992), `src/Core/LLFPixelTracker.cpp` (991)
-6. [ ] `src/Overlay/Overlay.cpp` (658, soft mark only)
+1. [x] `src/Core/ShaderCache.cpp` (2013 → 548) → `src/Core/Shaders/`
+       - `ShaderObservation.cpp`, `ShaderMetadata.cpp`, `ShaderCacheLog.cpp` —
+         leaf clusters, no linkage change.
+       - `ShaderSwitches.cpp`, `ShaderDescriptorGates.cpp` +
+         `ShaderCacheInternal.h` — the one deliberate linkage change in the whole
+         refactor: an anonymous namespace became
+         `CommunityShaders::shadercache`. Every predicate keeps exactly one
+         definition because several own a one-shot cache that logs on first call.
+2. [ ] `src/Core/BSShaderHooks.cpp` (3508) → `src/Core/ShaderHooks/`.
+       Outline: `docs/refactor-outlines/outline-BSShaderHooks.md`
+       (134 definitions, 12 clusters).
+3. [ ] `src/Core/Deferred.cpp` (1198). Outline: the second half of
+       `outline-ShaderCache-Deferred.md`. Note the clusters interleave (the draw-hook
+       cluster is four non-contiguous ranges), `LightingDrawState` has to reach the
+       trace cluster through a header, and `ClearShaderCache` locks
+       `lightingShaderLock` and `blendStateLock` together.
+4. [ ] `src/Features/LightLimitFix.cpp` (5081) → `src/Features/LightLimit/`.
+       Outline: `outline-LightLimitFix.md` (153 functions, 14 clusters).
+       **Highest risk in the repository** and deliberately left last:
+       - roughly 100 function-local statics, many of them one-shot log latches
+         whose duplication would change logging behaviour;
+       - two enormous `#if defined(FALLOUT_PRE_NG)` regions (about 262–1822 and
+         3919–4665) so every extracted chunk needs its own guard;
+       - `s_preNGDFLightCameraCB` is a COM pointer shared between the capture hook
+         and the compute dispatch and must stay one object;
+       - the member definitions at about 3274–3653 and 3723–3918 are PreNG-named but
+         compiled unconditionally today — wrapping them in a guard *is* a behaviour
+         change for the PostNG build;
+       - this is the feature under active performance debugging, so it wants a
+         log-based before/after baseline first.
+5. [ ] `src/Core/AdditivePasses.cpp` (992), `src/Core/LLFPixelTracker.cpp` (991) —
+       no outline produced yet.
+6. [ ] `src/Overlay/Overlay.cpp` (658) — soft mark only.
 
 ## Phase D — Documentation
 
-- [ ] `docs/architecture.md` for this branch: the extra Core/Feature/Shader layers
-      on top of main's, feature lifecycle, shader replacement pipeline.
-- [ ] `docs/validation-matrix.md`: CS scenarios (light-heavy interior/exterior for
-      LightLimitFix, shader cache cold/warm, feature toggles).
-- [ ] `.claude/docs/current-state.md` refreshed.
+- [x] `docs/architecture.md` — targets, dependency direction (two cycles recorded
+      as debt), the feature framework and shader replacement pipeline, hook
+      ownership, lifecycle with events, threads, variants, log contract.
+- [x] `docs/validation-matrix.md` — automated checks plus the manual in-game matrix
+      including the light-heavy scenarios that matter for LightLimitFix.
+- [x] `docs/refactor-outlines/` — the three per-file analyses.
+- [x] `.claude/docs/current-state.md` refreshed (in the main checkout, gitignored).
 
 ## Deferred findings
 
-(To be filled as the splits surface them; not fixed during move-only phases.)
+Not fixed, by design — these are pre-existing and the move-only phases preserved
+them verbatim.
+
+- `ShaderCache`: `dumpAllShaders` / `tracePipeline` are plain `bool`s written from
+  config and read from the render thread without synchronisation.
+- `Deferred`: `gBufferResourcesReady` / `gBufferDescriptions` are written in
+  `SetupResources` and read from the draw-hook path without atomics.
+- `LightLimitFix`: `GetCurrentLightsSRV` has an infinite self-recursion in its
+  non-PreNG branch; two plain (non-atomic) frame-change statics are a genuine race
+  if that function is ever called from two threads.
+- `Render`/`Upscaling` and `Framework`/`Features` include cycles.
 
 ## Verification commands
 
