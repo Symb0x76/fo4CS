@@ -1,5 +1,9 @@
 #include "Upscaling/UpscalingInternal.h"
 
+#include "Upscaling/Upscaler.h"
+
+#include "Diagnostics/HangTrace.h"
+
 namespace fo4cs::upscaling
 {
 	uint64_t NextHUDLessFrameID()
@@ -14,5 +18,23 @@ namespace fo4cs::upscaling
 			return ui->GetMenuOpen("LoadingMenu");
 		}
 		return false;
+	}
+
+	void TraceRenderBackendStage(std::string_view stage)
+	{
+		fo4cs::Diagnostics::WriteHangTraceLine(stage);
+
+		auto upscaling = Upscaling::GetSingleton();
+		if (!upscaling->debugTraceCurrentPresent) {
+			return;
+		}
+
+		static std::string previousStage;
+		if (previousStage == stage) {
+			return;
+		}
+
+		previousStage = stage;
+		logger::debug("[Upscaler] Render backend stage: {}", stage);
 	}
 }

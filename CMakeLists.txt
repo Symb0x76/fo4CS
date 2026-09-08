@@ -118,6 +118,11 @@ fo4cs_add_object_library(Fo4cs.Upscaling
         src/Upscaling/FrameGenResources.cpp
         src/Upscaling/FrameGenCapture.cpp
         src/Upscaling/FrameGenComposite.cpp
+        src/Upscaling/UpscalerRenderTargets.cpp
+        src/Upscaling/UpscalerDepthBuffer.cpp
+        src/Upscaling/UpscalerSamplerStates.cpp
+        src/Upscaling/UpscalerRenderBackendShaders.cpp
+        src/Upscaling/UpscalerRenderBackendHooks.cpp
 )
 target_include_directories(Fo4cs.Upscaling BEFORE PUBLIC ${FO4CS_STREAMLINE_INCLUDE_DIR})
 target_link_libraries(Fo4cs.Upscaling PUBLIC Fo4cs.Platform)
