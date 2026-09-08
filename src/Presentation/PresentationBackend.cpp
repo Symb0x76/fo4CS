@@ -21,22 +21,22 @@ void D3D11PresentationBackend::Present(IDXGISwapChain *a_swapChain,
                                        ID3D11Device *a_device) {
   AdvanceFeatureCore();
   if (!a_swapChain || !a_device) {
-    fo4cs::Diagnostics::WriteHangTraceLine(
+    fo4cs::diagnostics::WriteHangTraceLine(
         "Present:D3D11:exit:no-swapchain-or-device");
     return;
   }
 
   ID3D11DeviceContext *context = nullptr;
-  fo4cs::Diagnostics::WriteHangTraceLine("D3D11:GetImmediateContext:begin");
+  fo4cs::diagnostics::WriteHangTraceLine("D3D11:GetImmediateContext:begin");
   a_device->GetImmediateContext(&context);
-  fo4cs::Diagnostics::WriteHangTraceLine("D3D11:GetImmediateContext:end");
+  fo4cs::diagnostics::WriteHangTraceLine("D3D11:GetImmediateContext:end");
   if (!context) {
     return;
   }
 
-  fo4cs::Diagnostics::WriteHangTraceLine("Menu:RenderD3D11:begin");
+  fo4cs::diagnostics::WriteHangTraceLine("Menu:RenderD3D11:begin");
   Menu::Render(a_device, context, a_swapChain);
-  fo4cs::Diagnostics::WriteHangTraceLine("Menu:RenderD3D11:end");
+  fo4cs::diagnostics::WriteHangTraceLine("Menu:RenderD3D11:end");
   context->Release();
 }
 
@@ -50,29 +50,29 @@ Coordinator &Coordinator::Get() noexcept {
 }
 
 void Coordinator::OnD3D11DeviceCreated(ID3D11Device *a_device) {
-  fo4cs::Diagnostics::WriteHangTraceLine("D3D11DeviceCreated:enter");
+  fo4cs::diagnostics::WriteHangTraceLine("D3D11DeviceCreated:enter");
   if (!a_device) {
-    fo4cs::Diagnostics::WriteHangTraceLine("D3D11DeviceCreated:skip");
+    fo4cs::diagnostics::WriteHangTraceLine("D3D11DeviceCreated:skip");
     return;
   }
 
   ID3D11Device *expected = nullptr;
   if (!device.compare_exchange_strong(expected, a_device,
                                       std::memory_order_acq_rel)) {
-    fo4cs::Diagnostics::WriteHangTraceLine("D3D11DeviceCreated:skip");
+    fo4cs::diagnostics::WriteHangTraceLine("D3D11DeviceCreated:skip");
     return;
   }
 
-  fo4cs::Diagnostics::WriteHangTraceLine("Runtime:OnD3D11DeviceCreated:begin");
+  fo4cs::diagnostics::WriteHangTraceLine("Runtime:OnD3D11DeviceCreated:begin");
   Runtime::GetSingleton()->OnD3D11DeviceCreated(a_device);
   deviceReady.store(true, std::memory_order_release);
-  fo4cs::Diagnostics::WriteHangTraceLine("Runtime:OnD3D11DeviceCreated:end");
+  fo4cs::diagnostics::WriteHangTraceLine("Runtime:OnD3D11DeviceCreated:end");
 }
 
 void Coordinator::OnD3D11Present(IDXGISwapChain *a_swapChain) {
-  fo4cs::Diagnostics::WriteHangTraceLine("Present:enter");
+  fo4cs::diagnostics::WriteHangTraceLine("Present:enter");
   if (GetActiveBackendKind() == BackendKind::kD3D12Proxy) {
-    fo4cs::Diagnostics::WriteHangTraceLine("Present:skip-d3d11-dx12-proxy");
+    fo4cs::diagnostics::WriteHangTraceLine("Present:skip-d3d11-dx12-proxy");
     return;
   }
 
@@ -80,13 +80,13 @@ void Coordinator::OnD3D11Present(IDXGISwapChain *a_swapChain) {
                             ? device.load(std::memory_order_acquire)
                             : nullptr;
   d3d11.Present(a_swapChain, currentDevice);
-  fo4cs::Diagnostics::WriteHangTraceLine("Present:exit");
+  fo4cs::diagnostics::WriteHangTraceLine("Present:exit");
 }
 
 void Coordinator::OnD3D12ProxyFrame() {
-  fo4cs::Diagnostics::WriteHangTraceLine("DX12ProxyFrame:enter");
+  fo4cs::diagnostics::WriteHangTraceLine("DX12ProxyFrame:enter");
   d3d12.Present(nullptr, device.load(std::memory_order_acquire));
-  fo4cs::Diagnostics::WriteHangTraceLine("DX12ProxyFrame:exit");
+  fo4cs::diagnostics::WriteHangTraceLine("DX12ProxyFrame:exit");
 }
 
 bool Coordinator::TryRecoverExistingRenderer() {

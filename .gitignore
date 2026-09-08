@@ -35,5 +35,6 @@
 mempalace.yaml
 entities.json
 
-# Documentation
-/docs
+
+# Local snapshot written by tools/collect-runtime-log.ps1
+/tools/.runtime-log-snapshot.json

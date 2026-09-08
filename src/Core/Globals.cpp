@@ -1,5 +1,7 @@
 #include "Core/Globals.h"
 
+#include "Diagnostics/LogEvents.h"
+
 #include "Features/LightLimitFix.h"
 #include "Features/ExtendedMaterials.h"
 #include "Features/ShaderDump.h"
@@ -37,18 +39,33 @@ namespace CommunityShaders
 
 	void LoadFeatures()
 	{
+		using fo4cs::diagnostics::Event;
+		using fo4cs::diagnostics::LogEvent;
+
+		std::string loadedNames;
+		std::size_t failed = 0;
+
 		for (auto* feature : GetFeatureList()) {
 			try {
 				feature->LoadSettings();
 				feature->Load();
 				feature->loaded = true;
 				logger::info("[CommunityShaders] Loaded feature {}", feature->GetName());
+				if (!loadedNames.empty()) {
+					loadedNames += ',';
+				}
+				loadedNames += feature->GetShortName();
 			} catch (const std::exception& e) {
 				feature->loaded = false;
 				feature->failedLoadedMessage = e.what();
-				logger::error("[CommunityShaders] Failed to load feature {}: {}", feature->GetName(), e.what());
+				++failed;
+				LogEvent(Event::Error, "[CommunityShaders] Failed to load feature {}: {}", feature->GetName(), e.what());
 			}
 		}
+
+		LogEvent(Event::FeatureState, "[CommunityShaders] features loaded=[{}] failed={}",
+			loadedNames.empty() ? std::string("none") : loadedNames,
+			failed);
 	}
 
 	void DataLoaded()

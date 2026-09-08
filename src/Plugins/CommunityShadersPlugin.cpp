@@ -69,7 +69,7 @@ extern "C" DLLEXPORT bool F4SEAPI F4SEPlugin_Load(const F4SE::LoadInterface* a_f
 #endif
 	fo4cs::WaitForDebuggerIfNeeded();
 	fo4cs::InitializeLog();
-	fo4cs::Diagnostics::ResetHangTrace();
+	fo4cs::diagnostics::ResetHangTrace();
 
 	logger::info("[CommunityShaders] Initializing unified Feature framework...");
 

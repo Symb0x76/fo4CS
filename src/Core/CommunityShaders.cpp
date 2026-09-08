@@ -8,9 +8,13 @@
 #include "Core/ShaderCompiler.h"
 #include "Core/ShaderDB.h"
 #include "Core/State.h"
+#include "Diagnostics/LogEvents.h"
 #include "Render/RuntimeAdapter.h"
 
 #include <memory>
+
+using fo4cs::diagnostics::Event;
+using fo4cs::diagnostics::LogEvent;
 
 namespace CommunityShaders
 {
@@ -47,8 +51,8 @@ namespace CommunityShaders
 		LoadFeatures();
 
 		loaded = true;
-		logger::info("[CommunityShaders] Foundation loaded for {}",
-		             State::GetSingleton()->GetRuntimeName());
+		LogEvent(Event::HookInstall, "[CommunityShaders] Foundation loaded for {}",
+			State::GetSingleton()->GetRuntimeName());
 	}
 
 	void Runtime::PostPostLoad()
@@ -59,9 +63,11 @@ namespace CommunityShaders
 	void Runtime::OnD3D11DeviceCreated(ID3D11Device* a_device)
 	{
 		d3d11Device = a_device;
+		LogEvent(Event::DeviceReady, "[CommunityShaders] D3D11 device created");
 		Hooks::OnD3D11DeviceCreated(a_device);
 		Deferred::GetSingleton()->SetupResources();
 		SetupResources();
+		LogEvent(Event::ResourceCreate, "[CommunityShaders] Deferred and feature resources set up");
 	}
 
 	void Runtime::OnFrame()

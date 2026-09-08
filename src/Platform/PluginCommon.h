@@ -1,6 +1,8 @@
 #pragma once
 
 #include "Plugin.h"
+#include "Diagnostics/LogEvents.h"
+#include "Diagnostics/LogPaths.h"
 
 #include <ShlObj_core.h>
 #include <filesystem>
@@ -10,26 +12,6 @@
 
 namespace fo4cs
 {
-	inline std::optional<std::filesystem::path> GetLogDirectory()
-	{
-		PWSTR documentsPath = nullptr;
-		if (FAILED(SHGetKnownFolderPath(FOLDERID_Documents, KF_FLAG_DEFAULT, nullptr, &documentsPath))) {
-			return std::nullopt;
-		}
-
-		std::filesystem::path path{ documentsPath };
-		CoTaskMemFree(documentsPath);
-
-		path /= "My Games/Fallout4/F4SE";
-		std::error_code ec;
-		std::filesystem::create_directories(path, ec);
-		if (ec) {
-			return std::nullopt;
-		}
-
-		return path;
-	}
-
 	inline std::optional<std::filesystem::path> GetCurrentModulePath()
 	{
 		HMODULE module = nullptr;
@@ -80,7 +62,7 @@ namespace fo4cs
 
 	inline void InitializeLog()
 	{
-		auto path = GetLogDirectory();
+		auto path = diagnostics::GetF4SELogDirectory();
 		if (!path) {
 			stl::report_and_fail("Failed to find standard logging directory"sv);
 		}
@@ -110,7 +92,7 @@ namespace fo4cs
 
 		spdlog::set_default_logger(log);
 		spdlog::set_pattern("%v"s);
-		logger::info("[Logger] Initialized file sink at {}", path->string());
+		diagnostics::LogEvent(diagnostics::Event::Boot, "path={}", path->string());
 		LogLoadedModuleIdentity();
 	}
 
