@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Plugin.h"
+#include "Diagnostics/LogEvents.h"
 
 #include <ShlObj_core.h>
 
@@ -58,7 +59,7 @@ namespace fo4cs
 
 		spdlog::set_default_logger(log);
 		spdlog::set_pattern("%v"s);
-		logger::info("[Logger] Initialized file sink at {}", path->string());
+		logger::info("event={} path={}", diagnostics::Code(diagnostics::Event::Boot), path->string());
 	}
 
 #if defined(FALLOUT_POST_NG)
