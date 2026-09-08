@@ -60,17 +60,22 @@ Baseline facts:
        `FO4CS_ENABLE_DEBUG_SETTINGS=1` now also set in Debug/RelWithDebInfo (read only
        by `Upscaler.cpp`) and `src/` moving ahead of the generated `Plugin.h` dir
        (same set, no colliding header names).
-2. [ ] Split `Core` (OBJECT) into OBJECT libraries, still all under `src/`:
-       - `Fo4cs.ImGui` — `extern/imgui/*.cpp` core, `SKIP_PRECOMPILE_HEADERS`, `/W0`.
+2. [x] Split `Core` (OBJECT) into OBJECT libraries via
+       `fo4cs_add_object_library()`; all plugins now call `fo4cs_link_runtime()`
+       and `Core` is gone (single commit — every consumer lives in this file):
        - `Fo4cs.Render` — `DX11Hooks.*`, `DX12SwapChain.*`, `Buffer.h`.
        - `Fo4cs.Upscaling` — `Upscaler.*`, `UpscalerRenderBackend.cpp`,
          `Streamline.*`, `FidelityFX.*`.
-       - `Fo4cs.Platform` (INTERFACE) — `PluginCommon.h`, `RE/*.h`, `include/PCH.h`.
-       - `Fo4cs.Diagnostics` (INTERFACE) — `Diagnostics/*.h`.
-       Keep `Core` as an INTERFACE aggregate for one commit, then switch every plugin
-       to `fo4cs_link_runtime()` and delete `Core`.
+       - `Fo4cs.ImGui` (NO_PCH) — `extern/imgui/*.cpp` core; PUBLIC ImGui include dirs.
+       - `Fo4cs.Overlay` — `Overlay.cpp` + ImGui D3D12/Win32 backends, compiled once
+         and absorbed by both `NuclearGFX` and `Overlay` (it defines its own export
+         macro and includes no per-plugin header).
+       `Fo4cs.Platform` / `Fo4cs.Diagnostics` INTERFACE targets are deferred to step
+       3 together with the directory moves.
        OBJECT libraries are kept (not STATIC) so link semantics match today's
-       `$<TARGET_OBJECTS>` behavior exactly; no dead-stripping surprises.
+       behavior exactly; no dead-stripping surprises. vcxproj check: new libraries
+       carry Core's flags verbatim (own PCH path), plugins lose only the per-file
+       `NotUsing` entries of the moved ImGui backends, include sets unchanged.
 3. [ ] Directory moves with `git mv`: `src/Render/`, `src/Upscaling/`,
        `src/Platform/`, `src/Diagnostics/`, `src/Plugins/` (the five `*Plugin.cpp`
        entry points). Update includes. `src/` stays the single PRIVATE include root.

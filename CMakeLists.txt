@@ -53,45 +53,52 @@ set(FO4CS_COMMON_DEPENDENCIES
 set(FO4CS_GENERATED_INCLUDE_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
 
 # ------------------------------------------------------------------
+# Runtime OBJECT libraries. Every plugin DLL absorbs the objects of the
+# libraries in FO4CS_RUNTIME_TARGETS via fo4cs_link_runtime(); the overlay
+# hosts additionally absorb Fo4cs.Overlay.
+#
+# Fo4cs.Render     D3D11 hooks, companion D3D12 device/swap chain, D3D11on12 interop
+# Fo4cs.Upscaling  Upscaler orchestration, render backend, Streamline, FidelityFX
+# Fo4cs.ImGui      ImGui core — feature DLLs call ImGui in their panel callbacks
+# Fo4cs.Overlay    Overlay host (ImGui D3D12/Win32 backends + panel registry)
 # ------------------------------------------------------------------
-# Core: D3D12 upscaling interop 共享 OBJECT 库
-#   - Upscaler / FrameGen / Reflex / NuclearGFX 共享
-#   - 插件目标通过 $<TARGET_OBJECTS:Core> 引入编译产物
-# ------------------------------------------------------------------
-add_library(Core OBJECT
-    src/Buffer.h
-    src/DX11Hooks.cpp
-    src/DX11Hooks.h
-    src/DX12SwapChain.cpp
-    src/DX12SwapChain.h
-    src/FidelityFX.cpp
-    src/FidelityFX.h
-    src/Streamline.cpp
-    src/Streamline.h
-    src/Upscaler.cpp
-    src/Upscaler.h
-    src/UpscalerRenderBackend.cpp
-)
 
 # Third-party include roots must precede include/ because both extern/Streamline
 # and include/ ship an sl.h; the extern copy is the one the build has always used.
-target_include_directories(Core
-    PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/extern/Streamline/include
+set(FO4CS_STREAMLINE_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/extern/Streamline/include)
+
+fo4cs_add_object_library(Fo4cs.Render
+    SOURCES
+        src/Buffer.h
+        src/DX11Hooks.cpp
+        src/DX11Hooks.h
+        src/DX12SwapChain.cpp
+        src/DX12SwapChain.h
+)
+target_include_directories(Fo4cs.Render BEFORE PUBLIC ${FO4CS_STREAMLINE_INCLUDE_DIR})
+
+fo4cs_add_object_library(Fo4cs.Upscaling
+    SOURCES
+        src/FidelityFX.cpp
+        src/FidelityFX.h
+        src/Streamline.cpp
+        src/Streamline.h
+        src/Upscaler.cpp
+        src/Upscaler.h
+        src/UpscalerRenderBackend.cpp
+)
+target_include_directories(Fo4cs.Upscaling BEFORE PUBLIC ${FO4CS_STREAMLINE_INCLUDE_DIR})
+
+fo4cs_add_object_library(Fo4cs.ImGui NO_PCH
+    SOURCES
+        extern/imgui/imgui.cpp
+        extern/imgui/imgui_draw.cpp
+        extern/imgui/imgui_tables.cpp
+        extern/imgui/imgui_widgets.cpp
+)
+target_include_directories(Fo4cs.ImGui PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/extern/imgui
     ${CMAKE_CURRENT_SOURCE_DIR}/extern/imgui/backends
-)
-fo4cs_configure_target(Core)
-target_link_libraries(Core PUBLIC ${FO4CS_COMMON_DEPENDENCIES})
-
-# ImGui core sources in Core — shared by all consumers for panel rendering.
-# Feature DLLs call ImGui functions in their registered panel callbacks.
-# Overlay.dll owns the D3D12 backend + context.
-target_sources(Core PRIVATE
-    extern/imgui/imgui.cpp
-    extern/imgui/imgui_draw.cpp
-    extern/imgui/imgui_tables.cpp
-    extern/imgui/imgui_widgets.cpp
 )
 fo4cs_mark_third_party_sources(
     extern/imgui/imgui.cpp
@@ -100,12 +107,21 @@ fo4cs_mark_third_party_sources(
     extern/imgui/imgui_widgets.cpp
 )
 
-# D3D12/Win32 ImGui backends are compiled into each overlay host DLL.
-set(FO4CS_IMGUI_BACKEND_SOURCES
+fo4cs_add_object_library(Fo4cs.Overlay
+    SOURCES
+        src/Overlay/Overlay.cpp
+        src/Overlay/Overlay.h
+        src/Overlay/OverlayWndProc.h
+        extern/imgui/backends/imgui_impl_dx12.cpp
+        extern/imgui/backends/imgui_impl_win32.cpp
+)
+target_link_libraries(Fo4cs.Overlay PUBLIC Fo4cs.ImGui)
+fo4cs_mark_third_party_sources(
     extern/imgui/backends/imgui_impl_dx12.cpp
     extern/imgui/backends/imgui_impl_win32.cpp
 )
-fo4cs_mark_third_party_sources(${FO4CS_IMGUI_BACKEND_SOURCES})
+
+set(FO4CS_RUNTIME_TARGETS Fo4cs.Render Fo4cs.Upscaling Fo4cs.ImGui)
 
 if(BUILD_PRE_NG)
     set(FO4CS_RUNTIME_FLAVOR "PreNG")
@@ -132,7 +148,7 @@ if(FRAMEGEN)
         src/FrameGenPlugin.cpp
     )
     target_compile_definitions(FrameGen PRIVATE FRAMEGEN=1)
-    target_link_libraries(FrameGen PRIVATE Core)
+    fo4cs_link_runtime(FrameGen)
 endif()
 
 if(REFLEX)
@@ -141,7 +157,7 @@ if(REFLEX)
         src/ReflexPlugin.cpp
     )
     target_compile_definitions(Reflex PRIVATE REFLEX=1)
-    target_link_libraries(Reflex PRIVATE Core)
+    fo4cs_link_runtime(Reflex)
 endif()
 
 if(UPSCALER)
@@ -153,38 +169,26 @@ if(UPSCALER)
         UPSCALER=1
         UPSCALER_LDR=1
     )
-    target_link_libraries(Upscaler PRIVATE Core)
+    fo4cs_link_runtime(Upscaler)
 endif()
 
 if(AIO)
     fo4cs_create_plugin(NuclearGFX NuclearGFX "NuclearGFX" ${FO4CS_COMMON_DEPENDENCIES})
     target_sources(NuclearGFX PRIVATE
         src/AIOPlugin.cpp
-        src/Overlay/Overlay.cpp
-        ${FO4CS_IMGUI_BACKEND_SOURCES}
-    )
-    target_include_directories(NuclearGFX PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/extern/imgui
-        ${CMAKE_CURRENT_SOURCE_DIR}/extern/imgui/backends
     )
     set_target_properties(NuclearGFX PROPERTIES OUTPUT_NAME "NuclearGFX")
-    target_link_libraries(NuclearGFX PRIVATE Core)
+    fo4cs_link_runtime(NuclearGFX)
+    target_link_libraries(NuclearGFX PRIVATE Fo4cs.Overlay)
 endif()
 
 if(OVERLAY)
     fo4cs_create_plugin(Overlay Overlay "Overlay" ${FO4CS_COMMON_DEPENDENCIES})
     target_sources(Overlay PRIVATE
         src/OverlayPlugin.cpp
-        src/Overlay/Overlay.cpp
-        src/Overlay/Overlay.h
-        src/Overlay/OverlayWndProc.h
     )
-    target_include_directories(Overlay PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/extern/imgui
-        ${CMAKE_CURRENT_SOURCE_DIR}/extern/imgui/backends
-    )
-    target_link_libraries(Overlay PRIVATE Core)
-
-    # D3D12/Win32 ImGui backends - Overlay renders through DX12SwapChain.
-    target_sources(Overlay PRIVATE ${FO4CS_IMGUI_BACKEND_SOURCES})
+    # Overlay renders through DX12SwapChain (Fo4cs.Render) and hosts the ImGui
+    # D3D12/Win32 backends (Fo4cs.Overlay).
+    fo4cs_link_runtime(Overlay)
+    target_link_libraries(Overlay PRIVATE Fo4cs.Overlay)
 endif()
