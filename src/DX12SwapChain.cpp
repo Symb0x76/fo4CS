@@ -705,7 +705,37 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
 
         if (useFSRFrameGeneration)
         {
-            fidelityFX->Present(useFrameGenerationThisFrame);
+            // #27: Only drive the FSR frame generation SDK on state transitions
+            // while generation is blocked. Calling Present(false) every blocked
+            // frame (e.g. LoadingMenu) made the SDK toggle
+            // frameGenerationEnabled each present, which kills/spawns the
+            // presenter thread while async workloads are in flight and crashed
+            // inside amd_fidelityfx_dx12.dll. One clean disable on the
+            // active->blocked transition is enough; the resume frame goes back
+            // through the normal enabled path, where the SDK resets its
+            // interpolation state.
+            static bool lastFSRFgActive = false;
+            static bool hasLastFSRFgActive = false;
+            if (useFrameGenerationThisFrame)
+            {
+                if (hasLastFSRFgActive && !lastFSRFgActive)
+                {
+                    logger::debug("[FrameGen] FSR frame generation resuming after block");
+                }
+                fidelityFX->Present(true);
+                lastFSRFgActive = true;
+                hasLastFSRFgActive = true;
+            }
+            else if (!hasLastFSRFgActive || lastFSRFgActive)
+            {
+                if (hasLastFSRFgActive && lastFSRFgActive)
+                {
+                    logger::debug("[FrameGen] FSR frame generation pausing (one-shot disable)");
+                }
+                fidelityFX->Present(false);
+                lastFSRFgActive = false;
+                hasLastFSRFgActive = true;
+            }
         }
 
         // Fallback hotkey polling. Works even if WndProc hook is displaced

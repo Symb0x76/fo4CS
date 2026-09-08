@@ -393,7 +393,10 @@ void FidelityFX::Present(bool a_useFrameGen)
 			dispatchParameters.jitterOffset.x = -jitter.x;
 			dispatchParameters.jitterOffset.y = -jitter.y;
 
-			dispatchParameters.frameTimeDelta = deltaTime * 1000.f;
+			// #27: After a pause (e.g. LoadingMenu) the QPC delta spans the whole
+			// blocked period; the SDK's optical flow expects a per-frame delta.
+			// Clamp the resume-frame step so interpolation is not fed a huge jump.
+			dispatchParameters.frameTimeDelta = std::min(deltaTime * 1000.f, 250.0f);
 			dispatchParameters.cameraNear = fo4cs::RE::GetCameraNear();
 			dispatchParameters.cameraFar = fo4cs::RE::GetCameraFar();
 			dispatchParameters.cameraFovAngleVertical = 1.0f;
