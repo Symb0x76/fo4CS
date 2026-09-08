@@ -225,6 +225,9 @@ if(COMMUNITY_SHADERS)
         src/Core/HooksInternal.h
         src/Core/ShaderCache.cpp
         src/Core/ShaderCache.h
+        src/Core/Shaders/ShaderCacheLog.cpp
+        src/Core/Shaders/ShaderObservation.cpp
+        src/Core/Shaders/ShaderMetadata.cpp
         src/Core/ShaderCompiler.cpp
         src/Core/ShaderCompiler.h
         src/Core/ShaderDB.cpp
