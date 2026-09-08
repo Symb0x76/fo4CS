@@ -29,13 +29,12 @@ section. Update the checkboxes as steps land; each step is one commit.
       clang-tidy commit dropped.
 - [x] Initialize submodules `CommonLibF4PreNG`, `Streamline`, `FidelityFX-SDK`, `imgui`.
 - [x] Revert Codex's accidental trailing-newline strip in `CMakeLists.txt`.
-- [ ] `cmake --preset PreNG` + `cmake --build build/PreNG --config Release`
-      succeeds; record wall time and warning count as the baseline.
-- [ ] Snapshot `build/PreNG/*.vcxproj` `<ClCompile>` sections to
-      `docs/baseline/` (gitignored? no: keep a checksum list only) so Phase 1 can
-      prove compile flags are unchanged.
-- [ ] Decide fate of Codex WIP (`src/Diagnostics/LogEvents.h`, Boot event in
-      `PluginCommon.h`): keep, fold into Phase 3 step 1.
+- [x] `cmake --preset PreNG` (17 s) + `cmake --build build/PreNG --config Release`
+      (27 s clean, 0 warnings, `NuclearGFX.dll` + `Overlay.dll`) — 2026-09-08.
+- [x] Snapshot of `build/PreNG/*.vcxproj` compile settings taken (session
+      scratchpad) so Phase 1 can prove compile flags are unchanged.
+- [x] Codex WIP (`src/Diagnostics/LogEvents.h`, BOOT event in `PluginCommon.h`)
+      committed as the seed of Phase 3 step 1.
 
 Baseline facts:
 
@@ -50,11 +49,17 @@ Baseline facts:
 
 ## Phase 1 — CMake module boundaries (DLL outputs unchanged)
 
-1. [ ] Add `cmake/Fo4csTargets.cmake` with
+1. [x] Add `cmake/Fo4csTargets.cmake` with
        `fo4cs_configure_target(<target>)` (cxx_std_23, `_WINDOWS`, `_AMD64_`,
-       `_UNICODE`, debug defs, MSVC `/Zc:*` options, release opts, PCH) and
-       `fo4cs_link_runtime(<target>)`. Rewrite `fo4cs_apply_plugin_defaults` and the
-       `Core` block to call it. Verify: vcxproj `<ClCompile>` sections identical.
+       `_UNICODE`, debug defs, MSVC `/Zc:*` options, release opts, PCH),
+       `fo4cs_configure_plugin_link`, `fo4cs_mark_third_party_sources` and
+       `fo4cs_link_runtime(<target>)`. Rewrote `fo4cs_apply_plugin_defaults` and the
+       `Core` block to call it. Verified against the baseline vcxproj snapshot:
+       `Core` byte-identical (include order preserved: `extern/Streamline/include`
+       before `include/`, both ship `sl.h`); plugins differ only by
+       `FO4CS_ENABLE_DEBUG_SETTINGS=1` now also set in Debug/RelWithDebInfo (read only
+       by `Upscaler.cpp`) and `src/` moving ahead of the generated `Plugin.h` dir
+       (same set, no colliding header names).
 2. [ ] Split `Core` (OBJECT) into OBJECT libraries, still all under `src/`:
        - `Fo4cs.ImGui` — `extern/imgui/*.cpp` core, `SKIP_PRECOMPILE_HEADERS`, `/W0`.
        - `Fo4cs.Render` — `DX11Hooks.*`, `DX12SwapChain.*`, `Buffer.h`.

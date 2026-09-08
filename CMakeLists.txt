@@ -8,6 +8,7 @@ project(
 
 list(APPEND CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake")
 include(XSEPlugin)
+include(Fo4csTargets)
 
 find_package(directxtk CONFIG REQUIRED)
 find_package(directxtex CONFIG REQUIRED)
@@ -72,46 +73,15 @@ add_library(Core OBJECT
     src/UpscalerRenderBackend.cpp
 )
 
-target_compile_features(Core PRIVATE cxx_std_23)
-
+# Third-party include roots must precede include/ because both extern/Streamline
+# and include/ ship an sl.h; the extern copy is the one the build has always used.
 target_include_directories(Core
     PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/extern/Streamline/include
     ${CMAKE_CURRENT_SOURCE_DIR}/extern/imgui
     ${CMAKE_CURRENT_SOURCE_DIR}/extern/imgui/backends
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-    PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
-
-if(WIN32)
-    target_compile_definitions(Core PRIVATE _WINDOWS)
-endif()
-target_compile_definitions(Core PRIVATE
-    _AMD64_
-    "$<$<OR:$<CONFIG:Debug>,$<CONFIG:RelWithDebInfo>>:FO4CS_ENABLE_DEBUG_SETTINGS=1>"
-)
-
-if(CMAKE_GENERATOR MATCHES "Visual Studio")
-    target_compile_definitions(Core PRIVATE _UNICODE "$<$<CONFIG:DEBUG>:DEBUG>")
-
-    set(_CORE_RELEASE_OPTS "/Zi;/fp:fast;/GL;/Gy-;/Gm-;/Gw;/sdl-;/GS-;/guard:cf-;/O2;/Ob2;/Oi;/Ot;/Oy;/fp:except-")
-    target_compile_options(Core PRIVATE
-        /MP /W4 /WX /permissive-
-        /Zc:alignedNew /Zc:auto /Zc:__cplusplus /Zc:externC /Zc:externConstexpr
-        /Zc:forScope /Zc:hiddenFriend /Zc:implicitNoexcept /Zc:lambda
-        /Zc:noexceptTypes /Zc:preprocessor /Zc:referenceBinding /Zc:rvalueCast
-        /Zc:sizedDealloc /Zc:strictStrings /Zc:ternary /Zc:threadSafeInit
-        /Zc:trigraphs /Zc:wchar_t /wd4200 /arch:AVX
-    )
-    target_compile_options(Core PUBLIC
-        "$<$<CONFIG:DEBUG>:/fp:strict>" "$<$<CONFIG:DEBUG>:/ZI>"
-        "$<$<CONFIG:DEBUG>:/Od>" "$<$<CONFIG:DEBUG>:/Gy>"
-        "$<$<CONFIG:RELEASE>:${_CORE_RELEASE_OPTS}>"
-    )
-endif()
-
-target_precompile_headers(Core PRIVATE include/PCH.h)
+fo4cs_configure_target(Core)
 target_link_libraries(Core PUBLIC ${FO4CS_COMMON_DEPENDENCIES})
 
 # ImGui core sources in Core — shared by all consumers for panel rendering.
@@ -123,16 +93,19 @@ target_sources(Core PRIVATE
     extern/imgui/imgui_tables.cpp
     extern/imgui/imgui_widgets.cpp
 )
-set(FO4CS_IMGUI_CORE_SOURCES
+fo4cs_mark_third_party_sources(
     extern/imgui/imgui.cpp
     extern/imgui/imgui_draw.cpp
     extern/imgui/imgui_tables.cpp
     extern/imgui/imgui_widgets.cpp
 )
-set_source_files_properties(${FO4CS_IMGUI_CORE_SOURCES} PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
-if(CMAKE_GENERATOR MATCHES "Visual Studio")
-    set_source_files_properties(${FO4CS_IMGUI_CORE_SOURCES} PROPERTIES COMPILE_OPTIONS "/W0")
-endif()
+
+# D3D12/Win32 ImGui backends are compiled into each overlay host DLL.
+set(FO4CS_IMGUI_BACKEND_SOURCES
+    extern/imgui/backends/imgui_impl_dx12.cpp
+    extern/imgui/backends/imgui_impl_win32.cpp
+)
+fo4cs_mark_third_party_sources(${FO4CS_IMGUI_BACKEND_SOURCES})
 
 if(BUILD_PRE_NG)
     set(FO4CS_RUNTIME_FLAVOR "PreNG")
@@ -188,25 +161,12 @@ if(AIO)
     target_sources(NuclearGFX PRIVATE
         src/AIOPlugin.cpp
         src/Overlay/Overlay.cpp
-        extern/imgui/backends/imgui_impl_dx12.cpp
-        extern/imgui/backends/imgui_impl_win32.cpp
+        ${FO4CS_IMGUI_BACKEND_SOURCES}
     )
     target_include_directories(NuclearGFX PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/extern/imgui
         ${CMAKE_CURRENT_SOURCE_DIR}/extern/imgui/backends
     )
-    set_source_files_properties(
-        extern/imgui/backends/imgui_impl_dx12.cpp
-        extern/imgui/backends/imgui_impl_win32.cpp
-        PROPERTIES SKIP_PRECOMPILE_HEADERS ON
-    )
-    if(CMAKE_GENERATOR MATCHES "Visual Studio")
-        set_source_files_properties(
-            extern/imgui/backends/imgui_impl_dx12.cpp
-            extern/imgui/backends/imgui_impl_win32.cpp
-            PROPERTIES COMPILE_OPTIONS "/W0"
-        )
-    endif()
     set_target_properties(NuclearGFX PROPERTIES OUTPUT_NAME "NuclearGFX")
     target_link_libraries(NuclearGFX PRIVATE Core)
 endif()
@@ -226,20 +186,5 @@ if(OVERLAY)
     target_link_libraries(Overlay PRIVATE Core)
 
     # D3D12/Win32 ImGui backends - Overlay renders through DX12SwapChain.
-    target_sources(Overlay PRIVATE
-        extern/imgui/backends/imgui_impl_dx12.cpp
-        extern/imgui/backends/imgui_impl_win32.cpp
-    )
-    set_source_files_properties(
-        extern/imgui/backends/imgui_impl_dx12.cpp
-        extern/imgui/backends/imgui_impl_win32.cpp
-        PROPERTIES SKIP_PRECOMPILE_HEADERS ON
-    )
-    if(CMAKE_GENERATOR MATCHES "Visual Studio")
-        set_source_files_properties(
-            extern/imgui/backends/imgui_impl_dx12.cpp
-            extern/imgui/backends/imgui_impl_win32.cpp
-            PROPERTIES COMPILE_OPTIONS "/W0"
-        )
-    endif()
+    target_sources(Overlay PRIVATE ${FO4CS_IMGUI_BACKEND_SOURCES})
 endif()
