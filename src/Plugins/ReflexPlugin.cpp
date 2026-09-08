@@ -1,7 +1,7 @@
-#include "PluginCommon.h"
+#include "Platform/PluginCommon.h"
 
-#include "DX11Hooks.h"
-#include "Upscaler.h"
+#include "Render/DX11Hooks.h"
+#include "Upscaling/Upscaler.h"
 
 #include <OverlayAPI.h>
 #include <SimpleIni.h>
@@ -43,27 +43,38 @@ namespace
 		return std::filesystem::path(buffer.data(), buffer.data() + length).parent_path();
 	}
 
-	bool IsUpscalerPluginAvailable(const F4SE::LoadInterface* a_f4se)
+	bool IsPluginAvailable(const F4SE::LoadInterface* a_f4se, const char* pluginName, const wchar_t* dllName)
 	{
 		const auto f4se = reinterpret_cast<const F4SEInterfaceLayout*>(a_f4se);
-		const bool registered =
-			f4se &&
-			f4se->GetPluginInfo &&
-			(f4se->GetPluginInfo("Upscaler") || f4se->GetPluginInfo("Upscaler.dll"));
-		if (registered || GetModuleHandleW(L"Upscaler.dll") != nullptr)
+		if (f4se && f4se->GetPluginInfo && (f4se->GetPluginInfo(pluginName) || f4se->GetPluginInfo(std::format("{}.dll", pluginName).c_str()))) {
 			return true;
+		}
+
+		if (GetModuleHandleW(dllName) != nullptr) {
+			return true;
+		}
 
 		const auto pluginDir = GetCurrentPluginDirectory();
-		if (pluginDir.empty())
+		if (pluginDir.empty()) {
 			return false;
+		}
 
 		std::error_code ec;
-		return std::filesystem::exists(pluginDir.parent_path() / L"Upscaler" / L"Upscaler.dll", ec);
+		std::wstring subDir(dllName);
+			auto dot = subDir.rfind(L'.');
+			if (dot != std::wstring::npos) subDir.resize(dot);
+			return std::filesystem::exists(pluginDir.parent_path() / subDir / dllName, ec);
+	}
+
+	bool HasExternalProxyOwner(const F4SE::LoadInterface* a_f4se)
+	{
+		return IsPluginAvailable(a_f4se, "Upscaler", L"Upscaler.dll") ||
+			IsPluginAvailable(a_f4se, "FrameGen", L"FrameGen.dll");
 	}
 }
 
 // Panel callbacks for Overlay.dll registration
-namespace FGOverlay
+namespace ReflexOverlay
 {
 	void DrawDLSSRuntimeNotice()
 	{
@@ -74,29 +85,16 @@ namespace FGOverlay
 		}
 	}
 
-	int DrawFrameGenerationBackendCombo(int& backend)
-	{
-		const char* fgBackends[] = { "NVIDIA DLSS-G", "AMD FSR FG" };
-		int backendIndex = backend == Upscaling::kFrameGenerationBackendFSR ? 1 : 0;
-		if (ImGui::Combo("Backend", &backendIndex, fgBackends, IM_ARRAYSIZE(fgBackends))) {
-			backend = backendIndex == 0 ? Upscaling::kFrameGenerationBackendDLSS : Upscaling::kFrameGenerationBackendFSR;
-			return 1;
-		}
-		return 0;
-	}
-
 	int RenderPanel(void* userData)
 	{
-		auto* s = static_cast<Upscaling::Settings*>(userData);
+		auto& s = *static_cast<Upscaling::Settings*>(userData);
 		int changed = 0;
 
-		if (ImGui::CollapsingHeader("Frame Generation")) {
-			changed |= ImGui::Checkbox("Enabled", &s->frameGenerationMode) ? 1 : 0;
-			ImGui::SameLine();
-			changed |= ImGui::Checkbox("Frame Limit", &s->frameLimitMode) ? 1 : 0;
-
+		if (ImGui::CollapsingHeader("Reflex")) {
 			DrawDLSSRuntimeNotice();
-			changed |= DrawFrameGenerationBackendCombo(s->frameGenerationBackend);
+			const char* reflexModes[] = { "Off", "Low Latency", "Low Latency + Boost" };
+			changed |= ImGui::Combo("Mode", &s.reflexMode, reflexModes, IM_ARRAYSIZE(reflexModes)) ? 1 : 0;
+			changed |= ImGui::Checkbox("Reflex Sleep Mode", &s.reflexSleepMode) ? 1 : 0;
 		}
 		if (changed) {
 			Upscaling::GetSingleton()->ApplyRuntimeFallbacks();
@@ -110,12 +108,9 @@ namespace FGOverlay
 		Upscaling::GetSingleton()->ApplyRuntimeFallbacks();
 		CSimpleIniA ini;
 		ini.SetUnicode();
-		ini.SetValue("Settings", "bFrameGenerationMode", s.frameGenerationMode ? "true" : "false");
-		ini.SetValue("Settings", "bFrameLimitMode", s.frameLimitMode ? "true" : "false");
-		ini.SetValue("Settings", "iFrameGenerationBackend", std::to_string(s.frameGenerationBackend).c_str());
-		std::error_code ec;
-		std::filesystem::create_directories("Data\\F4SE\\Plugins\\FrameGen", ec);
-		if (!ec) ini.SaveFile("Data\\F4SE\\Plugins\\FrameGen\\FrameGen.ini");
+		ini.SetValue("Settings", "iReflexMode", std::to_string(s.reflexMode).c_str());
+		ini.SetValue("Settings", "bReflexSleepMode", s.reflexSleepMode ? "true" : "false");
+		ini.SaveFile("Data\\F4SE\\Plugins\\Reflex\\Reflex.ini");
 	}
 
 	void TryRegister()
@@ -132,10 +127,9 @@ namespace FGOverlay
 		cbs.render = RenderPanel;
 		cbs.save = SavePanel;
 		cbs.userData = &Upscaling::GetSingleton()->settings;
-		registerFn("Frame Generation", kOverlayCategory_Rendering, &cbs);
+		registerFn("Reflex", kOverlayCategory_Latency, &cbs);
 	}
 }
-
 
 #if defined(FALLOUT_POST_NG)
 extern "C" DLLEXPORT constinit F4SE::PluginVersionData F4SEPlugin_Version = []() consteval {
@@ -157,23 +151,25 @@ extern "C" DLLEXPORT bool F4SEAPI F4SEPlugin_Load(const F4SE::LoadInterface* a_f
 	fo4cs::WaitForDebuggerIfNeeded();
 	fo4cs::InitializeLog();
 
-	const bool upscalerPluginAvailable = IsUpscalerPluginAvailable(a_f4se);
-	if (upscalerPluginAvailable) {
-		auto upscaling = Upscaling::GetSingleton();
-		upscaling->LoadFrameGenerationSettings();
-		logger::info("[Settings] FrameGen(enabled={}, limiter={}), Debug(enabled={}, streamlineLogLevel={}, frames={})",
-			upscaling->settings.frameGenerationMode,
-			upscaling->settings.frameLimitMode,
-			upscaling->settings.debugLogging,
-			upscaling->settings.streamlineLogLevel,
-			upscaling->settings.debugFrameLogCount);
-		logger::info("[FrameGen] Upscaler plugin available, leaving DX hooks to Upscaler");
-	} else {
-		Upscaling::GetSingleton()->LoadSettings();
-		logger::info("[FrameGen] Upscaler plugin not available, installing FrameGen DX hooks");
-		DX11Hooks::Install();
+	auto upscaling = Upscaling::GetSingleton();
+	upscaling->pluginMode = Upscaling::PluginMode::kReflex;
+	upscaling->LoadReflexSettings();
+
+	if (!upscaling->UsesReflex()) {
+		logger::info("[Reflex] Disabled by settings; D3D12 proxy hooks not installed");
+		ReflexOverlay::TryRegister();
+		return true;
 	}
 
-		FGOverlay::TryRegister();
+	if (HasExternalProxyOwner(a_f4se)) {
+		logger::info("[Reflex] Upscaler/FrameGen plugin detected, leaving D3D12 proxy ownership to that plugin");
+		ReflexOverlay::TryRegister();
+		return true;
+	}
+
+	logger::info("[Reflex] Installing D3D12 proxy hooks");
+	DX11Hooks::Install();
+
+	ReflexOverlay::TryRegister();
 	return true;
 }

@@ -9,7 +9,7 @@
 #include <d3d11_4.h>
 #include <d3d12.h>
 
-#include "Buffer.h"
+#include "Render/Buffer.h"
 
 // --- Overlay callbacks (registered by Overlay.dll at load time) ---
 using OverlayInitCallback = void (*)(ID3D12Device* device,

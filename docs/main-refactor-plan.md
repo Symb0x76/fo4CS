@@ -76,9 +76,14 @@ Baseline facts:
        behavior exactly; no dead-stripping surprises. vcxproj check: new libraries
        carry Core's flags verbatim (own PCH path), plugins lose only the per-file
        `NotUsing` entries of the moved ImGui backends, include sets unchanged.
-3. [ ] Directory moves with `git mv`: `src/Render/`, `src/Upscaling/`,
-       `src/Platform/`, `src/Diagnostics/`, `src/Plugins/` (the five `*Plugin.cpp`
-       entry points). Update includes. `src/` stays the single PRIVATE include root.
+3. [x] Directory moves with `git mv`: `src/Render/` (hooks, swap chain, `Buffer.h`),
+       `src/Upscaling/` (Upscaler, render backend, Streamline, FidelityFX),
+       `src/Platform/` (`PluginCommon.h`, `RE/`), `src/Plugins/` (the five
+       `*Plugin.cpp` entry points); `src/Diagnostics/` and `src/Overlay/` unchanged.
+       All quoted includes are now root-relative (`"Upscaling/Upscaler.h"`); `src/`
+       stays the single PRIVATE include root. `Fo4cs.Platform` and
+       `Fo4cs.Diagnostics` exist as header-only INTERFACE targets linked by
+       `Fo4cs.Render` / `Fo4cs.Upscaling` to make ownership visible.
 4. [ ] Represent runtime variants as INTERFACE targets `Fo4cs.PreNG` /
        `Fo4cs.PostNG` / `Fo4cs.PostAE` carrying the `FALLOUT_*` definitions instead of
        `add_compile_definitions` in `XSEPlugin.cmake`. Print a one-line configure

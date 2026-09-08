@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Buffer.h"
+#include "Render/Buffer.h"
 
 #include <array>
 #include <cstdint>

@@ -1,4 +1,4 @@
-#include "Streamline.h"
+#include "Upscaling/Streamline.h"
 
 #include <algorithm>
 #include <array>
@@ -8,8 +8,8 @@
 #include <string_view>
 #include <vector>
 
-#include "DX12SwapChain.h"
-#include "Upscaler.h"
+#include "Render/DX12SwapChain.h"
+#include "Upscaling/Upscaler.h"
 
 namespace
 {

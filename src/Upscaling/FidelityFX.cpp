@@ -1,14 +1,14 @@
-#include "FidelityFX.h"
+#include "Upscaling/FidelityFX.h"
 
 #include <algorithm>
 #include <array>
 
-#include "RE/CameraData.h"
-#include "RE/SingletonAccessors.h"
-#include "Upscaler.h"
+#include "Platform/RE/CameraData.h"
+#include "Platform/RE/SingletonAccessors.h"
+#include "Upscaling/Upscaler.h"
 
 #include "Diagnostics/HangTrace.h"
-#include "DX12SwapChain.h"
+#include "Render/DX12SwapChain.h"
 
 #include <dx12/ffx_api_dx12.hpp>
 

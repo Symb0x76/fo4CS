@@ -1,4 +1,4 @@
-#include "DX12SwapChain.h"
+#include "Render/DX12SwapChain.h"
 
 #include <algorithm>
 #include <array>
@@ -12,9 +12,9 @@
 
 #include <directx/d3dx12.h>
 
-#include "FidelityFX.h"
-#include "Streamline.h"
-#include "Upscaler.h"
+#include "Upscaling/FidelityFX.h"
+#include "Upscaling/Streamline.h"
+#include "Upscaling/Upscaler.h"
 
 extern bool enbLoaded;
 

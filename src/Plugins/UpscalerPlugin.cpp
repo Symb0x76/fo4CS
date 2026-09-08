@@ -1,7 +1,7 @@
-#include "PluginCommon.h"
+#include "Platform/PluginCommon.h"
 
-#include "DX11Hooks.h"
-#include "Upscaler.h"
+#include "Render/DX11Hooks.h"
+#include "Upscaling/Upscaler.h"
 
 #include <OverlayAPI.h>
 #include <SimpleIni.h>

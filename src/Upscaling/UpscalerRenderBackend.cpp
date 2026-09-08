@@ -1,7 +1,7 @@
-#include "Upscaler.h"
+#include "Upscaling/Upscaler.h"
 
-#include "RE/CameraData.h"
-#include "RE/SingletonAccessors.h"
+#include "Platform/RE/CameraData.h"
+#include "Platform/RE/SingletonAccessors.h"
 
 #include <algorithm>
 #include <cmath>
@@ -13,9 +13,9 @@
 #include <vector>
 
 #include "Diagnostics/HangTrace.h"
-#include "DX12SwapChain.h"
-#include "FidelityFX.h"
-#include "Streamline.h"
+#include "Render/DX12SwapChain.h"
+#include "Upscaling/FidelityFX.h"
+#include "Upscaling/Streamline.h"
 
 extern bool enbLoaded;
 

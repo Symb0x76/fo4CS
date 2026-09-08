@@ -1,13 +1,13 @@
-#include "DX11Hooks.h"
+#include "Render/DX11Hooks.h"
 
 #include <d3d11.h>
 #include <iterator>
 #pragma comment(lib, "d3d11.lib")
 
-#include "Upscaler.h"
-#include "DX12SwapChain.h"
-#include "FidelityFX.h"
-#include "Streamline.h"
+#include "Upscaling/Upscaler.h"
+#include "Render/DX12SwapChain.h"
+#include "Upscaling/FidelityFX.h"
+#include "Upscaling/Streamline.h"
 
 #include "ENB/ENBSeriesAPI.h"
 
