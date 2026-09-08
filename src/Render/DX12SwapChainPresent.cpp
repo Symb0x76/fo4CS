@@ -46,6 +46,10 @@ void LogDeviceRemovedState(ID3D12Device *device, const char *when)
         return;
     }
 
+    // Drain first: the validation messages that explain the removal are queued
+    // before GetDeviceRemovedReason() starts reporting it.
+    fo4cs::render::DrainD3D12InfoQueue(when);
+
     const HRESULT reason = device->GetDeviceRemovedReason();
     if (reason == S_OK)
     {
@@ -561,6 +565,11 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
         {
             logger::debug("[DX12SwapChain] Present#{} completed (nextFrameIndex={})", presentID, frameIndex);
         }
+
+        // Splits the blame: anything reported here came from this function's own
+        // recording, barriers, execute or present, whereas anything reported under
+        // "fsr-frame-generation-drive" came out of ffx::Configure/ffx::Dispatch.
+        LogDeviceRemovedState(d3d12Device.get(), "present-end");
 
         return S_OK;
     }

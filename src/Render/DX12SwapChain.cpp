@@ -9,9 +9,11 @@
 #include <dxgi1_6.h>
 #include <optional>
 #include <string_view>
+#include <vector>
 
 #include <directx/d3dx12.h>
 
+#include "Core/DebugSwitches.h"
 #include "Upscaling/FidelityFX.h"
 #include "Render/PresentationMenuPolicy.h"
 #include "Upscaling/Streamline.h"
@@ -90,9 +92,102 @@ bool ResolveOverlayCallbacks()
 }
 } // namespace
 
+namespace fo4cs::render
+{
+namespace
+{
+bool s_d3d12DebugLayerEnabled = false;
+winrt::com_ptr<ID3D12InfoQueue> s_d3d12InfoQueue;
+} // namespace
+
+void EnableD3D12Diagnostics()
+{
+    if (!CommunityShaders::DebugSwitches::ReadSwitchEnabled("FO4CS_D3D12_DEBUG_LAYER"))
+    {
+        return;
+    }
+
+    winrt::com_ptr<ID3D12Debug> debug;
+    if (FAILED(D3D12GetDebugInterface(IID_PPV_ARGS(debug.put()))) || !debug)
+    {
+        logger::warn("[DX12SwapChain] FO4CS_D3D12_DEBUG_LAYER is set but D3D12GetDebugInterface failed; "
+                     "enable the Windows 'Graphics Tools' optional feature to use it");
+        return;
+    }
+
+    debug->EnableDebugLayer();
+    s_d3d12DebugLayerEnabled = true;
+    logger::info("[DX12SwapChain] D3D12 debug layer enabled; validation messages will be logged as [D3D12]");
+}
+
+void ConfigureD3D12InfoQueue(ID3D12Device *a_device)
+{
+    if (!s_d3d12DebugLayerEnabled || !a_device)
+    {
+        return;
+    }
+
+    if (FAILED(a_device->QueryInterface(IID_PPV_ARGS(s_d3d12InfoQueue.put()))) || !s_d3d12InfoQueue)
+    {
+        logger::warn("[DX12SwapChain] D3D12 debug layer is on but ID3D12InfoQueue is unavailable");
+        s_d3d12InfoQueue = nullptr;
+        return;
+    }
+
+    // Keep every message; the queue is drained into the log each Present. Left
+    // unbounded the ring buffer would silently drop the first offending message,
+    // which is precisely the one worth having.
+    s_d3d12InfoQueue->SetMuteDebugOutput(FALSE);
+    s_d3d12InfoQueue->ClearStorageFilter();
+    DX::ThrowIfFailed(s_d3d12InfoQueue->SetMessageCountLimit(0));
+}
+
+void DrainD3D12InfoQueue(const char *a_when)
+{
+    if (!s_d3d12InfoQueue)
+    {
+        return;
+    }
+
+    const auto stored = s_d3d12InfoQueue->GetNumStoredMessages();
+    std::vector<std::byte> storage;
+    for (UINT64 index = 0; index < stored; ++index)
+    {
+        SIZE_T length = 0;
+        if (FAILED(s_d3d12InfoQueue->GetMessage(index, nullptr, &length)) || length == 0)
+        {
+            continue;
+        }
+
+        storage.resize(length);
+        auto *message = reinterpret_cast<D3D12_MESSAGE *>(storage.data());
+        if (FAILED(s_d3d12InfoQueue->GetMessage(index, message, &length)))
+        {
+            continue;
+        }
+
+        // CORRUPTION(0) < ERROR(1) < WARNING(2) < INFO(3) < MESSAGE(4). Info and
+        // below are pure noise at 4K.
+        if (message->Severity > D3D12_MESSAGE_SEVERITY_WARNING)
+        {
+            continue;
+        }
+
+        const std::string_view description(
+            message->pDescription, message->DescriptionByteLength > 0 ? message->DescriptionByteLength - 1 : 0);
+        logger::critical("[D3D12] {} severity={} id={} {}", a_when, static_cast<int>(message->Severity),
+                         static_cast<int>(message->ID), description);
+    }
+
+    s_d3d12InfoQueue->ClearStoredMessages();
+}
+} // namespace fo4cs::render
+
 void DX12SwapChain::CreateD3D12Device(IDXGIAdapter *a_adapter)
 {
+    fo4cs::render::EnableD3D12Diagnostics();
     DX::ThrowIfFailed(D3D12CreateDevice(a_adapter, D3D_FEATURE_LEVEL_12_0, IID_PPV_ARGS(&d3d12Device)));
+    fo4cs::render::ConfigureD3D12InfoQueue(d3d12Device.get());
     if (ID3D12Device *upgradedDevice = d3d12Device.get();
         Streamline::GetSingleton()->UpgradeD3D12DeviceForDLSSG(&upgradedDevice) && upgradedDevice != d3d12Device.get())
     {
