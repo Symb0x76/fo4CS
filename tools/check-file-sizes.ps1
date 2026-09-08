@@ -15,10 +15,20 @@
 param(
     [int]$WarnLines = 600,
     [int]$FailLines = 800,
-    [string]$Root = (Join-Path $PSScriptRoot '..')
+    # Resolved in the body, not here: Windows PowerShell 5.1 leaves $PSScriptRoot
+    # empty while evaluating param defaults, which made every run die on
+    # Join-Path with an empty Path.
+    [string]$Root
 )
 
 $ErrorActionPreference = 'Stop'
+
+if (-not $Root) {
+    $scriptDir = $PSScriptRoot
+    if (-not $scriptDir) { $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path }
+    $Root = Split-Path -Parent $scriptDir
+}
+$Root = (Resolve-Path -LiteralPath $Root).ProviderPath
 $srcRoot = Join-Path $Root 'src'
 if (-not (Test-Path $srcRoot)) {
     Write-Error "src/ not found under $Root"
@@ -30,9 +40,15 @@ $rows = foreach ($file in $files) {
     # ReadAllLines counts blank lines too (Measure-Object -Line does not), so the
     # result matches `wc -l`.
     $lines = [System.IO.File]::ReadAllLines($file.FullName).Length
+    # Substring rather than [System.IO.Path]::GetRelativePath, which does not
+    # exist in the .NET Framework that Windows PowerShell 5.1 runs on.
+    $relative = $file.FullName
+    if ($relative.StartsWith($Root, [System.StringComparison]::OrdinalIgnoreCase)) {
+        $relative = $relative.Substring($Root.Length).TrimStart('\', '/')
+    }
     [pscustomobject]@{
         Lines = $lines
-        File  = [System.IO.Path]::GetRelativePath($Root, $file.FullName)
+        File  = $relative
     }
 }
 

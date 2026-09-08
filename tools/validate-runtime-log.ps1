@@ -54,16 +54,24 @@ if (-not $logFiles) {
 $eventPattern = [regex]'(?m)^\s*event=(?<code>[A-Z_]+)\b(?<rest>.*)$'
 $overallFailed = $false
 
+# Deliberately not the ?? operator: this has to run under Windows PowerShell 5.1,
+# which is what bare `powershell` resolves to even on a machine with pwsh 7.
+function Get-Count($table, $key) {
+    if ($table.ContainsKey($key)) { return [int]$table[$key] }
+    return 0
+}
+
 foreach ($log in $logFiles) {
     $plugin = [System.IO.Path]::GetFileNameWithoutExtension($log.Name)
     $text = Get-Content -LiteralPath $log.FullName -Raw
-    $matches = $eventPattern.Matches($text)
+    # Not $matches: that is an automatic variable the regex engine also writes.
+    $eventMatches = $eventPattern.Matches($text)
 
     $counts = @{}
     $errors = New-Object System.Collections.Generic.List[string]
-    foreach ($m in $matches) {
+    foreach ($m in $eventMatches) {
         $code = $m.Groups['code'].Value
-        $counts[$code] = 1 + ($counts[$code] ?? 0)
+        $counts[$code] = 1 + (Get-Count $counts $code)
         if ($code -eq 'ERROR') { $errors.Add($m.Value.Trim()) }
     }
 
@@ -73,15 +81,20 @@ foreach ($log in $logFiles) {
         if ($isPassive -and $req -ne 'BOOT') { continue }
         if (-not $counts.ContainsKey($req)) { $problems.Add("missing required event $req") }
     }
-    if (($counts['BOOT'] ?? 0) -gt 1) {
-        $problems.Add("BOOT appears $($counts['BOOT']) times (duplicate initialization)")
+    $bootCount = Get-Count $counts 'BOOT'
+    if ($bootCount -gt 1) {
+        $problems.Add("BOOT appears $bootCount times (duplicate initialization)")
     }
     if ($errors.Count -gt 0 -and -not $AllowErrors) {
         $problems.Add("$($errors.Count) ERROR event(s)")
     }
 
-    $status = if ($problems.Count -eq 0) { 'PASS' } else { 'FAIL'; $overallFailed = $true }
-    Write-Host ("[{0}] {1}  ({2} event lines, {3} total lines)" -f $status, $log.Name, $matches.Count, ($text -split "`n").Count)
+    $status = 'PASS'
+    if ($problems.Count -gt 0) {
+        $status = 'FAIL'
+        $overallFailed = $true
+    }
+    Write-Host ("[{0}] {1}  ({2} event lines, {3} total lines)" -f $status, $log.Name, $eventMatches.Count, ($text -split "`n").Count)
     foreach ($k in ($counts.Keys | Sort-Object)) {
         Write-Host ("      {0,-16} {1}" -f $k, $counts[$k])
     }
