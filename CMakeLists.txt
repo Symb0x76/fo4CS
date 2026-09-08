@@ -104,6 +104,7 @@ add_library(Fo4cs.Diagnostics INTERFACE
     src/Diagnostics/LogPaths.h
 )
 add_library(Fo4cs.Platform INTERFACE
+    src/Platform/ModulePaths.h
     src/Platform/PluginCommon.h
     src/Platform/RE/CameraData.h
     src/Platform/RE/SingletonAccessors.h
@@ -138,6 +139,11 @@ fo4cs_add_object_library(Fo4cs.Upscaling
         src/Upscaling/FidelityFX.h
         src/Upscaling/Streamline.cpp
         src/Upscaling/Streamline.h
+        src/Upscaling/StreamlineInternal.cpp
+        src/Upscaling/StreamlineInternal.h
+        src/Upscaling/StreamlineDLSS.cpp
+        src/Upscaling/StreamlineReflex.cpp
+        src/Upscaling/StreamlineFrameGeneration.cpp
         src/Upscaling/Upscaler.cpp
         src/Upscaling/Upscaler.h
         src/Upscaling/UpscalerRenderBackend.cpp
