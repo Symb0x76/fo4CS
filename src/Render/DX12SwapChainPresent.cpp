@@ -33,6 +33,35 @@ std::string FormatHRESULT(HRESULT hr)
     return std::format("0x{:08X}", static_cast<std::uint32_t>(hr));
 }
 
+// A removed D3D12 device keeps answering GetDevice() and stays refcounted, but every
+// CreateCommandAllocator/CreateCommandList/CreateFence on it fails. Inside
+// amd_fidelityfx_dx12.dll that turns Dx12CommandPool::get() into a null return whose
+// FFX_ASSERT is compiled out in release, and the very next store faults on the
+// presenter thread. When that crash reappears this line tells us in one run whether the
+// device was already gone, instead of costing another disassembly session.
+void LogDeviceRemovedState(ID3D12Device *device, const char *when)
+{
+    if (!device)
+    {
+        return;
+    }
+
+    const HRESULT reason = device->GetDeviceRemovedReason();
+    if (reason == S_OK)
+    {
+        return;
+    }
+
+    static HRESULT loggedReason = S_OK;
+    if (reason == loggedReason)
+    {
+        return;
+    }
+    loggedReason = reason;
+
+    logger::critical("[DX12SwapChain] D3D12 device removed at {}: {}", when, FormatHRESULT(reason));
+}
+
 enum class PresentTracePhase
 {
     kNone,
@@ -350,8 +379,18 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
 
         auto frameGenerationBlock = frameGenerationUIBlock;
         {
-            static std::uint32_t postMenuSettlePresents = 0;
-            static std::string_view postMenuSettleDetail{"post-menu"};
+            // Armed rather than clear at process start. On the very first presents the
+            // UI singleton has not registered MainMenu/LoadingMenu yet, so the block
+            // query returns "no menu open" and frame generation switched on for a
+            // single frame before the loading screen appeared and switched it back off.
+            // That one-frame enable/disable is what crashed: the FFX presenter thread is
+            // spawned and torn down again while its command pool is still cold, and its
+            // first compositeSwapChainFrame() dereferences a null pool slot. Requiring
+            // the same settle window before the first activation keeps generation off
+            // until the game is genuinely presenting gameplay frames.
+            static std::uint32_t postMenuSettlePresents =
+                fo4cs::PresentationMenuPolicy::kFrameGenerationPostMenuSettlePresents;
+            static std::string_view postMenuSettleDetail{"startup"};
 
             if (frameGenerationUIBlock &&
                 frameGenerationUIBlock->reason == FrameGenerationBlockReason::kBlockingMenuOpen)
@@ -391,6 +430,7 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
             lastFrameGenerationActive = useFrameGenerationThisFrame;
             lastFrameGenerationBackend = frameGenerationBackend;
             lastFrameGenerationBlock = frameGenerationBlock;
+            LogDeviceRemovedState(d3d12Device.get(), "frame-generation-transition");
         }
 
         trace("frame-generation");
@@ -441,6 +481,7 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
                 lastFSRFgActive = false;
                 hasLastFSRFgActive = true;
             }
+            LogDeviceRemovedState(d3d12Device.get(), "fsr-frame-generation-drive");
         }
 
         // Fallback hotkey polling. Works even if WndProc hook is displaced
