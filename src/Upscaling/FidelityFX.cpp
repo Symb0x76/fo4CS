@@ -330,7 +330,16 @@ void FidelityFX::Present(bool a_useFrameGen)
 	configParameters.frameGenerationCallbackUserContext = &frameGenContext;
 
 	configParameters.frameGenerationEnabled = canUseFrameGen;
-	configParameters.HUDLessColor = canUseFrameGen ? ffxApiGetResourceDX12(HUDLessColor) : FfxApiResource({});
+	// COMMON, not the ffxApiGetResourceDX12 default of FFX_API_RESOURCE_STATE_COMPUTE_READ.
+	// Every buffer handed to frame generation is a D3D11 texture opened in D3D12 through
+	// WrappedResource::OpenSharedHandle, so it is permanently in D3D12_RESOURCE_STATE_COMMON.
+	// Declaring COMPUTE_READ makes FFX emit a transition barrier whose before-state does not
+	// match, which D3D12 treats as fatal: the device is removed and GetDeviceRemovedReason()
+	// reports DXGI_ERROR_INVALID_CALL. Upscale() above already declares COMMON for the very
+	// same depth and motion vector resources, which is why upscaling ran for thousands of
+	// frames while the first frame-generation present killed the device.
+	configParameters.HUDLessColor =
+		canUseFrameGen ? ffxApiGetResourceDX12(HUDLessColor, FFX_API_RESOURCE_STATE_COMMON) : FfxApiResource({});
 
 	configParameters.presentCallback = nullptr;
 	configParameters.presentCallbackUserContext = nullptr;
@@ -413,8 +422,11 @@ void FidelityFX::Present(bool a_useFrameGen)
 			dispatchParameters.cameraFovAngleVertical = 1.0f;
 			dispatchParameters.viewSpaceToMetersFactor = 0.01428222656f;
 			dispatchParameters.frameID = frameID;
-			dispatchParameters.depth = ffxApiGetResourceDX12(depth);
-			dispatchParameters.motionVectors = ffxApiGetResourceDX12(motionVectors);
+			// COMMON for the same reason as HUDLessColor above: these are the identical
+			// shared textures Upscale() dispatches with, and they never leave COMMON.
+			dispatchParameters.depth = ffxApiGetResourceDX12(depth, FFX_API_RESOURCE_STATE_COMMON);
+			dispatchParameters.motionVectors =
+				ffxApiGetResourceDX12(motionVectors, FFX_API_RESOURCE_STATE_COMMON);
 
 			static bool loggedFirstPrepare = false;
 			if (!loggedFirstPrepare) {
