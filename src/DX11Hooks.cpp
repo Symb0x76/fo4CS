@@ -346,7 +346,13 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 	const auto originalFeatureLevels = pFeatureLevels;
 	const auto originalFeatureLevelCount = FeatureLevels;
 
-	if (pSwapChainDesc->Windowed && ShouldCreateD3D12Proxy()) {
+	// #25: Do not gate D3D12 proxy creation on windowed mode. Exclusive
+	// fullscreen swaps (Windowed == false) previously skipped the proxy
+	// entirely, leaving d3d12Interop false and disabling FrameGen/Upscaler.
+	// DX12SwapChain::CreateSwapChain always builds a flip-model swap chain
+	// and the proxy stubs SetFullscreenState/ResizeTarget, so fullscreen
+	// runs through the same safe path as windowed mode.
+	if (ShouldCreateD3D12Proxy()) {
 		logger::debug("[FrameGen] Using D3D12 proxy");
 		
 		try {
