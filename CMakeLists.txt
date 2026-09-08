@@ -8,6 +8,7 @@ project(
 
 list(APPEND CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake")
 include(XSEPlugin)
+include(Fo4csTargets)
 
 find_package(directxtk CONFIG REQUIRED)
 find_package(directxtex CONFIG REQUIRED)
@@ -26,6 +27,11 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 xseplugin_resolve_commonlib_root(CommonLibRoot CommonLibName)
 xseplugin_resolve_commonlib_project(CommonLibPath "${CommonLibRoot}")
+
+# Runtime variant contract: every fo4CS target links this (fo4cs_configure_target)
+# and thereby sees FALLOUT_PRE_NG / FALLOUT_POST_NG / FALLOUT_POST_AE.
+add_library(Fo4cs.Runtime INTERFACE)
+target_compile_definitions(Fo4cs.Runtime INTERFACE ${FO4CS_RUNTIME_DEFINITIONS})
 
 # FSR runtime: all game runtimes use amd_fidelityfx_dx12.dll through the D3D12 proxy.
 
@@ -88,31 +94,15 @@ add_library(Core OBJECT
 
 target_compile_features(Core PRIVATE cxx_std_23)
 
+# Third-party include roots must precede include/ because both extern/Streamline
+# and include/ ship an sl.h; the extern copy is the one the build has always used.
 target_include_directories(Core
     PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/extern/Streamline/include
     ${CMAKE_CURRENT_SOURCE_DIR}/extern/imgui
     ${CMAKE_CURRENT_SOURCE_DIR}/extern/imgui/backends
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-    PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
-
-if(WIN32)
-  target_compile_definitions(Core PRIVATE _WINDOWS)
-endif()
-target_compile_definitions(Core PRIVATE
-    _AMD64_
-    "$<$<OR:$<CONFIG:Debug>,$<CONFIG:RelWithDebInfo>>:FO4CS_ENABLE_DEBUG_SETTINGS=1>"
-)
-
-if(CMAKE_GENERATOR MATCHES "Visual Studio")
-  target_compile_definitions(Core PRIVATE _UNICODE "$<$<CONFIG:DEBUG>:DEBUG>")
-
-  fo4cs_apply_msvc_compile_options(Core)
-endif()
-
-target_precompile_headers(Core PRIVATE include/PCH.h)
+fo4cs_configure_target(Core)
 target_link_libraries(Core PUBLIC ${FO4CS_COMMON_DEPENDENCIES})
 
 # ImGui core sources in Core — shared by all consumers for panel rendering.
@@ -188,44 +178,13 @@ if(COMMUNITY_SHADERS)
     )
   endif()
 
-  target_compile_features(CoreCS PRIVATE cxx_std_23)
-
   target_include_directories(CoreCS
     PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/extern/imgui
     ${CMAKE_CURRENT_SOURCE_DIR}/extern/imgui/backends
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-    PRIVATE
-    ${FO4CS_GENERATED_INCLUDE_DIR}
-    ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
-
-  if(WIN32)
-    target_compile_definitions(CoreCS PRIVATE _WINDOWS)
-  endif()
-  target_compile_definitions(CoreCS PRIVATE
-    _AMD64_
-    "$<$<OR:$<CONFIG:Debug>,$<CONFIG:RelWithDebInfo>>:FO4CS_ENABLE_DEBUG_SETTINGS=1>"
-)
-
-  if(CMAKE_GENERATOR MATCHES "Visual Studio")
-    target_compile_definitions(CoreCS PRIVATE _UNICODE "$<$<CONFIG:DEBUG>:DEBUG>")
-
-    fo4cs_apply_msvc_compile_options(CoreCS)
-  endif()
-
-  target_precompile_headers(CoreCS PRIVATE include/PCH.h)
+  fo4cs_configure_target(CoreCS)
   target_link_libraries(CoreCS PUBLIC ${FO4CS_COMMON_DEPENDENCIES})
-endif()
-
-if(BUILD_PRE_NG)
-  set(FO4CS_RUNTIME_FLAVOR "PreNG")
-elseif(BUILD_POST_NG)
-  set(FO4CS_RUNTIME_FLAVOR "PostNG")
-elseif(BUILD_POST_AE)
-  set(FO4CS_RUNTIME_FLAVOR "PostAE")
-else()
-  set(FO4CS_RUNTIME_FLAVOR "Unknown")
 endif()
 
 # ------------------------------------------------------------------
@@ -245,6 +204,10 @@ if(COMMUNITY_SHADERS)
   set(UPSCALER OFF)
   set(OVERLAY OFF)
 endif()
+
+message(STATUS "fo4CS ${PROJECT_VERSION}: runtime=${FO4CS_RUNTIME_VARIANT} [${FO4CS_RUNTIME_DEFINITIONS}] "
+    "plugins: CommunityShaders=${COMMUNITY_SHADERS} NuclearGFX(AIO)=${AIO} FrameGen=${FRAMEGEN} "
+    "Reflex=${REFLEX} Upscaler=${UPSCALER} Overlay=${OVERLAY}")
 
 if(FRAMEGEN)
   fo4cs_create_plugin(FrameGen FrameGen "FrameGen" ${FO4CS_COMMON_DEPENDENCIES})
