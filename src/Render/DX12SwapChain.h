@@ -12,7 +12,7 @@
 
 #include <memory>
 
-#include "Buffer.h"
+#include "Render/Buffer.h"
 
 // --- Overlay callbacks (registered by Overlay.dll at load time) ---
 using OverlayInitCallback = void (*)(ID3D12Device *device, ID3D12CommandQueue *queue, IDXGISwapChain4 *swapChain,

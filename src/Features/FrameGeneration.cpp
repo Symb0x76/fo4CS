@@ -1,7 +1,7 @@
 #include "Features/FrameGeneration.h"
 #include "Core/CommunityShaders.h"
 
-#include "Upscaler.h"
+#include "Upscaling/Upscaler.h"
 
 #include <SimpleIni.h>
 #include <imgui.h>

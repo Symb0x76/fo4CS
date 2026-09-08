@@ -1,8 +1,8 @@
-#include "PluginCommon.h"
+#include "Platform/PluginCommon.h"
 
-#include "DX11Hooks.h"
-#include "DX12SwapChain.h"
-#include "Upscaler.h"
+#include "Render/DX11Hooks.h"
+#include "Render/DX12SwapChain.h"
+#include "Upscaling/Upscaler.h"
 #include "Overlay/Overlay.h"
 
 #include <OverlayAPI.h>

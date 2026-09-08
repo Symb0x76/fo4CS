@@ -14,7 +14,7 @@
 #include <sl_reflex.h>
 #pragma warning(pop)
 
-#include "Buffer.h"
+#include "Render/Buffer.h"
 
 using PFun_slSetTag2 = sl::Result(const sl::ViewportHandle& viewport, const sl::ResourceTag* tags, uint32_t numTags, sl::CommandBuffer* cmdBuffer);
 

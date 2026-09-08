@@ -2,10 +2,10 @@
 
 #include "Core/CommunityShaders.h"
 #include "Core/Menu.h"
-#include "DX11Hooks.h"
-#include "DX12SwapChain.h"
+#include "Render/DX11Hooks.h"
+#include "Render/DX12SwapChain.h"
 #include "Diagnostics/HangTrace.h"
-#include "RuntimeAdapter.h"
+#include "Render/RuntimeAdapter.h"
 
 namespace CommunityShaders::Presentation {
 namespace {

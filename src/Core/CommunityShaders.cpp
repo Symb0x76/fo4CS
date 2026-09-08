@@ -8,7 +8,7 @@
 #include "Core/ShaderCompiler.h"
 #include "Core/ShaderDB.h"
 #include "Core/State.h"
-#include "RuntimeAdapter.h"
+#include "Render/RuntimeAdapter.h"
 
 #include <memory>
 

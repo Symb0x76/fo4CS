@@ -8,7 +8,7 @@
 #include "Core/ShaderCompiler.h"
 #include "Core/ShaderCache.h"
 #include "Features/LightLimitFix.h"
-#include "RuntimeAdapter.h"
+#include "Render/RuntimeAdapter.h"
 
 #include <algorithm>
 #include <atomic>

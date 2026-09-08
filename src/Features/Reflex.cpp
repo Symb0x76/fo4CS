@@ -1,7 +1,7 @@
 #include "Features/Reflex.h"
 
-#include "Streamline.h"
-#include "Upscaler.h"
+#include "Upscaling/Streamline.h"
+#include "Upscaling/Upscaler.h"
 
 #include <SimpleIni.h>
 #include <imgui.h>

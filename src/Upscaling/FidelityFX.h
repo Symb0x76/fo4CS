@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Buffer.h"
+#include "Render/Buffer.h"
 
 // FidelityFX runtime API, used through the D3D12 proxy swap chain.
 #include <dx12/ffx_api_dx12.h>

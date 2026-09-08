@@ -95,6 +95,21 @@ configure_file(
 # they are the composition root, not a reusable layer.
 # ------------------------------------------------------------------
 
+# Header-only modules carry no objects; they make ownership and the dependency
+# direction visible (IDE folders, link graph). src/ is already every target's
+# private include root, so linking them adds no flags.
+add_library(Fo4cs.Diagnostics INTERFACE
+    src/Diagnostics/HangTrace.h
+    src/Diagnostics/LogEvents.h
+    src/Diagnostics/LogPaths.h
+)
+add_library(Fo4cs.Platform INTERFACE
+    src/Platform/PluginCommon.h
+    src/Platform/RE/CameraData.h
+    src/Platform/RE/SingletonAccessors.h
+)
+target_link_libraries(Fo4cs.Platform INTERFACE Fo4cs.Diagnostics)
+
 # Third-party include roots must precede include/ because both extern/Streamline
 # and include/ ship an sl.h; the extern copy is the one the build has always used.
 set(FO4CS_STREAMLINE_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/extern/Streamline/include)
@@ -105,28 +120,30 @@ set(FO4CS_IMGUI_INCLUDE_DIRS
 
 fo4cs_add_object_library(Fo4cs.Render
     SOURCES
-        src/Buffer.h
-        src/DX11Hooks.cpp
-        src/DX11Hooks.h
-        src/DX12SwapChain.cpp
-        src/DX12SwapChain.h
-        src/PresentationMenuPolicy.h
-        src/RuntimeAdapter.cpp
-        src/RuntimeAdapter.h
+        src/Render/Buffer.h
+        src/Render/DX11Hooks.cpp
+        src/Render/DX11Hooks.h
+        src/Render/DX12SwapChain.cpp
+        src/Render/DX12SwapChain.h
+        src/Render/PresentationMenuPolicy.h
+        src/Render/RuntimeAdapter.cpp
+        src/Render/RuntimeAdapter.h
 )
 target_include_directories(Fo4cs.Render BEFORE PUBLIC ${FO4CS_STREAMLINE_INCLUDE_DIR})
+target_link_libraries(Fo4cs.Render PUBLIC Fo4cs.Platform)
 
 fo4cs_add_object_library(Fo4cs.Upscaling
     SOURCES
-        src/FidelityFX.cpp
-        src/FidelityFX.h
-        src/Streamline.cpp
-        src/Streamline.h
-        src/Upscaler.cpp
-        src/Upscaler.h
-        src/UpscalerRenderBackend.cpp
+        src/Upscaling/FidelityFX.cpp
+        src/Upscaling/FidelityFX.h
+        src/Upscaling/Streamline.cpp
+        src/Upscaling/Streamline.h
+        src/Upscaling/Upscaler.cpp
+        src/Upscaling/Upscaler.h
+        src/Upscaling/UpscalerRenderBackend.cpp
 )
 target_include_directories(Fo4cs.Upscaling BEFORE PUBLIC ${FO4CS_STREAMLINE_INCLUDE_DIR})
+target_link_libraries(Fo4cs.Upscaling PUBLIC Fo4cs.Platform)
 
 # ImGui core — feature panels call ImGui from whichever DLL hosts the overlay.
 set(FO4CS_IMGUI_CORE_SOURCES
@@ -259,7 +276,7 @@ message(STATUS "fo4CS ${PROJECT_VERSION}: runtime=${FO4CS_RUNTIME_VARIANT} [${FO
 if(FRAMEGEN)
   fo4cs_create_plugin(FrameGen FrameGen "FrameGen" ${FO4CS_COMMON_DEPENDENCIES})
   target_sources(FrameGen PRIVATE
-        src/FrameGenPlugin.cpp
+        src/Plugins/FrameGenPlugin.cpp
     )
   target_compile_definitions(FrameGen PRIVATE FRAMEGEN=1)
   fo4cs_link_runtime(FrameGen)
@@ -268,7 +285,7 @@ endif()
 if(REFLEX)
   fo4cs_create_plugin(Reflex Reflex "Reflex" ${FO4CS_COMMON_DEPENDENCIES})
   target_sources(Reflex PRIVATE
-        src/ReflexPlugin.cpp
+        src/Plugins/ReflexPlugin.cpp
     )
   target_compile_definitions(Reflex PRIVATE REFLEX=1)
   fo4cs_link_runtime(Reflex)
@@ -277,7 +294,7 @@ endif()
 if(UPSCALER)
   fo4cs_create_plugin(Upscaler Upscaler "Upscaler" ${FO4CS_COMMON_DEPENDENCIES})
   target_sources(Upscaler PRIVATE
-        src/UpscalerPlugin.cpp
+        src/Plugins/UpscalerPlugin.cpp
     )
   target_compile_definitions(Upscaler PRIVATE
         UPSCALER=1
@@ -289,7 +306,7 @@ endif()
 if(AIO)
   fo4cs_create_plugin(NuclearGFX NuclearGFX "NuclearGFX" ${FO4CS_COMMON_DEPENDENCIES})
   target_sources(NuclearGFX PRIVATE
-        src/AIOPlugin.cpp
+        src/Plugins/AIOPlugin.cpp
         src/Overlay/Overlay.cpp
         extern/imgui/backends/imgui_impl_dx11.cpp
      extern/imgui/backends/imgui_impl_dx12.cpp
@@ -310,7 +327,7 @@ endif()
 if(COMMUNITY_SHADERS)
   fo4cs_create_plugin(CommunityShaders CommunityShaders "CommunityShaders" ${FO4CS_COMMON_DEPENDENCIES})
   target_sources(CommunityShaders PRIVATE
-        src/CommunityShadersPlugin.cpp
+        src/Plugins/CommunityShadersPlugin.cpp
         src/Presentation/PresentationBackend.cpp
         src/Presentation/PresentationBackend.h
         extern/imgui/backends/imgui_impl_dx11.cpp
@@ -329,7 +346,7 @@ endif()
 if(OVERLAY)
   fo4cs_create_plugin(Overlay Overlay "Overlay" ${FO4CS_COMMON_DEPENDENCIES})
   target_sources(Overlay PRIVATE
-        src/OverlayPlugin.cpp
+        src/Plugins/OverlayPlugin.cpp
         src/Overlay/Overlay.cpp
         src/Overlay/Overlay.h
         src/Overlay/OverlayWndProc.h

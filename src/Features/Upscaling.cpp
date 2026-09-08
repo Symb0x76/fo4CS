@@ -1,8 +1,8 @@
 #include "Features/Upscaling.h"
 #include "Core/CommunityShaders.h"
 
-#include "DX11Hooks.h"
-#include "Upscaler.h"
+#include "Render/DX11Hooks.h"
+#include "Upscaling/Upscaler.h"
 
 #include <SimpleIni.h>
 #include <imgui.h>

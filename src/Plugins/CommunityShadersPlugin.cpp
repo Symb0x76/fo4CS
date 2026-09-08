@@ -1,11 +1,11 @@
-#include "PluginCommon.h"
+#include "Platform/PluginCommon.h"
 
 #include "Core/CommunityShaders.h"
 
 #include "Core/Globals.h"
 #include "Diagnostics/HangTrace.h"
-#include "DX11Hooks.h"
-#include "DX12SwapChain.h"
+#include "Render/DX11Hooks.h"
+#include "Render/DX12SwapChain.h"
 #include "Presentation/PresentationBackend.h"
 
 #include <d3d11.h>

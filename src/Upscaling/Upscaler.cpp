@@ -1,4 +1,4 @@
-#include "Upscaler.h"
+#include "Upscaling/Upscaler.h"
 
 #include "Core/DebugSwitches.h"
 
@@ -15,11 +15,11 @@
 #include <d3dcompiler.h>
 #include <RE/FO4Runtime.h>
 
-#include "DX12SwapChain.h"
-#include "RuntimeAdapter.h"
+#include "Render/DX12SwapChain.h"
+#include "Render/RuntimeAdapter.h"
 #include "DirectXMath.h"
-#include "FidelityFX.h"
-#include "Streamline.h"
+#include "Upscaling/FidelityFX.h"
+#include "Upscaling/Streamline.h"
 
 void InstallUpscalerRenderBackendHooks();
 namespace
