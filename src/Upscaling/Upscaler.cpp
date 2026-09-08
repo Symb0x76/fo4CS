@@ -8,14 +8,11 @@
 #include <string_view>
 #include <vector>
 
-#include <d3dcompiler.h>
+#include "Upscaling/UpscalingShaderCompile.h"
 
 #include "Render/DX12SwapChain.h"
 #include "DirectXMath.h"
-#include "Upscaling/FidelityFX.h"
-#include "Upscaling/Streamline.h"
 
-void InstallUpscalerRenderBackendHooks();
 namespace
 {
 	uint64_t NextHUDLessFrameID()
@@ -285,56 +282,6 @@ namespace
 	}
 }
 
-ID3D11DeviceChild* CompileShader(const wchar_t* FilePath, const char* ProgramType, const char* Program = "main")
-{
-	auto rendererData = fo4cs::GetRendererData();
-	auto device = reinterpret_cast<ID3D11Device*>(rendererData->device);
-
-	// Compiler setup
-	uint32_t flags = D3DCOMPILE_ENABLE_STRICTNESS | D3DCOMPILE_OPTIMIZATION_LEVEL3;
-
-	ID3DBlob* shaderBlob;
-	ID3DBlob* shaderErrors;
-
-	std::string str;
-	std::wstring path{ FilePath };
-	std::transform(path.begin(), path.end(), std::back_inserter(str), [](wchar_t c) {
-		return (char)c;
-	});
-	if (!std::filesystem::exists(FilePath)) {
-		logger::error("Failed to compile shader; {} does not exist", str);
-		return nullptr;
-	}
-	if (FAILED(D3DCompileFromFile(FilePath, nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE, Program, ProgramType, flags, 0, &shaderBlob, &shaderErrors))) {
-		logger::warn("Shader compilation failed:\n\n{}", shaderErrors ? static_cast<char*>(shaderErrors->GetBufferPointer()) : "Unknown error");
-		return nullptr;
-	}
-	if (shaderErrors)
-		logger::debug("Shader logs:\n{}", static_cast<char*>(shaderErrors->GetBufferPointer()));
-
-	ID3D11ComputeShader* regShader;
-	DX::ThrowIfFailed(device->CreateComputeShader(shaderBlob->GetBufferPointer(), shaderBlob->GetBufferSize(), nullptr, &regShader));
-	return regShader;
-}
-
-ID3D11DeviceChild* CompileFrameGenerationShader(const wchar_t* fileName, const char* programType, const char* program = "main")
-{
-	static constexpr std::array<std::wstring_view, 1> shaderDirectories{
-		L"Data\\F4SE\\Plugins\\FrameGen"
-	};
-
-	for (const auto directory : shaderDirectories) {
-		const auto path = std::filesystem::path(directory) / fileName;
-		std::error_code ec;
-		if (std::filesystem::exists(path, ec)) {
-			return CompileShader(path.c_str(), programType, program);
-		}
-	}
-
-	logger::error("[FrameGen] Failed to compile shader; {} was not found in FrameGen", std::filesystem::path(fileName).string());
-	return nullptr;
-}
-
 void Upscaling::LoadFrameGenerationSettings()
 {
 	const std::vector<IniSource> iniSources{
@@ -576,18 +523,6 @@ bool Upscaling::UsesFSRFrameGeneration() const
 bool Upscaling::UsesReflex() const
 {
 	return UsesDLSSFrameGeneration() || (pluginMode == PluginMode::kReflex && settings.reflexMode > 0);
-}
-
-void Upscaling::PostPostLoad()
-{
-	highFPSPhysicsFixLoaded = GetModuleHandleA("Data\\F4SE\\Plugins\\HighFPSPhysicsFix.dll") != nullptr;
-
-	logger::debug("[FrameGen] HighFPSPhysicsFix.dll loaded: {}", highFPSPhysicsFixLoaded);
-
-	renderBackendEnabled = pluginMode == PluginMode::kUpscaler &&
-		((UsesDLSSUpscaling() && Streamline::GetSingleton()->featureDLSS) ||
-		 (UsesFSRUpscaling() && d3d12Interop && FidelityFX::GetSingleton()->featureFSR));
-	InstallHooks();
 }
 
 void Upscaling::CreateFrameGenerationResources()
@@ -1207,120 +1142,6 @@ void Upscaling::DenoiseUIAlphaResource()
 	context->CSSetShader(nullShader, nullptr, 0);
 }
 
-void Upscaling::TimerSleepQPC(int64_t targetQPC)
-{
-	LARGE_INTEGER currentQPC;
-	do {
-		QueryPerformanceCounter(&currentQPC);
-	} while (currentQPC.QuadPart < targetQPC);
-}
-
-void Upscaling::FrameLimiter(bool a_useFrameGeneration)
-{
-	static LARGE_INTEGER lastFrame = {};
-
-	const bool frameGenActive = d3d12Interop;
-	if (frameGenActive && settings.frameLimitMode) {
-
-		// Stick within VRR bounds
-		double bestRefreshRate = refreshRate - (refreshRate * refreshRate) / 3600.0;
-
-		LARGE_INTEGER qpf;
-		QueryPerformanceFrequency(&qpf);
-
-		int64_t targetFrameTicks = int64_t(double(qpf.QuadPart) / (bestRefreshRate * (a_useFrameGeneration ? 0.5 : 1.0)));
-
-		LARGE_INTEGER timeNow;
-		QueryPerformanceCounter(&timeNow);
-		int64_t delta = timeNow.QuadPart - lastFrame.QuadPart;
-		if (delta < targetFrameTicks) {
-			TimerSleepQPC(lastFrame.QuadPart + targetFrameTicks);
-		}
-	}
-
-	QueryPerformanceCounter(&lastFrame);
-}
-
-void Upscaling::GameFrameLimiter()
-{
-	double bestRefreshRate = 60.0f;
-
-	LARGE_INTEGER qpf;
-	QueryPerformanceFrequency(&qpf);
-
-	int64_t targetFrameTicks = int64_t(double(qpf.QuadPart) / bestRefreshRate);
-
-	static LARGE_INTEGER lastFrame = {};
-	LARGE_INTEGER timeNow;
-	QueryPerformanceCounter(&timeNow);
-	int64_t delta = timeNow.QuadPart - lastFrame.QuadPart;
-	if (delta < targetFrameTicks) {
-		TimerSleepQPC(lastFrame.QuadPart + targetFrameTicks);
-	}
-	QueryPerformanceCounter(&lastFrame);	
-}
-
-/*
-* Copyright (c) 2022-2023 NVIDIA CORPORATION. All rights reserved
-*
-* Permission is hereby granted, free of charge, to any person obtaining a copy
-* of this software and associated documentation files (the "Software"), to deal
-* in the Software without restriction, including without limitation the rights
-* to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-* copies of the Software, and to permit persons to whom the Software is
-* furnished to do so, subject to the following conditions:
-*
-* The above copyright notice and this permission notice shall be included in all
-* copies or substantial portions of the Software.
-*
-* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-* AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-* OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-* SOFTWARE.
-*/
-
-double Upscaling::GetRefreshRate(HWND a_window)
-{
-	HMONITOR monitor = MonitorFromWindow(a_window, MONITOR_DEFAULTTONEAREST);
-	MONITORINFOEXW info;
-	info.cbSize = sizeof(info);
-	if (GetMonitorInfoW(monitor, &info) != 0) {
-		// using the CCD get the associated path and display configuration
-		UINT32 requiredPaths, requiredModes;
-		if (GetDisplayConfigBufferSizes(QDC_ONLY_ACTIVE_PATHS, &requiredPaths, &requiredModes) == ERROR_SUCCESS) {
-			std::vector<DISPLAYCONFIG_PATH_INFO> paths(requiredPaths);
-			std::vector<DISPLAYCONFIG_MODE_INFO> modes2(requiredModes);
-			if (QueryDisplayConfig(QDC_ONLY_ACTIVE_PATHS, &requiredPaths, paths.data(), &requiredModes, modes2.data(), nullptr) == ERROR_SUCCESS) {
-				// iterate through all the paths until find the exact source to match
-				for (auto& p : paths) {
-					DISPLAYCONFIG_SOURCE_DEVICE_NAME sourceName;
-					sourceName.header.type = DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME;
-					sourceName.header.size = sizeof(sourceName);
-					sourceName.header.adapterId = p.sourceInfo.adapterId;
-					sourceName.header.id = p.sourceInfo.id;
-					if (DisplayConfigGetDeviceInfo(&sourceName.header) == ERROR_SUCCESS) {
-						// find the matched device which is associated with current device
-						// there may be the possibility that display may be duplicated and windows may be one of them in such scenario
-						// there may be two callback because source is same target will be different
-						// as window is on both the display so either selecting either one is ok
-						if (wcscmp(info.szDevice, sourceName.viewGdiDeviceName) == 0) {
-							// get the refresh rate
-							UINT numerator = p.targetInfo.refreshRate.Numerator;
-							UINT denominator = p.targetInfo.refreshRate.Denominator;
-							return (double)numerator / (double)denominator;
-						}
-					}
-				}
-			}
-		}
-	}
-	logger::error("Failed to retrieve refresh rate from swap chain");
-	return 60;
-}
-
 void Upscaling::PostDisplay()
 {
 	if (IsLoadingMenuOpen())
@@ -1446,80 +1267,4 @@ void Upscaling::Reset()
 		context->ClearRenderTargetView(reticleColorAndAlphaBufferShared[dx12SwapChain->frameIndex]->rtv.get(), clearColor);
 	context->ClearRenderTargetView(depthBufferShared[dx12SwapChain->frameIndex]->rtv.get(), clearColor);
 	context->ClearRenderTargetView(motionVectorBufferShared[dx12SwapChain->frameIndex]->rtv.get(), clearColor);
-}
-
-struct WindowSizeChanged
-{
-	static void thunk(RE::BSGraphics::Renderer*, unsigned int)
-	{
-	}
-	static inline REL::Relocation<decltype(thunk)> func;
-};
-
-struct SetUseDynamicResolutionViewportAsDefaultViewport
-{
-	static void thunk(RE::BSGraphics::RenderTargetManager* This, bool a_true)
-	{
-		func(This, a_true);
-		if (!a_true) {
-			auto* upscaling = Upscaling::GetSingleton();
-			upscaling->Upscale();
-			upscaling->PostDisplay();
-		}
-	}
-	static inline REL::Relocation<decltype(thunk)> func;
-};
-
-bool reticleFix = false;
-
-struct DrawWorld_Forward
-{
-	static void thunk(void* a1)
-	{		
-		func(a1);
-
-		if (!reticleFix)
-			Upscaling::GetSingleton()->CopyBuffersToSharedResources();
-
-		reticleFix = false;
-	}
-	static inline REL::Relocation<decltype(thunk)> func;
-};
-
-struct DrawWorld_Reticle
-{
-	static void thunk(void* a1)
-	{
-		auto upscaling = Upscaling::GetSingleton();
-		upscaling->PreAlpha();
-		func(a1);
-		reticleFix = true;
-		upscaling->PostAlpha();
-	}
-	static inline REL::Relocation<decltype(thunk)> func;
-};
-
-void Upscaling::InstallHooks()
-{
-	if (GetSingleton()->pluginMode == PluginMode::kUpscaler)
-		InstallUpscalerRenderBackendHooks();
-
-#if defined(FALLOUT_POST_NG)
-	stl::detour_thunk<WindowSizeChanged>(REL::ID(2276824));
-	stl::write_thunk_call<SetUseDynamicResolutionViewportAsDefaultViewport>(REL::ID(2318322).address() + 0xC5);
-	stl::detour_thunk<DrawWorld_Forward>(REL::ID(2318315));
-	stl::write_thunk_call<DrawWorld_Reticle>(REL::ID(2318315).address() + 0x53D);
-#else
-	// Fix game initialising twice
-	stl::detour_thunk<WindowSizeChanged>(REL::ID(212827));
-
-	// Watch frame presentation
-	stl::write_thunk_call<SetUseDynamicResolutionViewportAsDefaultViewport>(REL::ID(587723).address() + 0xE1);
-
-	// Fix reticles on motion vectors and depth
-	stl::detour_thunk<DrawWorld_Forward>(REL::ID(656535));
-	stl::write_thunk_call<DrawWorld_Reticle>(REL::ID(338205).address() + 0x253);
-#endif
-
-	logger::debug("[Upscaler] Installed hooks");
 }
