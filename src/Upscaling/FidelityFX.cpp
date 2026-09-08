@@ -303,29 +303,34 @@ void FidelityFX::Present(bool a_useFrameGen)
 
 	ffx::ConfigureDescFrameGeneration configParameters{};
 
-	if (canUseFrameGen) {
-		configParameters.frameGenerationEnabled = true;
+	// The frame-generation callback stays installed even while generation is off.
+	//
+	// ffxConfigure calls made by the app are *deferred*: in
+	// FrameInterpolationSwapchainDX12::setFrameGenerationConfig, applyChangesNow is
+	// only true when the swap chain re-applies its own cached descriptor from
+	// ::present. Our descriptor is therefore copied into nextFrameGenerationConfig
+	// and applied at some later present. In the meantime the swap chain can still
+	// run presentInterpolated() for a frame that was queued while generation was
+	// enabled, and dispatchInterpolationCommands() invokes
+	// frameGenerationCallback(...) with no null check. Clearing the pointer on the
+	// disable path is thus a null call inside amd_fidelityfx_dx12.dll, which is how
+	// entering a LoadingMenu one frame after generation started could crash.
+	//
+	// AMD's own sample (Samples/Upscalers/FidelityFX_FSR/dx12/fsrapirendermodule.cpp)
+	// installs the callback unconditionally and toggles frameGenerationEnabled only.
+	// frameGenContext is a singleton member that outlives the swap chain, so the
+	// user-context pointer stays valid for the lifetime of the process.
+	configParameters.frameGenerationCallback = [](ffxDispatchDescFrameGeneration* params, void* pUserCtx) -> ffxReturnCode_t {
+		try {
+			return ffxModule.Dispatch(reinterpret_cast<ffxContext*>(pUserCtx), &params->header);
+		} catch (...) {
+			return FFX_API_RETURN_ERROR;
+		}
+		};
+	configParameters.frameGenerationCallbackUserContext = &frameGenContext;
 
-		configParameters.frameGenerationCallback = [](ffxDispatchDescFrameGeneration* params, void* pUserCtx) -> ffxReturnCode_t {
-			try {
-				return ffxModule.Dispatch(reinterpret_cast<ffxContext*>(pUserCtx), &params->header);
-			} catch (...) {
-				return FFX_API_RETURN_ERROR;
-			}
-			};
-		configParameters.frameGenerationCallbackUserContext = &frameGenContext;
-
-		configParameters.HUDLessColor = ffxApiGetResourceDX12(HUDLessColor);
-
-	}
-	else {
-		configParameters.frameGenerationEnabled = false;
-
-		configParameters.frameGenerationCallbackUserContext = nullptr;
-		configParameters.frameGenerationCallback = nullptr;
-
-		configParameters.HUDLessColor = FfxApiResource({});
-	}
+	configParameters.frameGenerationEnabled = canUseFrameGen;
+	configParameters.HUDLessColor = canUseFrameGen ? ffxApiGetResourceDX12(HUDLessColor) : FfxApiResource({});
 
 	configParameters.presentCallback = nullptr;
 	configParameters.presentCallbackUserContext = nullptr;
@@ -443,12 +448,16 @@ void FidelityFX::Present(bool a_useFrameGen)
 						static_cast<uint32_t>(dispatchResult), fgFailuresSinceLastSuccess);
 				}
 
+				// Same rule as the configure block above: turn generation off but
+				// leave the callback installed, or a frame already queued for
+				// interpolation will call a null pointer inside the FFX swap chain.
 				ffx::ConfigureDescFrameGeneration disableConfig{};
 				disableConfig.frameGenerationEnabled = false;
-				disableConfig.frameGenerationCallbackUserContext = nullptr;
-				disableConfig.frameGenerationCallback = nullptr;
+				disableConfig.frameGenerationCallback = configParameters.frameGenerationCallback;
+				disableConfig.frameGenerationCallbackUserContext = &frameGenContext;
 				disableConfig.HUDLessColor = FfxApiResource({});
 				disableConfig.swapChain = dx12SwapChain->swapChain;
+				disableConfig.frameID = frameID;
 				ffx::Configure(frameGenContext, disableConfig);
 			} else {
 				if (fgFailuresSinceLastSuccess > 0) {
