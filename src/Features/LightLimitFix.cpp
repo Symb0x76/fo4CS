@@ -2668,17 +2668,24 @@ void LightLimitFix::RunClusterPrepass()
 
         if (currentLightCount > 0)
         {
+            DirectX::XMFLOAT4X4 viewRows{};
+            bool viewRowsValid = false;
+            DirectX::XMFLOAT3 camPos{};
+            bool camPosValid = false;
+#if defined(FALLOUT_PRE_NG)
             // Replicate the EXACT transform vanilla sub_1428C37A0 uses for
             // cb2[1]: read the renderer-base camera position (+8736) and the
             // view rows (base + 7024 + 114..117 * 16), then
             // viewPos = (lightWorld - camWorld) * viewRows (row-vector, with
             // perspective divide). This is the only source guaranteed to match
             // the space of vanilla cb2[1].
+            //
+            // PreNG only: those are byte offsets into the 1.10.163 renderer state,
+            // recovered from that build's disassembly. There is no reason for them
+            // to hold on 1.10.984 or the Anniversary build, so the other runtimes
+            // fall through to the CommonLibF4 camera state below -- the same path
+            // PreNG itself takes whenever the raw read is not readable.
             const auto rendererBase = GetPreNGDFLightRendererStateBase();
-            DirectX::XMFLOAT4X4 viewRows{};
-            bool viewRowsValid = false;
-            DirectX::XMFLOAT3 camPos{};
-            bool camPosValid = false;
             if (rendererBase != 0 && F4Runtime::IsReadableAddress(rendererBase + 7024 + 114 * 16, 4 * 16) &&
                 F4Runtime::IsReadableAddress(rendererBase + 8736, sizeof(float) * 3))
             {
@@ -2687,6 +2694,7 @@ void LightLimitFix::RunClusterPrepass()
                 viewRowsValid = true;
                 camPosValid = true;
             }
+#endif
             if (!viewRowsValid || !camPosValid)
             {
                 // Fallback: previous camViewData-based rotation, so lights keep
@@ -2697,9 +2705,11 @@ void LightLimitFix::RunClusterPrepass()
                 camPos = DirectX::XMFLOAT3{ p.x, p.y, p.z };
             }
 
+#if defined(FALLOUT_PRE_NG)
             preNGDFLightLastSnapshotCameraPos = DirectX::XMFLOAT4{ camPos.x, camPos.y, camPos.z, 0.0f };
             preNGDFLightLastSnapshotViewRows = viewRows;
             preNGDFLightLastSnapshotViewValid = viewRowsValid && camPosValid;
+#endif
 
             DirectX::XMMATRIX view = DirectX::XMLoadFloat4x4(&viewRows);
             DirectX::XMVECTOR camPosV = DirectX::XMLoadFloat3(&camPos);
@@ -2861,14 +2871,25 @@ void LightLimitFix::RunClusterPrepass()
             // Reuse the snapshot taken above; fall back to a fresh read only if
             // that snapshot was never populated.
             {
+#if defined(FALLOUT_PRE_NG)
                 DirectX::XMFLOAT4X4 viewRows = preNGDFLightLastSnapshotViewRows;
                 DirectX::XMFLOAT3 camPos{
                     preNGDFLightLastSnapshotCameraPos.x,
                     preNGDFLightLastSnapshotCameraPos.y,
                     preNGDFLightLastSnapshotCameraPos.z };
                 bool valid = preNGDFLightLastSnapshotViewValid;
+#else
+                // No PreNG renderer-state snapshot exists on these runtimes, so the
+                // CommonLibF4 camera state below is the only source. It is still the
+                // same camera the positionWS[1] fill used, because that fill took the
+                // identical fallback.
+                DirectX::XMFLOAT4X4 viewRows{};
+                DirectX::XMFLOAT3 camPos{};
+                bool valid = false;
+#endif
                 if (!valid)
                 {
+#if defined(FALLOUT_PRE_NG)
                     const auto rendererBase = GetPreNGDFLightRendererStateBase();
                     valid = rendererBase != 0 &&
                         F4Runtime::IsReadableAddress(rendererBase + 7024 + 114 * 16, 4 * 16) &&
@@ -2878,6 +2899,7 @@ void LightLimitFix::RunClusterPrepass()
                         std::memcpy(&viewRows, reinterpret_cast<const void *>(rendererBase + 7024 + 114 * 16), sizeof(viewRows));
                         std::memcpy(&camPos, reinterpret_cast<const void *>(rendererBase + 8736), sizeof(camPos));
                     }
+#endif
                 }
                 if (!valid)
                 {
@@ -2984,7 +3006,12 @@ ID3D11ShaderResourceView *LightLimitFix::GetCurrentLightsSRV()
 #if defined(FALLOUT_PRE_NG)
     return lightsSRVs[currentLightsBufferIndex % kPreNGLightsBufferFrames].get();
 #else
-    return GetCurrentLightsSRV();
+    // Was `return GetCurrentLightsSRV();` -- unconditional self-recursion, so any
+    // call on these runtimes overflowed the stack. Only PreNG could ever have run
+    // this code, because the other two variants did not compile. The single
+    // lightsSRV declared in the #else half of LightLimitFix.h is the counterpart
+    // to PreNG's rotating lightsSRVs ring.
+    return lightsSRV.get();
 #endif
 }
 
@@ -3271,6 +3298,12 @@ std::uint32_t LightLimitFix::CollectLightsFromPreNGSceneLights(RE::BSRenderPass 
 }
 #endif
 
+// PreNG only. Every member defined between here and the #endif below is
+// declared inside a FALLOUT_PRE_NG block in LightLimitFix.h, so on the other
+// runtimes these definitions have no matching declaration and the raw
+// renderer-state offsets they read do not apply. The guard was missing, which
+// is why PostNG and PostAE never compiled on this branch.
+#if defined(FALLOUT_PRE_NG)
 std::uint32_t LightLimitFix::CollectLightsFromPreNGShadowScene()
 {
     std::uintptr_t activeLightsAddress = 0;
@@ -3650,6 +3683,7 @@ LightLimitFix::PreNGDFLightResourceBindingState LightLimitFix::BindPreNGBSLighti
 {
     return BindPreNGDescriptorResourcesToPixelShader("BSLighting descriptor");
 }
+#endif
 
 #if defined(FALLOUT_PRE_NG)
 const char *GetPreNGBSLightingSetupGeometryPreviewReasonName(std::uint32_t a_reason)
@@ -3720,6 +3754,7 @@ std::uint32_t GetCachedPreNGBSLightingSetupGeometryPreviewReason()
 }
 #endif
 
+#if defined(FALLOUT_PRE_NG)
 bool LightLimitFix::ShouldProcessPreNGBSLightingSetupGeometryProof() const
 {
     if (ShouldBindPreNGSetupGeometryStrictLightCB() || ShouldPersistPreNGSetupGeometryStrictLightCB() ||
@@ -3843,7 +3878,9 @@ LightLimitFix::PreNGDFLightResourceBindingState LightLimitFix::BindPreNGBSLighti
 
     return state;
 }
+#endif
 
+#if defined(FALLOUT_PRE_NG)
 // Per-draw visible-consumer bind driven by BSLighting SetupGeometry or the
 // normal-world batched per-item setup (sub_1428C37A0). Swaps the current pixel
 // shader to the ShaderCache consumer PS and re-asserts t35-t37.
@@ -3915,6 +3952,7 @@ void LightLimitFix::TryBindPreNGBSLightingVisibleConsumerFromSetupGeometry(
                      currentLightCount);
     }
 }
+#endif
 
 #if defined(FALLOUT_PRE_NG)
 namespace

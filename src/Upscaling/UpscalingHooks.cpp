@@ -3,6 +3,10 @@
 #include "Upscaling/FidelityFX.h"
 #include "Upscaling/Streamline.h"
 
+// InstallHooks names RE::FO4Runtime::{PreNG,PostNG}::Hooks directly. PreNG got
+// this header transitively, which is why the omission only ever broke PostNG.
+#include <RE/FO4Runtime.h>
+
 void InstallUpscalerRenderBackendHooks();
 
 void Upscaling::PostPostLoad()

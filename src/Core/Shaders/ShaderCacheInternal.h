@@ -99,6 +99,21 @@ namespace CommunityShaders::shadercache
 		bool IsPreNGDFLightFxpName(std::string_view a_normalizedFxpFilename);
 		bool IsPreNGBSLightingFxpName(std::string_view a_normalizedFxpFilename);
 		bool IsPreNGDFCompositeFxpName(std::string_view a_normalizedFxpFilename);
+		// The PreNG DFLight forward visible-consumer descriptor.
+		//
+		// Deliberately callable on every runtime, returning a hard false off PreNG.
+		// The shader-type constant and the descriptor predicate behind it are both
+		// PreNG-only, and this same five-term test is needed from two all-runtime
+		// boolean chains -- CanCompileDescriptorShader and the ShaderCache source
+		// override. Naming it once keeps the #if in the definition instead of
+		// leaking into the middle of those chains, which is how PostNG and PostAE
+		// came to reference PreNG-only symbols and stopped compiling.
+		bool IsPreNGDFLightForwardConsumerShader(
+			ShaderStage a_stage,
+			std::int32_t a_shaderType,
+			std::string_view a_normalizedFxpFilename,
+			std::uint32_t a_descriptor);
+
 		bool IsPreNGDFLightFullShadowedDescriptorShader(
 			ShaderStage a_stage,
 			std::int32_t a_shaderType,

@@ -42,6 +42,21 @@ endif()
 add_subdirectory(${CommonLibPath} ${CommonLibName} EXCLUDE_FROM_ALL)
 xseplugin_resolve_commonlib_target(CommonLibTarget)
 
+# The CommonLibF4 forks branch on the FALLOUT_* macros inside their own headers --
+# RE/FO4Runtime.h picks REX::FModule over REL::Module::get() under
+# FALLOUT_POST_AE, for one. Fo4cs.Runtime carries those macros to fo4CS targets,
+# but commonlibf4 comes in through add_subdirectory and links nothing of ours, so
+# its own translation units compiled with the macros absent and took the wrong
+# branch. That is why PostAE never got past building CommonLibF4.
+# CommonLibTarget is an ALIAS, which target_compile_definitions refuses, so name
+# the concrete target the fork actually declares.
+foreach(_commonlib_real CommonLibF4 commonlibf4)
+    if(TARGET ${_commonlib_real})
+        target_compile_definitions(${_commonlib_real} PUBLIC ${FO4CS_RUNTIME_DEFINITIONS})
+        break()
+    endif()
+endforeach()
+
 set(FO4CS_COMMON_DEPENDENCIES
     ${CommonLibTarget}
     spdlog::spdlog

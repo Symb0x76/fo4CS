@@ -134,11 +134,11 @@ namespace CommunityShaders
 			return std::nullopt;
 		}
 
-		if (ShouldEnablePreNGDFLightForwardVisibleLLF() &&
-		    a_key.stage == ShaderStage::Pixel &&
-		    a_key.shaderType == kPreNGDFLightingShaderType &&
-		    IsPreNGDFLightFxpName(a_key.fxpFilename) &&
-		    F4Runtime::PreNG::IsDFLightForwardPixelDescriptor(a_key.descriptor)) {
+		if (IsPreNGDFLightForwardConsumerShader(
+			    a_key.stage,
+			    a_key.shaderType,
+			    a_key.fxpFilename,
+			    a_key.descriptor)) {
 			const auto diskPath = std::filesystem::path("Data\\Shaders") / std::filesystem::path(kPreNGDFLightForwardConsumerSource);
 			std::error_code ec;
 			if (std::filesystem::exists(diskPath, ec) && std::filesystem::is_regular_file(diskPath, ec)) {
