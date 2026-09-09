@@ -30,8 +30,8 @@ Phases A and B are complete and build-verified. Phase C is partially done.
 
 | File | Before | Now |
 |------|--------|-----|
-| `src/Features/LightLimitFix.cpp` | 5081 | **5081 — not started** |
-| `src/Core/BSShaderHooks.cpp` | 3508 | **3508 — not started** |
+| `src/Features/LightLimitFix.cpp` | 5081 | **5119 — not started** (grew: PostNG/PostAE guards added) |
+| `src/Core/BSShaderHooks.cpp` | 3508 | 2927 (+ 4 units under `src/Core/ShaderHooks/`) — 5 clusters left |
 | `src/Core/ShaderCache.cpp` | 2013 | 548 (+ 5 units under `src/Core/Shaders/`) |
 | `src/Upscaling/Upscaler.cpp` | 1668 | 407 (+ 8 units) |
 | `src/Upscaling/UpscalerRenderBackend.cpp` | 1345 | 663 (+ 5 units) |
@@ -110,9 +110,46 @@ the line numbers first, they drift and several were off by one.
          refactor: an anonymous namespace became
          `CommunityShaders::shadercache`. Every predicate keeps exactly one
          definition because several own a one-shot cache that logs on first call.
-2. [ ] `src/Core/BSShaderHooks.cpp` (3508) → `src/Core/ShaderHooks/`.
+2. [~] `src/Core/BSShaderHooks.cpp` (3508 → 2927) → `src/Core/ShaderHooks/`.
        Outline: `docs/refactor-outlines/outline-BSShaderHooks.md`
-       (134 definitions, 12 clusters).
+       (134 definitions, 12 clusters). Four of them done, in the order the
+       outline recommends:
+
+       - `PreNGShaderHookConstants.h` (67) — the `RE::FO4Runtime` alias and 40
+         constants. Left spelled `static constexpr`, not modernised to `inline
+         constexpr`, so each including TU keeps its own identical copy exactly as
+         before; nothing takes their addresses or compares the `const char*`
+         values.
+       - `PreNGRuntime.{h,cpp}` (65/151) — guarded memory access, the Debug.ini
+         readers, descriptor normalisation, fxp-name matching. The two templates
+         stay in the header because `ReadPreNGCString` instantiates
+         `ReadPreNGValue<char>`.
+       - `PreNGSwitches.{h,cpp}` (45/211) — all 26 gates, deliberately in one TU:
+         each caches its lookup in a function-local `static const`, so one TU
+         means one latch each and no Debug.ini read returns to the draw path.
+       - `PreNGDescriptorPredicates.{h,cpp}` (42/189) — shader-family and
+         descriptor classification. Two ranges rather than one, because
+         `LogPreNGDFLightFullContractDescriptorBindHeld` sits between them and
+         belongs to the diagnostics cluster.
+
+       **Structural fact that shapes the rest:** lines 95–3013 of the original
+       file were a single `#if defined(FALLOUT_PRE_NG)` region — 2919 of 3508
+       lines. On PostNG/PostAE this file is under 600 lines of active code, so
+       each new PreNG cluster wraps its body in that guard and compiles to
+       nothing on the other two variants. Since 2026-09-09 all three variants
+       build, so that emptiness is proven rather than assumed.
+
+       Remaining, in outline order: C6 vanilla dumps (~296), C5 descriptor
+       diagnostics (~319), C4 lookup diagnostics (~382), C7/C8 the GPU-state
+       binds, C10 the PostNG hook block, then C9 the 474-line thunk last — eight
+       function-local latches and a hot-path gate ordering that must not be
+       disturbed. Plus a dead `TryBindPreNGDeferredLightingPixelShader` to delete
+       as its own commit.
+
+       **Awaiting a game run.** All four clusters sit on the shader-lookup hot
+       path. Compile-identical is not runtime-identical for the `static const`
+       latch semantics, and a regression riding in on top of unvalidated moves
+       would be far harder to attribute once C7/C8/C9 land on top.
 3. [x] `src/Core/Deferred.cpp` (1198 → 763, under the 800 fail threshold).
        `DeferredTrace.cpp` (242) and `DeferredGBuffer.cpp` (232) extracted, sharing
        `DeferredInternal.h` (80). `LightingDrawState` reaches the trace cluster
