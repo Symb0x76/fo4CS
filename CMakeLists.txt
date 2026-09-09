@@ -236,6 +236,8 @@ if(COMMUNITY_SHADERS)
         src/Core/ShaderHooks/PreNGRuntime.cpp
         src/Core/ShaderHooks/PreNGRuntime.h
         src/Core/ShaderHooks/PreNGShaderHookConstants.h
+        src/Core/ShaderHooks/PreNGSwitches.cpp
+        src/Core/ShaderHooks/PreNGSwitches.h
         src/Core/BSShaderHooks.h
         src/Core/D3D11DeviceHooks.cpp
         src/Core/Hooks.cpp
