@@ -186,7 +186,39 @@ void DrainD3D12InfoQueue(const char *a_when)
 void DX12SwapChain::CreateD3D12Device(IDXGIAdapter *a_adapter)
 {
     fo4cs::render::EnableD3D12Diagnostics();
-    DX::ThrowIfFailed(D3D12CreateDevice(a_adapter, D3D_FEATURE_LEVEL_12_0, IID_PPV_ARGS(&d3d12Device)));
+
+    // Feature-level ladder rather than a bare 12_0 create.
+    //
+    // With FO4CS_D3D12_DEBUG_LAYER set, D3D12CreateDevice at 12_0 returns
+    // E_INVALIDARG on this machine and the whole proxy falls back to plain D3D11 --
+    // no upscaling, no frame generation. EnableDebugLayer() cannot be undone once
+    // called, so there is no way to retry without it; the only recovery is to ask
+    // for less. The game itself creates its D3D11 device at FEATURE_LEVEL_11_1, so
+    // nothing here actually requires 12_0.
+    //
+    // 12_0 is still tried first, so a machine that accepts it behaves exactly as
+    // before. Each attempt logs its HRESULT, which is the evidence needed to tell a
+    // debug-layer rejection apart from a genuine capability gap.
+    static constexpr D3D_FEATURE_LEVEL kDeviceFeatureLevels[]{
+        D3D_FEATURE_LEVEL_12_0,
+        D3D_FEATURE_LEVEL_11_1,
+        D3D_FEATURE_LEVEL_11_0,
+    };
+
+    HRESULT deviceResult = E_FAIL;
+    for (const auto featureLevel : kDeviceFeatureLevels)
+    {
+        deviceResult = D3D12CreateDevice(a_adapter, featureLevel, IID_PPV_ARGS(&d3d12Device));
+        if (SUCCEEDED(deviceResult))
+        {
+            logger::info("[DX12SwapChain] D3D12 device created at feature level 0x{:X}",
+                         static_cast<std::uint32_t>(featureLevel));
+            break;
+        }
+        logger::warn("[DX12SwapChain] D3D12CreateDevice failed at feature level 0x{:X}: 0x{:08X}",
+                     static_cast<std::uint32_t>(featureLevel), static_cast<std::uint32_t>(deviceResult));
+    }
+    DX::ThrowIfFailed(deviceResult);
     fo4cs::render::ConfigureD3D12InfoQueue(d3d12Device.get());
     if (ID3D12Device *upgradedDevice = d3d12Device.get();
         Streamline::GetSingleton()->UpgradeD3D12DeviceForDLSSG(&upgradedDevice) && upgradedDevice != d3d12Device.get())
