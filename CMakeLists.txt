@@ -233,6 +233,8 @@ if(COMMUNITY_SHADERS)
   fo4cs_add_object_library(Fo4cs.Shaders
     SOURCES
         src/Core/BSShaderHooks.cpp
+        src/Core/ShaderHooks/PreNGDescriptorPredicates.cpp
+        src/Core/ShaderHooks/PreNGDescriptorPredicates.h
         src/Core/ShaderHooks/PreNGRuntime.cpp
         src/Core/ShaderHooks/PreNGRuntime.h
         src/Core/ShaderHooks/PreNGShaderHookConstants.h
