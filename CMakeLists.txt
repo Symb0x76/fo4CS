@@ -244,6 +244,7 @@ if(COMMUNITY_SHADERS)
         src/Core/AdditivePasses.cpp
         src/Core/Deferred.cpp
         src/Core/Deferred.h
+        src/Core/Deferred/DeferredGBuffer.cpp
         src/Core/Deferred/DeferredInternal.h
         src/Core/Deferred/DeferredTrace.cpp
         src/Core/DrawStateProof.cpp
