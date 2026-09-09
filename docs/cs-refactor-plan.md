@@ -36,7 +36,7 @@ Phases A and B are complete and build-verified. Phase C is partially done.
 | `src/Upscaling/Upscaler.cpp` | 1668 | 407 (+ 8 units) |
 | `src/Upscaling/UpscalerRenderBackend.cpp` | 1345 | 663 (+ 5 units) |
 | `src/Render/DX12SwapChain.cpp` | 1212 | 323 (+ 4 units) |
-| `src/Core/Deferred.cpp` | 1198 | **1198 — not started** |
+| `src/Core/Deferred.cpp` | 1198 | 763 (+ 2 units under `src/Core/Deferred/`) |
 | `src/Upscaling/Streamline.cpp` | 1111 | 467 (+ 5 units) |
 | `src/Core/AdditivePasses.cpp` | 992 | **992 — not started** |
 | `src/Core/LLFPixelTracker.cpp` | 991 | **991 — not started** |
@@ -113,11 +113,32 @@ the line numbers first, they drift and several were off by one.
 2. [ ] `src/Core/BSShaderHooks.cpp` (3508) → `src/Core/ShaderHooks/`.
        Outline: `docs/refactor-outlines/outline-BSShaderHooks.md`
        (134 definitions, 12 clusters).
-3. [ ] `src/Core/Deferred.cpp` (1198). Outline: the second half of
-       `outline-ShaderCache-Deferred.md`. Note the clusters interleave (the draw-hook
-       cluster is four non-contiguous ranges), `LightingDrawState` has to reach the
-       trace cluster through a header, and `ClearShaderCache` locks
-       `lightingShaderLock` and `blendStateLock` together.
+3. [x] `src/Core/Deferred.cpp` (1198 → 763, under the 800 fail threshold).
+       `DeferredTrace.cpp` (242) and `DeferredGBuffer.cpp` (232) extracted, sharing
+       `DeferredInternal.h` (80). `LightingDrawState` reaches the trace cluster
+       through that header as the outline required.
+
+       Two of the outline's cautions turned out not to bind. `SetupResources`
+       calling `InstallDrawHooks` across the new boundary needed nothing, because
+       both are `Deferred` members declared in `Deferred.h`; the same goes for
+       `GetOrCreateMRTBlendState`. And the binding tables did not need external
+       linkage — every out-of-unit reader goes through the public static accessors
+       `GetGBufferTargetBindings()` / `GetDeferredRenderTargetBindings()`, which
+       return those very objects by const reference.
+
+       Still in the façade and genuinely interleaved: the draw-hook cluster (TLS,
+       the seven original function pointers, the install lock and vtable latch,
+       which the outline is right to insist stay in one TU) and the hook-install
+       cluster. `ClearShaderCache` still locks `lightingShaderLock` and
+       `blendStateLock` together, so any lock taken in a new Deferred unit must
+       respect that order.
+
+       If the hook-install cluster (`HasAddressLibrary`, `LogHookFire`,
+       `detour_thunk_at`, `Hooks::Install`, the five thunks; ~290 lines) is
+       extracted later, note that it holds every `#if defined(FALLOUT_*)` region in
+       the file plus the raw byte-scan relocation decode — and PostNG/PostAE cannot
+       be built on this branch to verify it (see the pre-existing guard defects
+       below), so PreNG would be the only witness.
 4. [ ] `src/Features/LightLimitFix.cpp` (5081) → `src/Features/LightLimit/`.
        Outline: `outline-LightLimitFix.md` (153 functions, 14 clusters).
        **Highest risk in the repository** and deliberately left last:
