@@ -96,15 +96,25 @@ void FidelityFX::SetupFrameGeneration(DXGI_FORMAT a_hudlessFormat)
 	// what FFX planned for and D3D12 removes the device, with
 	// GetDeviceRemovedReason() reporting DXGI_ERROR_INVALID_CALL.
 	//
-	// This became reachable with #21. Before it, the HUDLess buffer was hardcoded to
-	// R8G8B8A8_UNORM, which is what the backbuffer already is, so FFX's assumption
-	// happened to be right and the missing descriptor cost nothing. #21 made the
-	// buffer follow the actual capture source (kFrameBuffer, R11G11B10_FLOAT on PreNG)
-	// so that capture could work at all -- and in doing so made the assumption wrong.
+	// #21 is what made this reachable, though not in the way its comment claimed. It
+	// meant to make the buffer follow kFrameBuffer, but probed that target through
+	// RenderTarget::texture, which is null for the swap-chain-backed slot. The probe
+	// never fired and the buffer fell through to kMain's R11G11B10_FLOAT instead --
+	// group 5 against the backbuffer's group 2. kFrameBuffer is in fact the backbuffer
+	// at the backbuffer format, so the intended behaviour would have been correct.
 	//
-	// When the formats agree the descriptor is unnecessary, so it is only chained on a
-	// real mismatch. That keeps machines whose capture source already matches the
-	// backbuffer on exactly the code path they ran before.
+	// CreateFrameGenerationResources now takes the format from
+	// dx12SwapChain->swapChainDesc.Format, the same field backBufferFormat is read from
+	// just above, so on this path hudlessFormat == backBufferFormat by construction and
+	// the descriptor below is never chained.
+	//
+	// The chaining stays as a net for any future source that genuinely diverges, and it
+	// fails safe: the shipped amd_fidelityfx_dx12.dll is built from FFX v1.1.x, whose
+	// frameinterpolationCreate() rejects a hudless format in a different precision group
+	// with FFX_API_RETURN_ERROR_RUNTIME_ERROR (3). That leaves generation off rather than
+	// removing the device. Note the check is unconditional in v1.1.x but sits behind
+	// FFX_FRAMEINTERPOLATION_ENABLE_DEBUG_CHECKING in the v2.3.0 source vendored under
+	// extern/FidelityFX-SDK, so the vendored tree does not describe the runtime we ship.
 	const DXGI_FORMAT hudlessFormat =
 		a_hudlessFormat == DXGI_FORMAT_UNKNOWN ? backBufferFormat : a_hudlessFormat;
 	const bool hudlessFormatDiffers = hudlessFormat != backBufferFormat;
@@ -342,12 +352,20 @@ void FidelityFX::Present(bool a_useFrameGen)
 	const bool hudlessFormatStale =
 		HUDLessColor != nullptr && HUDLessColor->GetDesc().Format != frameGenHudlessFormat;
 
+	// PostDisplay is now the only writer of the HUDLess buffer, and it early-returns on a
+	// loading menu or a missing frame-buffer RTV while Reset() clears the slot to black
+	// each present. Generating from a black HUDLess is not a device hazard -- FFX reads a
+	// valid resource either way -- but differencing it against the presented backbuffer
+	// makes the entire frame read as UI. Skip the generated frame instead.
+	const bool hudLessFrameReady = upscaling->hudLessFrameValid[dx12SwapChain->frameIndex];
+
 	const bool canUseFrameGen = a_useFrameGen &&
 		commandList &&
 		HUDLessColor &&
 		depth &&
 		motionVectors &&
-		!hudlessFormatStale;
+		!hudlessFormatStale &&
+		hudLessFrameReady;
 
 	if (a_useFrameGen && !canUseFrameGen) {
 		static bool loggedMissingResources = false;

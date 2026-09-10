@@ -92,21 +92,55 @@ void Upscaling::CreateFrameGenerationResources()
 			texDesc.Height = renderHeight;
 		}
 
-		// #21: HUDLess capture requires an exact format match with the source
-		// render target because D3D11 CopyResource does not convert formats.
-		// The PreNG kFrameBuffer source is R11G11B10_FLOAT, so hardcoding the
-		// shared buffers to R8G8B8A8_UNORM left no compatible capture source
-		// and frame generation never ran. Follow the actual capture source
-		// format (kFrameBuffer when available, otherwise kMain) instead.
+		// The shared HUDLess/UI/reticle family follows the swap chain format.
+		//
+		// FFX v1.1.x frameinterpolationCreate() begins with an unconditional check that
+		// GetFormatPrecisionGroup(backBufferFormat) equals the group of the hudless source
+		// format, and FidelityFX::SetupFrameGeneration derives backBufferFormat from this
+		// very field. Reading the same variable in both places makes the two groups equal
+		// by construction rather than by luck, for any swap chain format.
+		//
+		// This replaces #21's probe, which asked kFrameBuffer for its format through
+		// RenderTarget::texture. That field is null for the swap-chain-backed slot -- its
+		// views are valid but the texture pointer is not, which is why every other consumer
+		// (Upscale, PostDisplay, UpdateRenderTargets) reaches kFrameBuffer through a view.
+		// The probe therefore never fired, the buffer silently inherited kMain's
+		// R11G11B10_FLOAT (group 5) against an R8G8B8A8_UNORM backbuffer (group 2), and the
+		// first frame-generation dispatch removed the device. The comment #21 left behind,
+		// claiming kFrameBuffer is R11G11B10_FLOAT, described a measurement that never
+		// happened; the run log's post-display source is fmt 28.
+		//
+		// The format now comes from outside, so it can no longer be assumed to back the
+		// views created below. texDesc already carries D3D11_BIND_UNORDERED_ACCESS and all
+		// three textures get an SRV, RTV and UAV, and Texture2D::CreateUAV throws on
+		// failure -- out of a render hook, with nothing to catch it. Ask the device first.
 		DXGI_FORMAT hudLessFormat = texDesc.Format;
-		{
-			auto& frameBuffer = rendererData->renderTargets[(uint)RenderTarget::kFrameBuffer];
-			if (frameBuffer.texture) {
-				D3D11_TEXTURE2D_DESC frameBufferDesc{};
-				reinterpret_cast<ID3D11Texture2D*>(frameBuffer.texture)->GetDesc(&frameBufferDesc);
-				hudLessFormat = frameBufferDesc.Format;
+		if (dx12SwapChain->swapChain) {
+			const auto candidateFormat = dx12SwapChain->swapChainDesc.Format;
+			auto device = reinterpret_cast<ID3D11Device*>(rendererData->device);
+
+			UINT formatSupport = 0;
+			const bool usable = device &&
+			                    SUCCEEDED(device->CheckFormatSupport(candidateFormat, &formatSupport)) &&
+			                    (formatSupport & D3D11_FORMAT_SUPPORT_TEXTURE2D) &&
+			                    (formatSupport & D3D11_FORMAT_SUPPORT_RENDER_TARGET) &&
+			                    (formatSupport & D3D11_FORMAT_SUPPORT_SHADER_SAMPLE) &&
+			                    (formatSupport & D3D11_FORMAT_SUPPORT_TYPED_UNORDERED_ACCESS_VIEW);
+
+			if (!usable) {
+				// Disable rather than substitute. Any other format re-breaks the exact-match
+				// CopyResource gate in PostDisplay and would leave the buffer permanently
+				// black, and a black HUDLess is handed to FFX unconditionally.
+				logger::error("[FrameGen] Swap chain format {} cannot back the shared HUDLess/UI/reticle views (support=0x{:X}); frame generation disabled",
+					static_cast<uint32_t>(candidateFormat),
+					formatSupport);
+				setupBuffers = false;
+				return;
 			}
+
+			hudLessFormat = candidateFormat;
 		}
+
 		texDesc.Format = hudLessFormat;
 		srvDesc.Format = texDesc.Format;
 		rtvDesc.Format = texDesc.Format;
@@ -252,11 +286,12 @@ void Upscaling::CreateFrameGenerationResources()
 	buildReticleUIColorAndAlphaCS = (ID3D11ComputeShader*)CompileFrameGenerationShader(L"BuildReticleUIColorAndAlphaCS.hlsl", "cs_5_0");
 	patchHUDLessReticleCS = (ID3D11ComputeShader*)CompileFrameGenerationShader(L"PatchHUDLessReticleCS.hlsl", "cs_5_0");
 	denoiseUIAlphaCS = (ID3D11ComputeShader*)CompileFrameGenerationShader(L"DenoiseUIAlphaCS.hlsl", "cs_5_0");
-	logger::info("[FrameGen] Shared resources created (render={}x{}, hud={}x{}, copyDepthCS={})",
+	logger::info("[FrameGen] Shared resources created (render={}x{}, hud={}x{} fmt={}, copyDepthCS={})",
 		depthBufferShared[0]->desc.Width,
 		depthBufferShared[0]->desc.Height,
 		HUDLessBufferShared[0]->desc.Width,
 		HUDLessBufferShared[0]->desc.Height,
+		static_cast<uint32_t>(HUDLessBufferShared[0]->desc.Format),
 		copyDepthToSharedBufferCS != nullptr);
 }
 
