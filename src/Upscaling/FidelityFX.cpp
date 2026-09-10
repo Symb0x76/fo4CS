@@ -63,9 +63,22 @@ void FidelityFX::LoadFFX()
 	}
 }
 
-void FidelityFX::SetupFrameGeneration()
+void FidelityFX::DestroyFrameGeneration()
+{
+	if (frameGenContext != nullptr) {
+		ffx::DestroyContext(frameGenContext);
+		frameGenContext = nullptr;
+	}
+
+	featureFrameGen = false;
+	frameGenEnabled = false;
+	frameGenHudlessFormat = DXGI_FORMAT_UNKNOWN;
+}
+
+void FidelityFX::SetupFrameGeneration(DXGI_FORMAT a_hudlessFormat)
 {
 	featureFrameGen = false;
+	frameGenEnabled = false;
 
 	if (!module) {
 		logger::warn("[FidelityFX] Runtime is not loaded, skipping frame generation context");
@@ -73,27 +86,67 @@ void FidelityFX::SetupFrameGeneration()
 	}
 
 	auto dx12SwapChain = DX12SwapChain::GetSingleton();
+	const auto backBufferFormat = dx12SwapChain->swapChainDesc.Format;
+
+	// FFX sizes and formats its internal hudless-path resources when the context is
+	// created, from backBufferFormat alone. It only learns that HUDLessColor uses a
+	// different format if ffxCreateContextDescFrameGenerationHudless is chained onto
+	// the create call. Without it, handing frame generation a HUDLess buffer whose
+	// format disagrees with the backbuffer is fatal: the first dispatch mismatches
+	// what FFX planned for and D3D12 removes the device, with
+	// GetDeviceRemovedReason() reporting DXGI_ERROR_INVALID_CALL.
+	//
+	// This became reachable with #21. Before it, the HUDLess buffer was hardcoded to
+	// R8G8B8A8_UNORM, which is what the backbuffer already is, so FFX's assumption
+	// happened to be right and the missing descriptor cost nothing. #21 made the
+	// buffer follow the actual capture source (kFrameBuffer, R11G11B10_FLOAT on PreNG)
+	// so that capture could work at all -- and in doing so made the assumption wrong.
+	//
+	// When the formats agree the descriptor is unnecessary, so it is only chained on a
+	// real mismatch. That keeps machines whose capture source already matches the
+	// backbuffer on exactly the code path they ran before.
+	const DXGI_FORMAT hudlessFormat =
+		a_hudlessFormat == DXGI_FORMAT_UNKNOWN ? backBufferFormat : a_hudlessFormat;
+	const bool hudlessFormatDiffers = hudlessFormat != backBufferFormat;
 
 	ffx::CreateContextDescFrameGeneration createFg{};
 	createFg.displaySize = { dx12SwapChain->swapChainDesc.Width, dx12SwapChain->swapChainDesc.Height };
 	createFg.maxRenderSize = createFg.displaySize;
 	createFg.flags = FFX_FRAMEGENERATION_ENABLE_ASYNC_WORKLOAD_SUPPORT;
-	createFg.backBufferFormat = ffxApiGetSurfaceFormatDX12(dx12SwapChain->swapChainDesc.Format);
+	createFg.backBufferFormat = ffxApiGetSurfaceFormatDX12(backBufferFormat);
+
+	ffx::CreateContextDescFrameGenerationHudless createHudless{};
+	createHudless.hudlessBackBufferFormat = ffxApiGetSurfaceFormatDX12(hudlessFormat);
 
 	ffx::CreateBackendDX12Desc createBackend{};
 	createBackend.device = dx12SwapChain->d3d12Device.get();
 
-	if (ffx::CreateContext(frameGenContext, nullptr, createFg, createBackend) != ffx::ReturnCode::Ok) {
-		logger::error("[FidelityFX] Failed to create frame generation context");
+	const auto createResult = hudlessFormatDiffers ?
+	                              ffx::CreateContext(frameGenContext, nullptr, createFg, createHudless, createBackend) :
+	                              ffx::CreateContext(frameGenContext, nullptr, createFg, createBackend);
+
+	if (createResult != ffx::ReturnCode::Ok) {
+		// Deliberately no retry without the hudless descriptor. That configuration is
+		// the one known to remove the device, so falling back to it would trade a
+		// disabled feature for a frozen game.
+		logger::error("[FidelityFX] Failed to create frame generation context (error={}, backbuffer fmt={}, hudless fmt={}, hudlessDescChained={})",
+			static_cast<uint32_t>(createResult),
+			static_cast<uint32_t>(backBufferFormat),
+			static_cast<uint32_t>(hudlessFormat),
+			hudlessFormatDiffers);
 		frameGenContext = nullptr;
+		frameGenHudlessFormat = DXGI_FORMAT_UNKNOWN;
 		return;
 	}
 
 	featureFrameGen = true;
-	logger::info("[FidelityFX] FSR frame generation context created (display={}x{}, fmt={})",
+	frameGenHudlessFormat = hudlessFormat;
+	logger::info("[FidelityFX] FSR frame generation context created (display={}x{}, fmt={}, hudless fmt={}, hudlessDescChained={})",
 		createFg.displaySize.width,
 		createFg.displaySize.height,
-		static_cast<uint32_t>(dx12SwapChain->swapChainDesc.Format));
+		static_cast<uint32_t>(backBufferFormat),
+		static_cast<uint32_t>(hudlessFormat),
+		hudlessFormatDiffers);
 }
 bool FidelityFX::SetupUpscaling(ID3D12Device* a_device, uint32_t a_maxRenderWidth, uint32_t a_maxRenderHeight, uint32_t a_outputWidth, uint32_t a_outputHeight)
 {
@@ -292,6 +345,33 @@ void FidelityFX::Present(bool a_useFrameGen)
 		}
 	}
 
+	// The context was created before the game's render targets existed, so it could
+	// only assume the HUDLess buffer matched the backbuffer. Now that the buffer is
+	// real, correct the context if that assumption was wrong -- see SetupFrameGeneration
+	// for why a wrong assumption removes the device.
+	//
+	// The rebuild is gated on generation currently being off so no interpolation can be
+	// in flight in the FFX presenter thread while the context is destroyed. That costs
+	// nothing in practice: Present() runs for thousands of menu and loading frames with
+	// generation disabled before it is first enabled, so the correction lands long
+	// before the first generated frame.
+	if (HUDLessColor != nullptr && !frameGenEnabled) {
+		const auto actualHudlessFormat = HUDLessColor->GetDesc().Format;
+		if (actualHudlessFormat != frameGenHudlessFormat) {
+			logger::info("[FidelityFX] HUDLess format is {}, frame generation context was built for {}; rebuilding context",
+				static_cast<uint32_t>(actualHudlessFormat),
+				static_cast<uint32_t>(frameGenHudlessFormat));
+
+			DestroyFrameGeneration();
+			SetupFrameGeneration(actualHudlessFormat);
+
+			if (!featureFrameGen || frameGenContext == nullptr) {
+				logger::error("[FidelityFX] Frame generation context rebuild failed; frame generation stays off");
+				return;
+			}
+		}
+	}
+
 	ffx::ConfigureDescFrameGeneration configParameters{};
 
 	// The frame-generation callback stays installed even while generation is off.
@@ -349,6 +429,9 @@ void FidelityFX::Present(bool a_useFrameGen)
 
 	if (ffx::Configure(frameGenContext, configParameters) != ffx::ReturnCode::Ok) {
 		logger::critical("[FidelityFX] Failed to configure frame generation!");
+	} else {
+		// Gates the context rebuild above: only rebuild while generation is off.
+		frameGenEnabled = canUseFrameGen;
 	}
 
 	static LARGE_INTEGER frequency = []() {
