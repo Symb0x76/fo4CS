@@ -5,7 +5,6 @@
 #include <atomic>
 #include <cstdint>
 #include <dx12/ffx_api_dx12.hpp>
-#include <dx12/ffx_api_framegeneration_dx12.hpp>
 #include <dxgi1_6.h>
 #include <optional>
 #include <string_view>

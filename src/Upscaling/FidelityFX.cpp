@@ -36,6 +36,23 @@ extern "C" ffxReturnCode_t ffxQuery(ffxContext* context, ffxQueryDescHeader* des
 	return ffxModule.Query(context, desc);
 }
 
+// Target is full FSR 3.1 support against the FidelityFX SDK v1.1.4 runtime.
+//
+// extern/FidelityFX-SDK is pinned to v1.1.4 and include/ carries that tag's ffx-api
+// headers verbatim, so what we compile against is what amd_fidelityfx_dx12.dll below
+// actually implements. That pairing is deliberate: the headers previously came from the
+// FSR 4.x API (FrameGeneration 4.0.0 / Upscaler 4.1.0) while the shipped runtime was
+// 1.1.x, and reading the newer source to explain older runtime behaviour cost several
+// rounds of misdiagnosis -- v1.1.x rejects a hudless format outside the backbuffer's
+// precision group unconditionally, where 2.3.0 moved that same check behind
+// FFX_FRAMEINTERPOLATION_ENABLE_DEBUG_CHECKING. Keep the three in step: submodule tag,
+// include/ headers, and the packaged DLL.
+//
+// TODO(future contributor): FSR 4 support is out of scope. It is not a DLL swap -- SDK
+// 2.x drops the monolithic amd_fidelityfx_dx12.dll for amd_fidelityfx_loader_dx12.dll
+// plus per-effect modules (framegeneration, upscaler, ~65 MB), so the load below and the
+// packaging step both change. Note the FSR 4 upscaler is RDNA-gated, so a fallback path
+// is needed for non-AMD hardware.
 void FidelityFX::LoadFFX()
 {
 	struct RuntimePath
@@ -131,9 +148,27 @@ void FidelityFX::SetupFrameGeneration(DXGI_FORMAT a_hudlessFormat)
 	ffx::CreateBackendDX12Desc createBackend{};
 	createBackend.device = dx12SwapChain->d3d12Device.get();
 
-	const auto createResult = hudlessFormatDiffers ?
-	                              ffx::CreateContext(frameGenContext, nullptr, createFg, createHudless, createBackend) :
-	                              ffx::CreateContext(frameGenContext, nullptr, createFg, createBackend);
+	// Chain the descriptors by hand rather than through ffx::CreateContext.
+	//
+	// v1.1.4's ffx::LinkHeaders declares its recursive case before the one- and
+	// two-argument bases, so under two-phase lookup the recursive call sees only itself:
+	// a three-descriptor chain recurses down to a one-argument call that has no
+	// candidate and fails to compile. Two descriptors work because the call site sees
+	// every overload. Linking here keeps include/ byte-identical to the SDK tag we ship
+	// instead of patching a vendored header to get a third descriptor through.
+	createFg.header.pNext = nullptr;
+	createHudless.header.pNext = nullptr;
+	createBackend.header.pNext = nullptr;
+
+	if (hudlessFormatDiffers) {
+		createFg.header.pNext = &createHudless.header;
+		createHudless.header.pNext = &createBackend.header;
+	} else {
+		createFg.header.pNext = &createBackend.header;
+	}
+
+	const auto createResult = static_cast<ffx::ReturnCode>(
+		ffxCreateContext(&frameGenContext, &createFg.header, nullptr));
 
 	if (createResult != ffx::ReturnCode::Ok) {
 		// Deliberately no retry without the hudless descriptor. That configuration is
