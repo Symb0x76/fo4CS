@@ -331,12 +331,22 @@ void FidelityFX::Present(bool a_useFrameGen)
 	auto HUDLessColor = upscaling->HUDLessBufferShared12[dx12SwapChain->frameIndex].get();
 	auto depth = upscaling->depthBufferShared12[dx12SwapChain->frameIndex].get();
 	auto motionVectors = upscaling->motionVectorBufferShared12[dx12SwapChain->frameIndex].get();
+	// A HUDLess format that disagrees with what the context was built against is fatal
+	// (see SetupFrameGeneration). The buffers can be reallocated under a live context,
+	// because CreateFrameGenerationResources runs from several resize and render-target
+	// paths, so the disagreement can appear while generation is already running. The
+	// context cannot be rebuilt at that moment: destroying it could race an
+	// interpolation in flight on the FFX presenter thread. Drop generation for this
+	// frame instead. The next frame arrives with frameGenEnabled false and takes the
+	// rebuild below.
+	const bool hudlessFormatStale =
+		HUDLessColor != nullptr && HUDLessColor->GetDesc().Format != frameGenHudlessFormat;
+
 	// PostDisplay is the only writer of the HUDLess buffer, and it early-returns on a
 	// loading menu or a missing frame-buffer RTV while Reset() clears the slot to black
 	// each present. Generating from a black HUDLess is not a device hazard -- FFX reads a
 	// valid resource either way -- but differencing it against the presented backbuffer
 	// makes the entire frame read as UI. Skip the generated frame instead.
-	// From codex/cs-refactor 7f1fc6f.
 	const bool hudLessFrameReady = upscaling->hudLessFrameValid[dx12SwapChain->frameIndex];
 
 	const bool canUseFrameGen = a_useFrameGen &&
@@ -344,7 +354,8 @@ void FidelityFX::Present(bool a_useFrameGen)
 		HUDLessColor &&
 		depth &&
 		motionVectors &&
-		hudLessFrameReady;
+		hudLessFrameReady &&
+		!hudlessFormatStale;
 
 	if (a_useFrameGen && !canUseFrameGen) {
 		static bool loggedMissingResources = false;
@@ -364,20 +375,18 @@ void FidelityFX::Present(bool a_useFrameGen)
 	// nothing in practice: Present() runs for thousands of menu and loading frames with
 	// generation disabled before it is first enabled, so the correction lands long
 	// before the first generated frame.
-	if (HUDLessColor != nullptr && !frameGenEnabled) {
+	if (hudlessFormatStale && !frameGenEnabled) {
 		const auto actualHudlessFormat = HUDLessColor->GetDesc().Format;
-		if (actualHudlessFormat != frameGenHudlessFormat) {
-			logger::info("[FidelityFX] HUDLess format is {}, frame generation context was built for {}; rebuilding context",
-				static_cast<uint32_t>(actualHudlessFormat),
-				static_cast<uint32_t>(frameGenHudlessFormat));
+		logger::info("[FidelityFX] HUDLess format is {}, frame generation context was built for {}; rebuilding context",
+			static_cast<uint32_t>(actualHudlessFormat),
+			static_cast<uint32_t>(frameGenHudlessFormat));
 
-			DestroyFrameGeneration();
-			SetupFrameGeneration(actualHudlessFormat);
+		DestroyFrameGeneration();
+		SetupFrameGeneration(actualHudlessFormat);
 
-			if (!featureFrameGen || frameGenContext == nullptr) {
-				logger::error("[FidelityFX] Frame generation context rebuild failed; frame generation stays off");
-				return;
-			}
+		if (!featureFrameGen || frameGenContext == nullptr) {
+			logger::error("[FidelityFX] Frame generation context rebuild failed; frame generation stays off");
+			return;
 		}
 	}
 
