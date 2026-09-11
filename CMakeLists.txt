@@ -237,6 +237,8 @@ if(COMMUNITY_SHADERS)
         src/Core/ShaderHooks/PreNGDescriptorDiagnostics.h
         src/Core/ShaderHooks/PreNGDescriptorPredicates.cpp
         src/Core/ShaderHooks/PreNGDescriptorPredicates.h
+        src/Core/ShaderHooks/PreNGLookupDiagnostics.cpp
+        src/Core/ShaderHooks/PreNGLookupDiagnostics.h
         src/Core/ShaderHooks/PreNGRuntime.cpp
         src/Core/ShaderHooks/PreNGRuntime.h
         src/Core/ShaderHooks/PreNGShaderHookConstants.h
