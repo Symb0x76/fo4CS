@@ -240,6 +240,8 @@ if(COMMUNITY_SHADERS)
         src/Core/ShaderHooks/PreNGShaderHookConstants.h
         src/Core/ShaderHooks/PreNGSwitches.cpp
         src/Core/ShaderHooks/PreNGSwitches.h
+        src/Core/ShaderHooks/PreNGVanillaDumps.cpp
+        src/Core/ShaderHooks/PreNGVanillaDumps.h
         src/Core/BSShaderHooks.h
         src/Core/D3D11DeviceHooks.cpp
         src/Core/Hooks.cpp
