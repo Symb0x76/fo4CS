@@ -235,6 +235,8 @@ if(COMMUNITY_SHADERS)
         src/Core/BSShaderHooks.cpp
         src/Core/ShaderHooks/PreNGBSLightingBind.cpp
         src/Core/ShaderHooks/PreNGBSLightingBind.h
+        src/Core/ShaderHooks/PreNGDescriptorBind.cpp
+        src/Core/ShaderHooks/PreNGDescriptorBind.h
         src/Core/ShaderHooks/PreNGDescriptorDiagnostics.cpp
         src/Core/ShaderHooks/PreNGDescriptorDiagnostics.h
         src/Core/ShaderHooks/PreNGDescriptorPredicates.cpp
