@@ -173,10 +173,38 @@ bool Upscaling::BuildUIColorAndAlphaResource(ID3D11Texture2D* a_finalFrame)
 
 	auto dx12SwapChain = DX12SwapChain::GetSingleton();
 	const auto frameIndex = dx12SwapChain->frameIndex;
-	if (!hudLessFrameValid[frameIndex] || hudLessFrameIDs[frameIndex] == 0)
+
+	// Bounded probe: this returns false on exactly every other frame, which makes
+	// DLSS-G see uiBufferFormat flip between 0 and the real format and reconfigure
+	// itself every frame (~10k redundant slDLSSGSetOptions per session). Static
+	// reading could not settle which slot is stale, because capture writes
+	// hudLessFrameValid[frameIndex] before Present and Reset() clears it after the
+	// frameIndex advance -- an order that looks correct on paper. Logging both slots
+	// shows the real interleave. Caps itself at 24 lines and then costs nothing.
+	static int uiBuildProbeCount = 0;
+	const auto probe = [&](const char* a_outcome) {
+		if (uiBuildProbeCount < 24) {
+			++uiBuildProbeCount;
+			logger::info(
+				"[FrameGen] UI build probe {}: outcome={} frameIndex={} valid=[{},{}] ids=[{},{}]",
+				uiBuildProbeCount,
+				a_outcome,
+				frameIndex,
+				hudLessFrameValid[0],
+				hudLessFrameValid[1],
+				hudLessFrameIDs[0],
+				hudLessFrameIDs[1]);
+		}
+	};
+
+	if (!hudLessFrameValid[frameIndex] || hudLessFrameIDs[frameIndex] == 0) {
+		probe("no-valid-hudless");
 		return false;
-	if (!HUDLessBufferShared[frameIndex] || !uiColorAndAlphaBufferShared[frameIndex] || !reticleColorAndAlphaBufferShared[frameIndex] || !buildUIColorAndAlphaCS)
+	}
+	if (!HUDLessBufferShared[frameIndex] || !uiColorAndAlphaBufferShared[frameIndex] || !reticleColorAndAlphaBufferShared[frameIndex] || !buildUIColorAndAlphaCS) {
+		probe("missing-buffers");
 		return false;
+	}
 
 	auto rendererData = fo4cs::GetRendererData();
 	auto device = reinterpret_cast<ID3D11Device*>(rendererData->device);
@@ -229,6 +257,7 @@ bool Upscaling::BuildUIColorAndAlphaResource(ID3D11Texture2D* a_finalFrame)
 
 	ID3D11ComputeShader* shader = nullptr;
 	context->CSSetShader(shader, nullptr, 0);
+	probe("ok");
 	return true;
 }
 
