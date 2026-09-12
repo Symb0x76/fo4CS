@@ -62,13 +62,17 @@ bool Upscaling::CaptureHUDLessFrame()
 	if (DX12SwapChain::GetSingleton()->swapChain)
 		return false;
 
-#if defined(FALLOUT_PRE_NG)
-	constexpr uint32_t frameIndex = 0;
-#else
+#if !defined(FALLOUT_PRE_NG)
 	if (!d3d12Interop)
 		return false;
-	const auto frameIndex = DX12SwapChain::GetSingleton()->frameIndex;
 #endif
+	// PreNG runs the D3D12 proxy too, so these shared targets are double-buffered
+	// exactly as on the other runtimes and the capture must follow the live index.
+	// It was pinned to slot 0 from before the proxy existed on PreNG, which left
+	// slot 1 never written while every consumer reads frameIndex alternately.
+	// Without a proxy frameIndex is never assigned and stays 0, so the pre-proxy
+	// behaviour is preserved for that case.
+	const auto frameIndex = DX12SwapChain::GetSingleton()->frameIndex;
 	if (!setupBuffers)
 		CreateFrameGenerationResources();
 	if (!setupBuffers)
@@ -222,12 +226,9 @@ void Upscaling::PostDisplay()
 		return;
 	}
 
-#if defined(FALLOUT_PRE_NG)
-	constexpr uint32_t frameIndex = 0;
-#else
-	auto dx12SwapChain = DX12SwapChain::GetSingleton();
-	const auto frameIndex = dx12SwapChain->frameIndex;
-#endif
+	// Same double-buffering rule as CaptureHUDLessFrame above; the interop guard for
+	// the non-PreNG runtimes is already at the top of this function.
+	const auto frameIndex = DX12SwapChain::GetSingleton()->frameIndex;
 	if (!HUDLessBufferShared[frameIndex] || !HUDLessBufferShared[frameIndex]->resource) {
 		return;
 	}
