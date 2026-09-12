@@ -278,6 +278,7 @@ void Streamline::LoadAndInit()
 		pref.logLevel = sl::LogLevel::eOff;
 		break;
 	}
+
 	pref.showConsole = false;
 	pref.logMessageCallback = StreamlineLogCallback;
 
@@ -303,6 +304,26 @@ void Streamline::LoadAndInit()
 
 void Streamline::PostDevice(ID3D12Device* device, IDXGIAdapter* adapter)
 {
+	// Streamline is loaded here, not from DX11Hooks::Install(). LoadAndInit() calls
+	// LoadLibraryExW on sl.interposer.dll, and the interposer hooks DXGI/D3D as it
+	// loads. Install() runs from Feature::Load(), i.e. inside F4SEPlugin_Load with the
+	// Windows loader lock held, and on PreNG loading the interposer there deadlocks:
+	// the process stays alive with no window, CommunityShaders.log stops mid-load and
+	// f4se.log never reaches "loaded correctly". PostDevice runs well after the loader
+	// lock is released and is shared by every path that brings up the proxy, so one
+	// call site covers them all. Must stay above the `initialized` guard below.
+	{
+		static bool s_initAttempted = false;
+		auto* upscaling = Upscaling::GetSingleton();
+		const bool wantsStreamline = upscaling->UsesDLSSUpscaling() ||
+		                             upscaling->UsesDLSSFrameGeneration() ||
+		                             upscaling->UsesReflex();
+		if (!s_initAttempted && !initialized && wantsStreamline) {
+			s_initAttempted = true;
+			LoadAndInit();
+		}
+	}
+
 	if (!initialized)
 		return;
 

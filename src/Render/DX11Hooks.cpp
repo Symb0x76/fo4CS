@@ -486,8 +486,10 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 
 void DX11Hooks::Install()
 {
+	// Streamline is NOT loaded here. Install() runs under the Windows loader lock (see
+	// Streamline::PostDevice for why that matters); the actual load happens there.
 	if (ShouldLoadStreamline()) {
-		Streamline::GetSingleton()->LoadAndInit();
+		logger::info("[Streamline] Load deferred to Streamline::PostDevice");
 	} else {
 		logger::info("[Streamline] Runtime not required for current settings");
 	}

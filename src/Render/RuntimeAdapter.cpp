@@ -23,7 +23,13 @@ RuntimeAdapter::RuntimeAdapter() noexcept {
 #else
   capabilities = {.flavor = RuntimeFlavor::kPreNG,
                   .name = "PreNG",
-                  .supportsStreamline = false,
+                  // PreNG supports Streamline. This was false until 2026-09-12 on the
+                  // belief that 1.10.163 had an engine defect; measured in game, DLSS,
+                  // DLSS-G and Reflex all initialise and run there. The two things that
+                  // actually broke were a loader-lock deadlock (see
+                  // Streamline::PostDevice) and RenderDoc suppressing NVAPI in the
+                  // process, which makes NGX report the GPU unsupported.
+                  .supportsStreamline = true,
                   .supportsD3D12Proxy = true,
                   .requiresExistingRendererRecovery = false,
                   .supportsDeferredPipeline = true};
