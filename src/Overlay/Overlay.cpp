@@ -497,9 +497,28 @@ void Overlay::DrawRegisteredPanels(bool a_showIntro)
 		// a separate floating window whose title duplicated the header inside it, and put
 		// the save button outside that header. The close box drives `visible` the same way
 		// the menu's `&menuOpen` does.
+		// A registered save callback is what distinguishes a leaf panel from a panel
+		// that is already a complete menu. The plugin panels here register one and
+		// draw no button of their own, so the host supplies a shared one. The
+		// community-shaders build instead registers a single "Community Shaders" panel
+		// with no save callback whose render already draws its own "Save All Settings"
+		// (src/Features/Overlay.cpp) -- adding another there gave two identically
+		// labelled buttons, and titling that window NuclearGFX was simply wrong.
+		bool anyPanelSaves = false;
+		for (const auto& panel : panels) {
+			if (panel.callbacks.save) {
+				anyPanelSaves = true;
+				break;
+			}
+		}
+
+		const char* title = (!anyPanelSaves && panels.size() == 1) ?
+		                        panels.front().name.c_str() :
+		                        "NuclearGFX";
+
 		ImGui::SetNextWindowSize(ImVec2(520.0f * GetUIScale(), 480.0f * GetUIScale()), ImGuiCond_FirstUseEver);
 		bool stayOpen = true;
-		if (ImGui::Begin("NuclearGFX", &stayOpen)) {
+		if (ImGui::Begin(title, &stayOpen)) {
 			for (auto& panel : panels) {
 				if (panel.callbacks.render) {
 					ImGui::PushID(panel.id);
@@ -507,11 +526,13 @@ void Overlay::DrawRegisteredPanels(bool a_showIntro)
 					ImGui::PopID();
 				}
 			}
-			ImGui::Separator();
-			if (ImGui::Button("Save All Settings")) {
-				for (auto& panel : panels) {
-					if (panel.callbacks.save) {
-						panel.callbacks.save(panel.callbacks.userData);
+			if (anyPanelSaves) {
+				ImGui::Separator();
+				if (ImGui::Button("Save All Settings")) {
+					for (auto& panel : panels) {
+						if (panel.callbacks.save) {
+							panel.callbacks.save(panel.callbacks.userData);
+						}
 					}
 				}
 			}
