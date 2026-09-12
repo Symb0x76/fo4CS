@@ -491,22 +491,34 @@ void Overlay::DrawRegisteredPanels(bool a_showIntro)
 {
 	if (visible) {
 		std::lock_guard lock(panelMutex);
-		for (auto& panel : panels) {
-			if (panel.callbacks.render) {
-				ImGui::SetNextWindowSize(ImVec2(400.0f * GetUIScale(), 300.0f * GetUIScale()), ImGuiCond_FirstUseEver);
-				char title[128];
-				snprintf(title, sizeof(title), "%s", panel.name.c_str());
-				if (ImGui::Begin(title, nullptr)) {
+		// One window hosting every registered panel, matching the community-shaders menu
+		// (src/Core/Menu.cpp "Community Shaders"). Each panel callback already opens its
+		// own CollapsingHeader, so the previous per-panel ImGui::Begin() gave every panel
+		// a separate floating window whose title duplicated the header inside it, and put
+		// the save button outside that header. The close box drives `visible` the same way
+		// the menu's `&menuOpen` does.
+		ImGui::SetNextWindowSize(ImVec2(520.0f * GetUIScale(), 480.0f * GetUIScale()), ImGuiCond_FirstUseEver);
+		bool stayOpen = true;
+		if (ImGui::Begin("NuclearGFX", &stayOpen)) {
+			for (auto& panel : panels) {
+				if (panel.callbacks.render) {
+					ImGui::PushID(panel.id);
 					(void)panel.callbacks.render(panel.callbacks.userData);
+					ImGui::PopID();
+				}
+			}
+			ImGui::Separator();
+			if (ImGui::Button("Save All Settings")) {
+				for (auto& panel : panels) {
 					if (panel.callbacks.save) {
-						ImGui::Separator();
-						if (ImGui::Button("Save Settings")) {
-							panel.callbacks.save(panel.callbacks.userData);
-						}
+						panel.callbacks.save(panel.callbacks.userData);
 					}
 				}
-				ImGui::End();
 			}
+		}
+		ImGui::End();
+		if (!stayOpen) {
+			SetVisible(false);
 		}
 	}
 	if (a_showIntro) {
