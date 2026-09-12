@@ -181,9 +181,13 @@ bool Upscaling::BuildUIColorAndAlphaResource(ID3D11Texture2D* a_finalFrame)
 	// hudLessFrameValid[frameIndex] before Present and Reset() clears it after the
 	// frameIndex advance -- an order that looks correct on paper. Logging both slots
 	// shows the real interleave. Caps itself at 24 lines and then costs nothing.
+	// Armed only once a HUDLess capture has actually happened. A plain "first 24 calls"
+	// cap spent itself on the pre-capture frames, five log lines before the first
+	// capture, and never observed the steady state it was written for.
 	static int uiBuildProbeCount = 0;
 	const auto probe = [&](const char* a_outcome) {
-		if (uiBuildProbeCount < 24) {
+		const bool armed = hudLessFrameIDs[0] != 0 || hudLessFrameIDs[1] != 0;
+		if (armed && uiBuildProbeCount < 24) {
 			++uiBuildProbeCount;
 			logger::info(
 				"[FrameGen] UI build probe {}: outcome={} frameIndex={} valid=[{},{}] ids=[{},{}]",
