@@ -87,6 +87,12 @@ public:
 	std::array<bool, 2> hudLessFrameValid{};
 	std::array<std::uint64_t, 2> hudLessFrameIDs{};
 
+	// Format the HUDLess capture actually needs, recorded by CaptureHUDLessFrame from
+	// the source it selected. CreateFrameGenerationResources honours it so the shared
+	// buffers can only ever be built in a format some capture source really provides.
+	// DXGI_FORMAT_UNKNOWN until the first capture runs; see #21.
+	DXGI_FORMAT hudLessCaptureFormat = DXGI_FORMAT_UNKNOWN;
+
 	void LoadSettings();
 	void LoadFrameGenerationSettings();
 	void LoadReflexSettings();
@@ -113,7 +119,6 @@ public:
 
 	static double GetRefreshRate(HWND a_window);
 
-	void PostDisplay();
 
 	void Reset();
 

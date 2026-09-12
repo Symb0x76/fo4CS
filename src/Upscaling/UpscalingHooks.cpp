@@ -38,7 +38,6 @@ struct SetUseDynamicResolutionViewportAsDefaultViewport
 		if (!a_true) {
 			auto* upscaling = Upscaling::GetSingleton();
 			upscaling->Upscale();
-			upscaling->PostDisplay();
 		}
 	}
 	static inline REL::Relocation<decltype(thunk)> func;

@@ -108,9 +108,15 @@ bool Upscaling::CaptureHUDLessFrame()
 					static_cast<uint32_t>(hudLessDesc.Format));
 			}
 
+			// Match on dimensions only. A format difference is recoverable -- the
+			// shared buffers are rebuilt to this source's format below -- whereas
+			// a size difference is not, since CopyResource cannot rescale either.
+			// Selecting the highest-priority size-compatible source and adapting
+			// to it keeps this decision and the one in
+			// CreateFrameGenerationResources from being made against different
+			// snapshots of which render targets happen to exist.
 			if (sourceDesc.Width == hudLessDesc.Width &&
-				sourceDesc.Height == hudLessDesc.Height &&
-				sourceDesc.Format == hudLessDesc.Format) {
+				sourceDesc.Height == hudLessDesc.Height) {
 				if (!loggedCandidateState) {
 					logger::info("[FrameGen] HUDLess capture source selected: {}", candidate.name);
 					loggedCandidateState = true;
@@ -120,7 +126,7 @@ bool Upscaling::CaptureHUDLessFrame()
 		}
 
 		if (!loggedCandidateState) {
-			logger::warn("[FrameGen] HUDLess capture has no compatible PreNG source target");
+			logger::warn("[FrameGen] HUDLess capture has no size-compatible source target");
 			loggedCandidateState = true;
 		}
 		return nullptr;
@@ -128,26 +134,44 @@ bool Upscaling::CaptureHUDLessFrame()
 	if (!frameBufferTexture) {
 		return false;
 	}
-#if defined(FALLOUT_PRE_NG)
+	// Runs on every runtime, not just PreNG: CopyResource below requires an exact
+	// match, and letting a mismatched copy through is a D3D error on any of them.
 	D3D11_TEXTURE2D_DESC sourceDesc{};
 	D3D11_TEXTURE2D_DESC hudLessDesc{};
 	frameBufferTexture->GetDesc(&sourceDesc);
 	HUDLessBufferShared[frameIndex]->resource->GetDesc(&hudLessDesc);
-	if (sourceDesc.Width != hudLessDesc.Width || sourceDesc.Height != hudLessDesc.Height || sourceDesc.Format != hudLessDesc.Format) {
-		static bool loggedHUDLessMismatch = false;
-		if (!loggedHUDLessMismatch) {
-			logger::warn("[FrameGen] HUDLess capture source mismatch (src={}x{} fmt={}, dst={}x{} fmt={})",
+
+	if (sourceDesc.Width != hudLessDesc.Width || sourceDesc.Height != hudLessDesc.Height) {
+		// Not recoverable here: the shared buffers are sized to the back buffer and
+		// CopyResource cannot rescale any more than it can convert.
+		static bool loggedHUDLessSizeMismatch = false;
+		if (!loggedHUDLessSizeMismatch) {
+			logger::warn("[FrameGen] HUDLess capture source size mismatch (src={}x{}, dst={}x{})",
 				sourceDesc.Width,
 				sourceDesc.Height,
-				static_cast<uint32_t>(sourceDesc.Format),
 				hudLessDesc.Width,
-				hudLessDesc.Height,
-				static_cast<uint32_t>(hudLessDesc.Format));
-			loggedHUDLessMismatch = true;
+				hudLessDesc.Height);
+			loggedHUDLessSizeMismatch = true;
 		}
 		return false;
 	}
-#endif
+
+	if (sourceDesc.Format != hudLessDesc.Format) {
+		// The shared buffers were built in a format this source does not provide.
+		// Record what the capture actually needs and rebuild; the next frame
+		// matches. This is what makes the format decision self-correcting rather
+		// than dependent on which render targets happened to exist at creation.
+		if (hudLessCaptureFormat != sourceDesc.Format) {
+			logger::info("[FrameGen] HUDLess shared buffers rebuilding to capture source format {} (was {})",
+				static_cast<uint32_t>(sourceDesc.Format),
+				static_cast<uint32_t>(hudLessDesc.Format));
+		}
+		hudLessCaptureFormat = sourceDesc.Format;
+		setupBuffers = false;
+		return false;
+	}
+
+	hudLessCaptureFormat = sourceDesc.Format;
 
 	context->CopyResource(HUDLessBufferShared[frameIndex]->resource.get(), frameBufferTexture);
 	hudLessFrameIDs[frameIndex] = NextHUDLessFrameID();
@@ -159,98 +183,4 @@ bool Upscaling::CaptureHUDLessFrame()
 		loggedFirstHUDLessCapture = true;
 	}
 	return true;
-}
-
-void Upscaling::PostDisplay()
-{
-	if (IsLoadingMenuOpen())
-		return;
-
-#if !defined(FALLOUT_PRE_NG)
-	if (!d3d12Interop)
-		return;
-#endif
-
-	if (!setupBuffers)
-		CreateFrameGenerationResources();
-	if (!setupBuffers)
-		return;
-	auto rendererData = fo4cs::GetRendererData();
-	if (!rendererData) {
-		return;
-	}
-
-	auto& swapChain = rendererData->renderTargets[(uint)RenderTarget::kFrameBuffer];
-	auto* swapChainRTV = reinterpret_cast<ID3D11RenderTargetView*>(swapChain.rtView);
-	if (!swapChainRTV) {
-		static bool loggedMissingSwapChainRTV = false;
-		if (!loggedMissingSwapChainRTV) {
-			logger::warn("[FrameGen] HUDLess post-display capture waiting for frame buffer RTV");
-			loggedMissingSwapChainRTV = true;
-		}
-		return;
-	}
-
-	winrt::com_ptr<ID3D11Resource> swapChainResource;
-	swapChainRTV->GetResource(swapChainResource.put());
-	if (!swapChainResource) {
-		static bool loggedMissingSwapChainResource = false;
-		if (!loggedMissingSwapChainResource) {
-			logger::warn("[FrameGen] HUDLess post-display capture waiting for frame buffer resource");
-			loggedMissingSwapChainResource = true;
-		}
-		return;
-	}
-
-	// Same double-buffering rule as CaptureHUDLessFrame above; the interop guard for
-	// the non-PreNG runtimes is already at the top of this function.
-	const auto frameIndex = DX12SwapChain::GetSingleton()->frameIndex;
-	if (!HUDLessBufferShared[frameIndex] || !HUDLessBufferShared[frameIndex]->resource) {
-		return;
-	}
-
-	auto context = reinterpret_cast<ID3D11DeviceContext*>(rendererData->context);
-	if (!context) {
-		return;
-	}
-
-	D3D11_TEXTURE2D_DESC sourceDesc{};
-	D3D11_TEXTURE2D_DESC hudLessDesc{};
-	winrt::com_ptr<ID3D11Texture2D> sourceTexture;
-	if (FAILED(swapChainResource->QueryInterface(IID_PPV_ARGS(sourceTexture.put()))) || !sourceTexture) {
-		static bool loggedPostDisplayNotTexture = false;
-		if (!loggedPostDisplayNotTexture) {
-			logger::warn("[FrameGen] HUDLess post-display source is not a Texture2D");
-			loggedPostDisplayNotTexture = true;
-		}
-		return;
-	}
-	sourceTexture->GetDesc(&sourceDesc);
-	HUDLessBufferShared[frameIndex]->resource->GetDesc(&hudLessDesc);
-	if (sourceDesc.Width != hudLessDesc.Width || sourceDesc.Height != hudLessDesc.Height || sourceDesc.Format != hudLessDesc.Format) {
-		static bool loggedPostDisplayMismatch = false;
-		if (!loggedPostDisplayMismatch) {
-			logger::warn("[FrameGen] HUDLess post-display source mismatch (src={}x{} fmt={}, dst={}x{} fmt={})",
-				sourceDesc.Width,
-				sourceDesc.Height,
-				static_cast<uint32_t>(sourceDesc.Format),
-				hudLessDesc.Width,
-				hudLessDesc.Height,
-				static_cast<uint32_t>(hudLessDesc.Format));
-			loggedPostDisplayMismatch = true;
-		}
-		return;
-	}
-
-	context->CopyResource(HUDLessBufferShared[frameIndex]->resource.get(), swapChainResource.get());
-	hudLessFrameIDs[frameIndex] = NextHUDLessFrameID();
-	hudLessFrameValid[frameIndex] = true;
-
-	static bool loggedFirstPostDisplayHUDLessCapture = false;
-	if (!loggedFirstPostDisplayHUDLessCapture) {
-		logger::info("[FrameGen] First HUDLess post-display frame captured (index={}, id={})",
-			frameIndex,
-			hudLessFrameIDs[frameIndex]);
-		loggedFirstPostDisplayHUDLessCapture = true;
-	}
 }
