@@ -92,7 +92,6 @@ public:
 	void LoadReflexSettings();
 	void ApplyRuntimeFallbacks();
 	[[nodiscard]] const char* GetDLSSUnavailableReason() const;
-	[[nodiscard]] static bool IsPreNGRuntime() noexcept;
 	[[nodiscard]] static bool IsStreamlineRuntimeAvailable();
 
 	void PostPostLoad();
