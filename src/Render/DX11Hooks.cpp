@@ -34,10 +34,6 @@ namespace
 {
 	bool ShouldLoadStreamline()
 	{
-#ifdef FALLOUT_PRE_NG
-		logger::info("[Streamline] Pre-NG runtime detected, skipping Streamline initialization");
-		return false;
-#endif
 		auto upscaling = Upscaling::GetSingleton();
 		return upscaling->UsesDLSSUpscaling() || upscaling->UsesDLSSFrameGeneration() || upscaling->UsesReflex();
 	}
@@ -431,15 +427,16 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 
 void DX11Hooks::Install()
 {
-#if defined(FALLOUT_POST_NG)
+	// Streamline is NOT loaded here. Install() runs under the Windows loader lock (see
+	// Streamline::PostDevice for why that matters); the actual load happens there.
+	// This used to be wrapped in #if defined(FALLOUT_POST_NG) with the note
+	// "Skipped for PreNG (blocking slInit)" — that block was the loader-lock deadlock,
+	// not a PreNG limitation, and deferring the load removes the need to skip it.
 	if (ShouldLoadStreamline()) {
-		Streamline::GetSingleton()->LoadAndInit();
+		logger::info("[Streamline] Load deferred to Streamline::PostDevice");
 	} else {
 		logger::info("[Streamline] Runtime not required for current settings");
 	}
-#else
-	logger::info("[Streamline] Skipped for PreNG (blocking slInit)");
-#endif
 
 	if (ENB_API::RequestENBAPI()) {
 		logger::info("[DX12SwapChain] ENB detected, using alternative swap chain hook");
