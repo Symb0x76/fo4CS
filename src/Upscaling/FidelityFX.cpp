@@ -278,11 +278,20 @@ void FidelityFX::Present(bool a_useFrameGen)
 	auto HUDLessColor = upscaling->HUDLessBufferShared12[dx12SwapChain->frameIndex].get();
 	auto depth = upscaling->depthBufferShared12[dx12SwapChain->frameIndex].get();
 	auto motionVectors = upscaling->motionVectorBufferShared12[dx12SwapChain->frameIndex].get();
+	// PostDisplay is the only writer of the HUDLess buffer, and it early-returns on a
+	// loading menu or a missing frame-buffer RTV while Reset() clears the slot to black
+	// each present. Generating from a black HUDLess is not a device hazard -- FFX reads a
+	// valid resource either way -- but differencing it against the presented backbuffer
+	// makes the entire frame read as UI. Skip the generated frame instead.
+	// From codex/cs-refactor 7f1fc6f.
+	const bool hudLessFrameReady = upscaling->hudLessFrameValid[dx12SwapChain->frameIndex];
+
 	const bool canUseFrameGen = a_useFrameGen &&
 		commandList &&
 		HUDLessColor &&
 		depth &&
-		motionVectors;
+		motionVectors &&
+		hudLessFrameReady;
 
 	if (a_useFrameGen && !canUseFrameGen) {
 		static bool loggedMissingResources = false;
