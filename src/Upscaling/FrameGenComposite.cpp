@@ -106,9 +106,7 @@ void Upscaling::CopyBuffersToSharedResources()
 	if (IsLoadingMenuOpen())
 		return;
 
-#if defined(FALLOUT_PRE_NG)
-	constexpr uint32_t frameIndex = 0;
-#else
+#if !defined(FALLOUT_PRE_NG)
 	if (!d3d12Interop)
 		return;
 #endif
@@ -121,10 +119,11 @@ void Upscaling::CopyBuffersToSharedResources()
 
 	auto context = reinterpret_cast<ID3D11DeviceContext*>(rendererData->context);
 
-#if !defined(FALLOUT_PRE_NG)
-	auto dx12SwapChain = DX12SwapChain::GetSingleton();
-	const auto frameIndex = dx12SwapChain->frameIndex;
-#endif
+	// Depth and motion vectors are double-buffered like the HUDLess target, so they
+	// follow the live index on every runtime. PreNG previously pinned this to slot 0,
+	// which meant DLSS-G was handed cleared depth and motion-vector buffers on every
+	// frame where the swap chain presented from slot 1.
+	const auto frameIndex = DX12SwapChain::GetSingleton()->frameIndex;
 	if (!motionVectorBufferShared[frameIndex] || !depthBufferShared[frameIndex] || !copyDepthToSharedBufferCS)
 		return;
 
