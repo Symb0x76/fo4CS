@@ -78,19 +78,24 @@ bool Streamline::ConfigureDLSSG(
 	options.enableUserInterfaceRecomposition =
 		uiColorAndAlpha ? sl::Boolean::eTrue : sl::Boolean::eFalse;
 
-	const bool unchanged =
-		dlssgOptionsValid &&
-		dlssgConfiguredMode == mode &&
-		dlssgConfiguredWidth == options.colorWidth &&
-		dlssgConfiguredHeight == options.colorHeight &&
-		dlssgConfiguredColorFormat == options.colorBufferFormat &&
-		dlssgConfiguredMvecFormat == options.mvecBufferFormat &&
-		dlssgConfiguredDepthFormat == options.depthBufferFormat &&
-		dlssgConfiguredHudlessFormat == options.hudLessBufferFormat &&
-		dlssgConfiguredUIFormat == options.uiBufferFormat &&
-		dlssgConfiguredBackBuffers == options.numBackBuffers;
+	// Names the first field that differs from the cached configuration, or nullptr when
+	// nothing changed. slDLSSGSetOptions is a configuration call, so it must fire on
+	// change only; naming the field makes a per-frame reconfiguration self-diagnosing
+	// instead of an unexplained wall of identical log lines.
+	const char* const changedField =
+		!dlssgOptionsValid                                            ? "invalidated" :
+		dlssgConfiguredMode != mode                                   ? "mode" :
+		dlssgConfiguredWidth != options.colorWidth                    ? "colorWidth" :
+		dlssgConfiguredHeight != options.colorHeight                  ? "colorHeight" :
+		dlssgConfiguredColorFormat != options.colorBufferFormat       ? "colorFormat" :
+		dlssgConfiguredMvecFormat != options.mvecBufferFormat         ? "mvecFormat" :
+		dlssgConfiguredDepthFormat != options.depthBufferFormat       ? "depthFormat" :
+		dlssgConfiguredHudlessFormat != options.hudLessBufferFormat   ? "hudlessFormat" :
+		dlssgConfiguredUIFormat != options.uiBufferFormat             ? "uiFormat" :
+		dlssgConfiguredBackBuffers != options.numBackBuffers          ? "backBuffers" :
+		                                                                nullptr;
 
-	if (unchanged) {
+	if (changedField == nullptr) {
 		return true;
 	}
 
@@ -126,9 +131,11 @@ bool Streamline::ConfigureDLSSG(
 	dlssgConfiguredBackBuffers = options.numBackBuffers;
 
 	logger::info(
-		"[Streamline] DLSS-G mode={} reason={} color={}x{} fmt={} hudless={}x{} fmt={} ui={}x{} fmt={} depth={}x{} fmt={} mvec={}x{} fmt={}",
+		"[Streamline] DLSS-G mode={} reason={} changed={} backBuffers={} color={}x{} fmt={} hudless={}x{} fmt={} ui={}x{} fmt={} depth={}x{} fmt={} mvec={}x{} fmt={}",
 		EnumToString(mode),
 		reason,
+		changedField,
+		options.numBackBuffers,
 		options.colorWidth,
 		options.colorHeight,
 		options.colorBufferFormat,
@@ -151,12 +158,16 @@ bool Streamline::ConfigureDLSSG(
 		if (stateResult != sl::Result::eOk) {
 			logger::warn("[Streamline] slDLSSGGetState failed after mode change: {}", ResultToString(stateResult));
 		} else {
-			logger::info(
-				"[Streamline] DLSS-G state status={} minSize={} maxGenerated={} vsyncSupport={}",
-				EnumToString(state.status),
-				state.minWidthOrHeight,
-				state.numFramesToGenerateMax,
-				state.bIsVsyncSupportAvailable == sl::Boolean::eTrue);
+			// The status check below is the load-bearing part and stays unconditional;
+			// only the descriptive line is gated, since it is identical on every call.
+			if (ShouldTraceStreamlineFrame(frameID)) {
+				logger::info(
+					"[Streamline] DLSS-G state status={} minSize={} maxGenerated={} vsyncSupport={}",
+					EnumToString(state.status),
+					state.minWidthOrHeight,
+					state.numFramesToGenerateMax,
+					state.bIsVsyncSupportAvailable == sl::Boolean::eTrue);
+			}
 
 			if (state.status != sl::DLSSGStatus::eOk) {
 				DisableDLSSGAfterError("slDLSSGGetState returned non-OK status");
