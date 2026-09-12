@@ -86,7 +86,24 @@ void Upscaling::CreateFrameGenerationResources()
 			texDesc.Width = renderWidth;
 			texDesc.Height = renderHeight;
 		}
-		texDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+
+		// #21: HUDLess capture requires an exact format match with the source
+		// render target because D3D11 CopyResource does not convert formats.
+		// The PreNG kFrameBuffer source is R11G11B10_FLOAT, so hardcoding the
+		// shared buffers to R8G8B8A8_UNORM left no compatible capture source
+		// and frame generation fell back to post-display capture. Follow the
+		// actual capture source format (kFrameBuffer when available, otherwise
+		// kMain, which texDesc already carries) instead.
+		DXGI_FORMAT hudLessFormat = texDesc.Format;
+		{
+			auto& frameBuffer = rendererData->renderTargets[(uint)RenderTarget::kFrameBuffer];
+			if (frameBuffer.texture) {
+				D3D11_TEXTURE2D_DESC frameBufferDesc{};
+				reinterpret_cast<ID3D11Texture2D*>(frameBuffer.texture)->GetDesc(&frameBufferDesc);
+				hudLessFormat = frameBufferDesc.Format;
+			}
+		}
+		texDesc.Format = hudLessFormat;
 		srvDesc.Format = texDesc.Format;
 		rtvDesc.Format = texDesc.Format;
 		uavDesc.Format = texDesc.Format;
