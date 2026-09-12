@@ -87,26 +87,23 @@ void Upscaling::CreateFrameGenerationResources()
 			texDesc.Height = renderHeight;
 		}
 
-		// #21: HUDLess capture copies from a game render target with D3D11
-		// CopyResource, which does not convert formats, so these shared buffers
-		// must be created in the format of the source the capture will choose.
-		//
-		// That choice is made at capture time, not here. This function runs from
-		// eleven call sites, several of them at Present (BuildUIColorAndAlphaResource,
-		// Reset), where kFrameBuffer is live -- while the capture runs at PreAlpha,
-		// where it is not. Deriving the format from what happens to be available
-		// here was therefore a coin flip: land on kFrameBuffer and every capture
-		// source mismatches, which is #21 all over again with no code change to
-		// blame.
-		//
-		// So the capture is the authority. It records the format of the source it
-		// actually selected in hudLessCaptureFormat and forces a rebuild if these
-		// buffers disagree, converging in one frame. Until it has run, seed from
-		// texDesc, which already carries kMain -- itself a real capture candidate,
-		// never a target no capture path uses.
-		if (hudLessCaptureFormat != DXGI_FORMAT_UNKNOWN) {
-			texDesc.Format = hudLessCaptureFormat;
+		// #21: HUDLess capture requires an exact format match with the source
+		// render target because D3D11 CopyResource does not convert formats.
+		// The PreNG kFrameBuffer source is R11G11B10_FLOAT, so hardcoding the
+		// shared buffers to R8G8B8A8_UNORM left no compatible capture source
+		// and frame generation fell back to post-display capture. Follow the
+		// actual capture source format (kFrameBuffer when available, otherwise
+		// kMain, which texDesc already carries) instead.
+		DXGI_FORMAT hudLessFormat = texDesc.Format;
+		{
+			auto& frameBuffer = rendererData->renderTargets[(uint)RenderTarget::kFrameBuffer];
+			if (frameBuffer.texture) {
+				D3D11_TEXTURE2D_DESC frameBufferDesc{};
+				reinterpret_cast<ID3D11Texture2D*>(frameBuffer.texture)->GetDesc(&frameBufferDesc);
+				hudLessFormat = frameBufferDesc.Format;
+			}
 		}
+		texDesc.Format = hudLessFormat;
 		srvDesc.Format = texDesc.Format;
 		rtvDesc.Format = texDesc.Format;
 		uavDesc.Format = texDesc.Format;
