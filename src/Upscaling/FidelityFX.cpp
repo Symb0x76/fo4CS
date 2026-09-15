@@ -48,11 +48,31 @@ extern "C" ffxReturnCode_t ffxQuery(ffxContext* context, ffxQueryDescHeader* des
 // FFX_FRAMEINTERPOLATION_ENABLE_DEBUG_CHECKING. Keep the three in step: submodule tag,
 // include/ headers, and the packaged DLL.
 //
-// TODO(future contributor): FSR 4 support is out of scope. It is not a DLL swap -- SDK
-// 2.x drops the monolithic amd_fidelityfx_dx12.dll for amd_fidelityfx_loader_dx12.dll
-// plus per-effect modules (framegeneration, upscaler, ~65 MB), so the load below and the
-// packaging step both change. Note the FSR 4 upscaler is RDNA-gated, so a fallback path
-// is needed for non-AMD hardware.
+// TODO(future contributor): FSR 4 support is out of scope, and as of 2026-09-11 it
+// cannot be validated on this project's development machine at all. Three independent
+// blockers, each verified against extern/FidelityFX-SDK @ v2.3.0:
+//
+//   1. Hardware. Kits/FidelityFX/docs/techniques/super-resolution-ml.md:325 reads
+//      "FSR4 requires an AMD 7000 series discrete GPU or AMD 9000 series GPU or later."
+//      The dev machine is an NVIDIA RTX 4090, so FSR 4 upscaling cannot run here at any
+//      driver version. This is a vendor gate, not a driver gap.
+//   2. Graphics API. That SDK ships a DX12 backend only -- Kits/FidelityFX/backend/
+//      contains dx12/ and nothing else. Fallout 4 renders on D3D11; our D3D12 use is a
+//      proxy swap chain for frame generation, not an upscale path.
+//   3. Packaging. It is not a DLL swap -- SDK 2.x drops the monolithic
+//      amd_fidelityfx_dx12.dll for amd_fidelityfx_loader_dx12.dll plus per-effect
+//      modules (upscaler, framegeneration, denoiser, radiancecache), so the load below
+//      and the packaging step both change. FSR 4 lives in
+//      amd_fidelityfx_upscaler_dx12.dll behind ABI FFX_ABI_2_0_0, and its effect id is
+//      FFX_EFFECT_FSR4UPSCALER (Kits/FidelityFX/api/internal/ffx_internal_types.h:460
+//      and :440 respectively).
+//
+// Unblocking therefore needs, in dependency order: an AMD RX 7000/9000-series GPU to
+// test on; a DX11 path for the FSR 4 upscaler, which the SDK does not provide (SCS
+// solves DX11 for FSR 3 via the alandtse/FidelityFX-SDK-DX11 fork, which does not
+// cover FSR 4); and only then the coordinated move of submodule tag, include/ headers
+// and packaged DLL set described above. A non-AMD fallback path is required regardless,
+// since most users will not clear blocker 1.
 void FidelityFX::LoadFFX()
 {
 	struct RuntimePath
@@ -402,11 +422,36 @@ void FidelityFX::Present(bool a_useFrameGen)
 		!hudlessFormatStale &&
 		hudLessFrameReady;
 
+	// Report which of the six conditions failed, and keep counting. The previous
+	// one-shot warn could not distinguish "skipped once during warm-up" from
+	// "skipped every frame for the whole session" -- and those look identical in
+	// the log while producing wildly different frame rates. It also never named
+	// the failing condition, so a permanent block was indistinguishable from a
+	// transient one. Sample sparsely; the counters carry the real signal.
+	static std::atomic_uint64_t frameGenSkipCount{0};
+	static std::atomic_uint64_t frameGenRunCount{0};
 	if (a_useFrameGen && !canUseFrameGen) {
-		static bool loggedMissingResources = false;
-		if (!loggedMissingResources) {
-			logger::warn("[FidelityFX] Frame generation resources are not ready; skipping generated frames");
-			loggedMissingResources = true;
+		const auto skips = frameGenSkipCount.fetch_add(1, std::memory_order_relaxed) + 1;
+		if (skips == 1 || skips % 600 == 0) {
+			logger::warn(
+				"[FidelityFX] Frame generation skipped (skips={} runs={}): commandList={} hudless={} depth={} "
+				"motionVectors={} hudlessFormatStale={} hudLessFrameReady={} frameIndex={}",
+				skips,
+				frameGenRunCount.load(std::memory_order_relaxed),
+				commandList != nullptr,
+				HUDLessColor != nullptr,
+				depth != nullptr,
+				motionVectors != nullptr,
+				hudlessFormatStale,
+				hudLessFrameReady,
+				dx12SwapChain->frameIndex);
+		}
+	} else if (canUseFrameGen) {
+		const auto runs = frameGenRunCount.fetch_add(1, std::memory_order_relaxed) + 1;
+		if (runs == 1) {
+			logger::info("[FidelityFX] Frame generation first accepted frame (skips so far={}, frameIndex={})",
+				frameGenSkipCount.load(std::memory_order_relaxed),
+				dx12SwapChain->frameIndex);
 		}
 	}
 

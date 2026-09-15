@@ -69,6 +69,24 @@ void FeatureUpscaling::Reset()
 {
 	if (!loaded || !upscaling) return;
 
+	// DX12SwapChain::Present already drives Upscaling::Reset() once per present
+	// (DX12SwapChainPresent.cpp:554), after frameIndex advances, so the slot it
+	// blanks is the one the next frame captures into. That is the correct point.
+	//
+	// Running it here as well is not merely redundant, it is destructive. This
+	// dispatch reaches us from Runtime::OnFrame(), which
+	// D3D11PresentationBackend::Present() calls as its very first act -- so it
+	// lands after PostDisplay() has captured HUDLess and set hudLessFrameValid,
+	// but before FidelityFX::Present() reads that flag. The second clear
+	// therefore invalidated every captured frame and blanked the HUDLess buffer
+	// that the frame-generation backends consume: FSR skipped 100% of frames
+	// (measured runs=0 across 6600 skips) and DLSS-G would have been handed a
+	// black hudless. Let the present path own the per-frame reset whenever it is
+	// running one; this condition mirrors frameGenerationBackendAvailable.
+	if (upscaling->UsesDLSSFrameGeneration() || upscaling->UsesFSRFrameGeneration()) {
+		return;
+	}
+
 	upscaling->Reset();
 }
 
