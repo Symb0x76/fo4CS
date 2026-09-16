@@ -301,17 +301,39 @@ void DX12SwapChain::CreateSwapChain(IDXGIFactory4* a_dxgiFactory, DXGI_SWAP_CHAI
 	auto fidelityFX = FidelityFX::GetSingleton();
 	const bool useFidelityFXSwapChain = upscaling->UsesFSRFrameGeneration() && fidelityFX->module;
 	IDXGIFactory4* dxgiFactory = a_dxgiFactory;
+	// Report the inputs, not just the verdict. "backend=native" is the state in
+	// which neither frame-generation backend can present an interpolated frame:
+	// FSR needs the FFX frame-generation swap chain created below, and DLSS-G
+	// needs a Streamline-owned present path that nothing here established. Which
+	// of the two conditions produced it is the whole diagnosis.
 	logger::info(
-		"[DX12SwapChain] Creating D3D12 proxy swap chain {}x{} fmt={} flags=0x{:X} backend={}",
+		"[DX12SwapChain] Creating D3D12 proxy swap chain {}x{} fmt={} flags=0x{:X} backend={} "
+		"(usesFSRFrameGen={} ffxModuleLoaded={})",
 		swapChainDesc.Width,
 		swapChainDesc.Height,
 		static_cast<uint32_t>(swapChainDesc.Format),
 		swapChainDesc.Flags,
-		useFidelityFXSwapChain ? "FidelityFX" : "native");
+		useFidelityFXSwapChain ? "FidelityFX" : "native",
+		upscaling->UsesFSRFrameGeneration(),
+		fidelityFX->module != nullptr);
 
 	const auto createNativeSwapChain = [&]() {
+		// Under eUseManualHooking Streamline interposes nothing on its own, so a
+		// swap chain created from the raw factory is invisible to it -- and
+		// DLSS-G interpolates inside the swap chain's Present, so it could never
+		// generate a frame. Upgrade the factory first when DLSS-G is the backend;
+		// the call is a no-op for every other configuration, and on failure we
+		// keep the native factory and simply present without generation.
+		IDXGIFactory4* presentFactory = dxgiFactory;
+		winrt::com_ptr<IDXGIFactory4> upgradedFactory;
+		if (Streamline::GetSingleton()->UpgradeDXGIFactoryForDLSSG(&presentFactory) && presentFactory != dxgiFactory) {
+			upgradedFactory.attach(presentFactory);
+		} else {
+			presentFactory = dxgiFactory;
+		}
+
 		winrt::com_ptr<IDXGISwapChain1> nativeSwapChain;
-		DX::ThrowIfFailed(dxgiFactory->CreateSwapChainForHwnd(
+		DX::ThrowIfFailed(presentFactory->CreateSwapChainForHwnd(
 			commandQueue.get(),
 			a_swapChainDesc.OutputWindow,
 			&swapChainDesc,

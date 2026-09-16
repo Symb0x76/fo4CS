@@ -90,11 +90,21 @@ public:
 	// Call before D3D device creation
 	void LoadAndInit();
 
+	// Idempotent: loads Streamline on the first call that wants it. Split out of
+	// PostDevice so the load can happen before the D3D12 device exists --
+	// UpgradeD3D12DeviceForDLSSG silently does nothing while `initialized` is
+	// false, and PostDevice used to be the only thing that ever set it.
+	void EnsureLoaded();
+
 	// Call after D3D12 device is created
 	bool UpgradeD3D12DeviceForDLSSG(ID3D12Device** device);
 	void PostDevice(ID3D12Device* device, IDXGIAdapter* adapter);
 
-	// Call before creating a D3D12 swap chain.
+	// Call before creating a D3D12 swap chain. DLSS-G interpolates inside the
+	// swap chain's Present, so under eUseManualHooking Streamline must own the
+	// swap chain; one built from a raw factory can never generate a frame.
+	bool UpgradeDXGIFactoryForDLSSG(IDXGIFactory4** factory);
+
 	// Call each frame before Present — tags resources and configures DLSS-G
 	bool TagResourcesAndConfigure(
 		ID3D12Resource* hudless,
