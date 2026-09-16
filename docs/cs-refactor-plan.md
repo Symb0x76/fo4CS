@@ -167,6 +167,17 @@ the line numbers first, they drift and several were off by one.
        Remaining: **C9 only** — the 474-line thunk, with eight function-local
        latches and a hot-path gate ordering that must not be disturbed. Plus a dead
        `TryBindPreNGDeferredLightingPixelShader` to delete as its own commit.
+
+       **C9 is blocked on the CommonLibF4 fork decision — do not start it.** This is a
+       separate gate from the game-run one cleared below, and it is still closed. The
+       three `extern/CommonLibF4*` submodules are three *pins of the same repo*
+       (`Symb0x76/CommonLibFO4`: PreNG `02f4668`, PostNG `278a609`, PostAE `ad6bc8d`),
+       and that fork's `REL::ID` holds a single `std::uint64_t` — one address per ID, so
+       the runtime must be chosen at build time. If the fork is swapped for one with
+       `REL::ID({OG,NG,AE})`, `PreNGBSShaderLookup` and `PostNGShaderLookup` collapse
+       into one `ShaderLookup_Hook` and C10 stops being a separate cluster. Extracting
+       C9 as a macro-gated unit first restructures the file's highest-risk code twice.
+       See `fcs-convergence-runtime-dispatch.md` §8.
        (C6 vanilla dumps, C5 descriptor diagnostics, C4 lookup diagnostics, C7/C8
        the GPU-state binds and C10 the PostNG hook block have all landed since this
        list was written.)
