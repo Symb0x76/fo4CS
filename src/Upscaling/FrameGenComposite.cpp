@@ -15,13 +15,67 @@
 #include <RE/FO4Runtime.h>
 
 #include "DirectXMath.h"
+#include "Diagnostics/LogPaths.h"
 #include "Render/DX12SwapChain.h"
 #include "Render/RuntimeAdapter.h"
 #include "Upscaling/UpscalingInternal.h"
 #include "Upscaling/UpscalingRenderTargetIDs.h"
 
+#include <DirectXTex.h>
+
 using fo4cs::upscaling::IsLoadingMenuOpen;
 using fo4cs::upscaling::NextHUDLessFrameID;
+
+namespace
+{
+	// One-shot dump of the three buffers the frame generator composites from, so
+	// "what is actually in HUDLess?" can be answered by looking instead of by
+	// inference. Two separate inference chains got that question wrong on
+	// 2026-09-16; a PNG does not.
+	//
+	// Enable with FO4CS_FRAMEGEN_DUMP=1 in Debug.ini, draw a weapon so the
+	// crosshair is on screen, and look in the F4SE log directory:
+	//
+	//   framegen-dump-final.png    the presented backbuffer (has everything)
+	//   framegen-dump-hudless.png  what DLSS-G interpolates
+	//   framegen-dump-uilayer.png  what DLSS-G composites un-interpolated
+	//
+	// Read it as: any UI element visible in *hudless* gets motion-warped on
+	// generated frames. Any element missing from *uilayer* is absent from
+	// generated frames. The crosshair must appear in exactly one of them.
+	void DumpFrameGenBufferOnce(ID3D11Device* a_device, ID3D11DeviceContext* a_context,
+		ID3D11Resource* a_resource, const char* a_name)
+	{
+		if (!a_device || !a_context || !a_resource) {
+			return;
+		}
+
+		const auto dir = fo4cs::diagnostics::GetF4SELogDirectory();
+		if (!dir) {
+			return;
+		}
+
+		DirectX::ScratchImage image;
+		if (FAILED(DirectX::CaptureTexture(a_device, a_context, a_resource, image))) {
+			logger::warn("[FrameGen] Buffer dump: CaptureTexture failed for {}", a_name);
+			return;
+		}
+
+		const auto path = *dir / std::format("framegen-dump-{}.png", a_name);
+		const auto* img = image.GetImage(0, 0, 0);
+		if (!img) {
+			return;
+		}
+
+		if (FAILED(DirectX::SaveToWICFile(*img, DirectX::WIC_FLAGS_NONE,
+				DirectX::GetWICCodec(DirectX::WIC_CODEC_PNG), path.c_str()))) {
+			logger::warn("[FrameGen] Buffer dump: SaveToWICFile failed for {}", a_name);
+			return;
+		}
+
+		logger::info("[FrameGen] Buffer dump written: {}", path.string());
+	}
+}
 
 void Upscaling::PostAlpha()
 {
@@ -216,6 +270,18 @@ bool Upscaling::BuildUIColorAndAlphaResource(ID3D11Texture2D* a_finalFrame)
 
 	ID3D11ComputeShader* shader = nullptr;
 	context->CSSetShader(shader, nullptr, 0);
+
+	// Diagnostic only; off unless FO4CS_FRAMEGEN_DUMP=1. Fires once per session,
+	// here because this is the one point where the final frame, HUDLess and the
+	// finished UI layer are all valid for the same frameIndex.
+	static bool dumped = false;
+	if (!dumped && CommunityShaders::DebugSwitches::ReadSwitchEnabled("FO4CS_FRAMEGEN_DUMP")) {
+		dumped = true;
+		DumpFrameGenBufferOnce(device, context, a_finalFrame, "final");
+		DumpFrameGenBufferOnce(device, context, HUDLessBufferShared[frameIndex]->resource.get(), "hudless");
+		DumpFrameGenBufferOnce(device, context, uiColorAndAlphaBufferShared[frameIndex]->resource.get(), "uilayer");
+	}
+
 	return true;
 }
 
