@@ -24,23 +24,44 @@ branches, use the same target names, directory and split as `codex/main-refactor
 so a later merge sees both sides moving a file to the same place instead of a
 one-sided rename.
 
-## Status at 2026-09-08
+## Status at 2026-09-16
 
-Phases A and B are complete and build-verified. Phase C is partially done.
+Phases A and B are complete and build-verified. Phase C is partially done, and
+**both conditions that were gating its remaining work have since been met** — see
+"Gates now open" below.
 
 | File | Before | Now |
 |------|--------|-----|
-| `src/Features/LightLimitFix.cpp` | 5081 | **5119 — not started** (grew: PostNG/PostAE guards added) |
-| `src/Core/BSShaderHooks.cpp` | 3508 | 2927 (+ 4 units under `src/Core/ShaderHooks/`) — 5 clusters left |
+| `src/Features/LightLimitFix.cpp` | 5081 | **5208 — not started** (grew: PostNG/PostAE guards, then Tracy zones + the `VirtualQuery` fix) |
+| `src/Core/BSShaderHooks.cpp` | 3508 | 895 (+ 9 units under `src/Core/ShaderHooks/`) — C9 thunk left |
 | `src/Core/ShaderCache.cpp` | 2013 | 548 (+ 5 units under `src/Core/Shaders/`) |
-| `src/Upscaling/Upscaler.cpp` | 1668 | 407 (+ 8 units) |
-| `src/Upscaling/UpscalerRenderBackend.cpp` | 1345 | 663 (+ 5 units) |
+| `src/Upscaling/Upscaler.cpp` | 1668 | 407+ (+ 8 units) |
+| `src/Upscaling/UpscalerRenderBackend.cpp` | 1345 | 662 (+ 5 units) |
 | `src/Render/DX12SwapChain.cpp` | 1212 | 323 (+ 4 units) |
 | `src/Core/Deferred.cpp` | 1198 | 763 (+ 2 units under `src/Core/Deferred/`) |
-| `src/Upscaling/Streamline.cpp` | 1111 | 467 (+ 5 units) |
+| `src/Upscaling/Streamline.cpp` | 1111 | 550 (+ 5 units) |
 | `src/Core/AdditivePasses.cpp` | 992 | **992 — not started** |
 | `src/Core/LLFPixelTracker.cpp` | 991 | **991 — not started** |
-| `src/Overlay/Overlay.cpp` | 658 | 658 (soft mark only) |
+| `src/Overlay/Overlay.cpp` | 658 | 691 (soft mark only) |
+
+`LightLimitFix.cpp` is now **5.8x the next largest file** and is the only remaining
+hotspot of consequence.
+
+### Gates now open (2026-09-16)
+
+Two items below were parked on preconditions. Both were satisfied incidentally by the
+performance and frame-generation work of 2026-09-15/16, so neither is still blocking:
+
+1. **"Awaiting a game run"** (Phase C.2, the BSShaderHooks clusters). `codex/cs-refactor`
+   had never been run in game when that was written. It now has been, repeatedly and
+   under measurement — Tracy captures, FSR-FG and DLSS-G frame-generation validation,
+   several hours of gameplay. The shader-lookup hot path those four clusters sit on has
+   been exercised throughout.
+2. **"wants a log-based before/after baseline first"** (Phase C.4, LightLimitFix). That
+   baseline now exists and is unusually good: paired Tracy captures either side of the
+   `VirtualQuery` fix, with per-zone self times, call counts and frame-interval
+   histograms. See `llf-prepass-perf-handoff.md` in the main checkout. The active
+   performance debugging that motivated the deferral is finished — 37-40 fps to 128 fps.
 
 ## Phase A — Infrastructure (ported from `codex/main-refactor`) — DONE
 
@@ -110,10 +131,14 @@ the line numbers first, they drift and several were off by one.
          refactor: an anonymous namespace became
          `CommunityShaders::shadercache`. Every predicate keeps exactly one
          definition because several own a one-shot cache that logs on first call.
-2. [~] `src/Core/BSShaderHooks.cpp` (3508 → 2927) → `src/Core/ShaderHooks/`.
+2. [~] `src/Core/BSShaderHooks.cpp` (3508 → 895) → `src/Core/ShaderHooks/`.
        Outline: `docs/refactor-outlines/outline-BSShaderHooks.md`
-       (134 definitions, 12 clusters). Four of them done, in the order the
-       outline recommends:
+       (134 definitions, 12 clusters). **Nine units now exist** — the four listed
+       below plus `PreNGVanillaDumps` (C6), `PreNGDescriptorDiagnostics` (C5),
+       `PreNGLookupDiagnostics` (C4), `PreNGDescriptorBind` and
+       `PreNGBSLightingBind` (C7/C8), and `PostNGShaderLookupHook` (C10). Only the
+       C9 thunk remains in the façade. The first four, in the order the outline
+       recommends:
 
        - `PreNGShaderHookConstants.h` (67) — the `RE::FO4Runtime` alias and 40
          constants. Left spelled `static constexpr`, not modernised to `inline
@@ -139,17 +164,19 @@ the line numbers first, they drift and several were off by one.
        nothing on the other two variants. Since 2026-09-09 all three variants
        build, so that emptiness is proven rather than assumed.
 
-       Remaining, in outline order: C6 vanilla dumps (~296), C5 descriptor
-       diagnostics (~319), C4 lookup diagnostics (~382), C7/C8 the GPU-state
-       binds, C10 the PostNG hook block, then C9 the 474-line thunk last — eight
-       function-local latches and a hot-path gate ordering that must not be
-       disturbed. Plus a dead `TryBindPreNGDeferredLightingPixelShader` to delete
-       as its own commit.
+       Remaining: **C9 only** — the 474-line thunk, with eight function-local
+       latches and a hot-path gate ordering that must not be disturbed. Plus a dead
+       `TryBindPreNGDeferredLightingPixelShader` to delete as its own commit.
+       (C6 vanilla dumps, C5 descriptor diagnostics, C4 lookup diagnostics, C7/C8
+       the GPU-state binds and C10 the PostNG hook block have all landed since this
+       list was written.)
 
-       **Awaiting a game run.** All four clusters sit on the shader-lookup hot
-       path. Compile-identical is not runtime-identical for the `static const`
-       latch semantics, and a regression riding in on top of unvalidated moves
-       would be far harder to attribute once C7/C8/C9 land on top.
+       ~~**Awaiting a game run.**~~ **Cleared 2026-09-16.** The concern was that
+       compile-identical is not runtime-identical for the `static const` latch
+       semantics, and that a regression riding in on unvalidated moves would be
+       hard to attribute once later clusters landed on top. The branch has since
+       been run in game extensively under measurement, with the shader-lookup hot
+       path exercised throughout and no latch-behaviour anomalies observed.
 3. [x] `src/Core/Deferred.cpp` (1198 → 763, under the 800 fail threshold).
        `DeferredTrace.cpp` (242) and `DeferredGBuffer.cpp` (232) extracted, sharing
        `DeferredInternal.h` (80). `LightingDrawState` reaches the trace cluster
@@ -176,8 +203,12 @@ the line numbers first, they drift and several were off by one.
        the file plus the raw byte-scan relocation decode — and PostNG/PostAE cannot
        be built on this branch to verify it (see the pre-existing guard defects
        below), so PreNG would be the only witness.
-4. [ ] `src/Features/LightLimitFix.cpp` (5081) → `src/Features/LightLimit/`.
-       Outline: `outline-LightLimitFix.md` (153 functions, 14 clusters).
+4. [ ] `src/Features/LightLimitFix.cpp` (**5208**) → `src/Features/LightLimit/`.
+       Outline: `outline-LightLimitFix.md` (153 functions, 14 clusters). The
+       function count still matches; the **line numbers do not** — the file has
+       grown 127 lines since the outline was written, so every line reference in it
+       is stale. Function identity (#1-153) and the cluster assignments are the
+       durable part; re-derive ranges before cutting.
        **Highest risk in the repository** and deliberately left last:
        - roughly 100 function-local statics, many of them one-shot log latches
          whose duplication would change logging behaviour;
@@ -188,8 +219,17 @@ the line numbers first, they drift and several were off by one.
        - the member definitions at about 3274–3653 and 3723–3918 are PreNG-named but
          compiled unconditionally today — wrapping them in a guard *is* a behaviour
          change for the PostNG build;
-       - this is the feature under active performance debugging, so it wants a
-         log-based before/after baseline first.
+       - ~~this is the feature under active performance debugging, so it wants a
+         log-based before/after baseline first.~~ **Cleared 2026-09-16** — that
+         debugging is finished (37-40 fps to 128 fps) and left a paired Tracy
+         baseline with per-zone self times, call counts and frame-interval
+         histograms. See `llf-prepass-perf-handoff.md`.
+
+       **Prerequisite before cutting:** the worktree's uncommitted Tracy
+       instrumentation touches this file (14 `FO4CS_LLF_ZONE` sites). Splitting it
+       while those are uncommitted scatters them across the new units and makes a
+       coherent "Tracy instrumentation" commit impossible afterwards. Commit or
+       stash that WIP first.
 5. [ ] `src/Core/AdditivePasses.cpp` (992), `src/Core/LLFPixelTracker.cpp` (991) —
        no outline produced yet.
 6. [ ] `src/Overlay/Overlay.cpp` (658) — soft mark only.
