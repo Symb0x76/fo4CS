@@ -407,7 +407,7 @@ void Deferred::ReflectionsPrepasses()
 
 	Feature::ForEachLoadedFeature("ReflectionsPrepass", [](Feature* a_feature) {
 		try { a_feature->ReflectionsPrepass(); } catch (...) {}
-	});
+	}, true);
 }
 
 void Deferred::EarlyPrepasses()
@@ -419,7 +419,7 @@ void Deferred::EarlyPrepasses()
 
 	Feature::ForEachLoadedFeature("EarlyPrepass", [](Feature* a_feature) {
 		try { a_feature->EarlyPrepass(); } catch (...) {}
-	});
+	}, true);
 }
 
 void Deferred::PrepassPasses()
@@ -437,7 +437,7 @@ void Deferred::PrepassPasses()
 		} catch (...) {
 			logger::error("[Deferred] Feature '{}' Prepass unknown exception", a_feature->GetName());
 		}
-	});
+	}, true);
 }
 
 void Deferred::StartDeferred()

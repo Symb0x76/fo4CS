@@ -20,6 +20,26 @@
 #include "RE/Bethesda/UI.h"
 #endif
 
+// Nested profiling zones inside RunClusterPrepass. The Feature.h zone wraps the
+// whole phase, which measured 7.74ms CPU against 0.28ms GPU per frame on PreNG
+// (2026-09-14 capture) -- enough to say the cost is CPU-side, not enough to say
+// which part. These split it. Compiled out entirely without TRACY_SUPPORT=ON, and
+// the include is guarded because the tracy dependency only exists behind the
+// vcpkg "tracy" manifest feature.
+// ZoneScopedN declares a fixed-name variable, so two of them in one scope fail to
+// compile. ZoneNamedN takes the variable name, which lets several coexist -- needed
+// here because some of these markers share a scope with a nested zone.
+#ifdef TRACY_ENABLE
+#	include <Tracy/Tracy.hpp>
+#	define FO4CS_LLF_ZONE_IMPL2(name, counter) ZoneNamedN(___fo4cs_llf_zone_##counter, name, true)
+#	define FO4CS_LLF_ZONE_IMPL(name, counter) FO4CS_LLF_ZONE_IMPL2(name, counter)
+#	define FO4CS_LLF_ZONE(name) FO4CS_LLF_ZONE_IMPL(name, __COUNTER__)
+#else
+#	define FO4CS_LLF_ZONE(name) \
+		do {                    \
+		} while (false)
+#endif
+
 #include "Core/CommunityShaders.h"
 #include "Core/Globals.h"
 #include "Core/ShaderCache.h"
@@ -2646,29 +2666,32 @@ void LightLimitFix::RunClusterPrepass()
 #endif
 
 #if defined(FALLOUT_PRE_NG)
-    std::vector<LightData> preNGSceneLightFallback;
-    preNGSceneLightFallback.swap(frameLights);
-
-    seenLights.clear();
-    seenThisPass.clear();
-
-    if (CollectLightsFromPreNGShadowScene() == 0)
     {
-        if (!preNGSceneLightFallback.empty())
-        {
-            frameLights.swap(preNGSceneLightFallback);
+        FO4CS_LLF_ZONE("LLF/CollectLights");
+        std::vector<LightData> preNGSceneLightFallback;
+        preNGSceneLightFallback.swap(frameLights);
 
-            static std::atomic_uint32_t fallbackUseCount = 0;
-            const auto fallbackIndex = ++fallbackUseCount;
-            if (fallbackIndex <= 8 || fallbackIndex % 512 == 0)
-            {
-                logger::info("[LightLimitFix] PreNG scene-light fallback feeds clustered prepass uses={} lights={}",
-                             fallbackIndex, static_cast<std::uint32_t>(frameLights.size()));
-            }
-        }
-        else
+        seenLights.clear();
+        seenThisPass.clear();
+
+        if (CollectLightsFromPreNGShadowScene() == 0)
         {
-            CollectLightsFromScene();
+            if (!preNGSceneLightFallback.empty())
+            {
+                frameLights.swap(preNGSceneLightFallback);
+
+                static std::atomic_uint32_t fallbackUseCount = 0;
+                const auto fallbackIndex = ++fallbackUseCount;
+                if (fallbackIndex <= 8 || fallbackIndex % 512 == 0)
+                {
+                    logger::info("[LightLimitFix] PreNG scene-light fallback feeds clustered prepass uses={} lights={}",
+                                 fallbackIndex, static_cast<std::uint32_t>(frameLights.size()));
+                }
+            }
+            else
+            {
+                CollectLightsFromScene();
+            }
         }
     }
 #else
@@ -2706,6 +2729,11 @@ void LightLimitFix::RunClusterPrepass()
     // Skyrim-parity: always run the compute submission block (no payload-reuse skip).
 #endif
     {
+        // Covers the compute-submission block. Its SELF time excludes the nested
+        // Transform/Upload/ClusterBuild/ClusterCull zones, so whatever it reports is
+        // cost in this block that none of those four account for -- the renderer-state
+        // probes, the GPU timer, and the payload cache work.
+        FO4CS_LLF_ZONE("LLF/ComputeBlock");
 
 #if defined(FALLOUT_PRE_NG)
         auto *timingDevice = reinterpret_cast<ID3D11Device *>(rendererData->device);
@@ -2714,6 +2742,9 @@ void LightLimitFix::RunClusterPrepass()
 
         if (currentLightCount > 0)
         {
+            // Self time here is the first renderer-state probe and the snapshot
+            // bookkeeping; TransformLights and UploadLights are nested children.
+            FO4CS_LLF_ZONE("LLF/LightPrep");
             DirectX::XMFLOAT4X4 viewRows{};
             bool viewRowsValid = false;
             DirectX::XMFLOAT3 camPos{};
@@ -2758,20 +2789,24 @@ void LightLimitFix::RunClusterPrepass()
 
             DirectX::XMMATRIX view = DirectX::XMLoadFloat4x4(&viewRows);
             DirectX::XMVECTOR camPosV = DirectX::XMLoadFloat3(&camPos);
-            for (auto &light : frameLights)
             {
-                DirectX::XMFLOAT3 worldPos{
-                    light.positionWS[0].data.x,
-                    light.positionWS[0].data.y,
-                    light.positionWS[0].data.z };
-                DirectX::XMVECTOR rel = DirectX::XMVectorSubtract(DirectX::XMLoadFloat3(&worldPos), camPosV);
-                DirectX::XMVECTOR viewPos = DirectX::XMVector3TransformCoord(rel, view);
-                DirectX::XMStoreFloat3(
-                    reinterpret_cast<DirectX::XMFLOAT3 *>(&light.positionWS[1].data),
-                    viewPos);
-                light.positionWS[1].pad = 0;
+                FO4CS_LLF_ZONE("LLF/TransformLights");
+                for (auto &light : frameLights)
+                {
+                    DirectX::XMFLOAT3 worldPos{
+                        light.positionWS[0].data.x,
+                        light.positionWS[0].data.y,
+                        light.positionWS[0].data.z };
+                    DirectX::XMVECTOR rel = DirectX::XMVectorSubtract(DirectX::XMLoadFloat3(&worldPos), camPosV);
+                    DirectX::XMVECTOR viewPos = DirectX::XMVector3TransformCoord(rel, view);
+                    DirectX::XMStoreFloat3(
+                        reinterpret_cast<DirectX::XMFLOAT3 *>(&light.positionWS[1].data),
+                        viewPos);
+                    light.positionWS[1].pad = 0;
+                }
             }
 
+            FO4CS_LLF_ZONE("LLF/UploadLights");
             const auto lightUploadBytes = static_cast<UINT>(currentLightCount * sizeof(LightData));
 #if defined(FALLOUT_PRE_NG)
             currentLightsBufferIndex = (currentLightsBufferIndex + 1) % kPreNGLightsBufferFrames;
@@ -2845,6 +2880,7 @@ void LightLimitFix::RunClusterPrepass()
             std::memcpy(mapped.pData, &buildingCBData, sizeof(buildingCBData));
             context->Unmap(lightBuildingCB.get(), 0);
 
+            FO4CS_LLF_ZONE("LLF/ClusterBuild");
             context->CSSetShader(clusterBuildingCS.get(), nullptr, 0);
             ID3D11Buffer *cbPtr = lightBuildingCB.get();
             context->CSSetConstantBuffers(0, 1, &cbPtr);
@@ -2895,6 +2931,10 @@ void LightLimitFix::RunClusterPrepass()
 #endif
 
         {
+            // Self time here is the culling CB map/fill/unmap, the second renderer-state
+            // probe, and the SRV/UAV binds; ClusterCull is a nested child. The constant
+            // buffer stays mapped across all of that.
+            FO4CS_LLF_ZONE("LLF/CullSetup");
             D3D11_MAPPED_SUBRESOURCE mapped;
             const auto hr = context->Map(lightCullingCB.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
             if (FAILED(hr))
@@ -2966,6 +3006,7 @@ void LightLimitFix::RunClusterPrepass()
                                                         lightGridUAV.get()};
             context->CSSetUnorderedAccessViews(0, 3, cullingUAVs, nullptr);
 
+            FO4CS_LLF_ZONE("LLF/ClusterCull");
             context->CSSetShader(clusterCullingCS.get(), nullptr, 0);
             ID3D11Buffer *cullCBPtr = lightCullingCB.get();
             context->CSSetConstantBuffers(0, 1, &cullCBPtr);
@@ -2975,6 +3016,7 @@ void LightLimitFix::RunClusterPrepass()
                               (clusterSize[2] + NUMTHREAD_Z - 1) / NUMTHREAD_Z);
         }
 
+        FO4CS_LLF_ZONE("LLF/Finalize");
         clearComputeBindings();
 
 #if defined(FALLOUT_PRE_NG)
@@ -2987,6 +3029,10 @@ void LightLimitFix::RunClusterPrepass()
         clusterPayloadCacheValid = true;
 #endif
     }
+    // Runs to the end of the function: the Prepass SRV bind and
+    // TryBindPreNGBSLightingDeferredDescriptorResources, neither of which has been
+    // measured yet.
+    FO4CS_LLF_ZONE("LLF/Tail");
     frameLights.clear();
 
 #if defined(FALLOUT_PRE_NG)

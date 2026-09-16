@@ -13,8 +13,26 @@
 
 #include <memory>
 
+#ifdef TRACY_ENABLE
+#	include "Core/Feature.h"
+
+#	include <Tracy/Tracy.hpp>
+#	include <Tracy/TracyD3D11.hpp>
+
+#	include <wrl/client.h>
+#endif
+
 using fo4cs::diagnostics::Event;
 using fo4cs::diagnostics::LogEvent;
+
+#ifdef TRACY_ENABLE
+namespace
+{
+	// Owned for the process lifetime. F4SE plugins get no unload callback, so there
+	// is no TracyD3D11Destroy site; the context dies with the process.
+	TracyD3D11Ctx g_tracyCtx = nullptr;
+}
+#endif
 
 namespace CommunityShaders
 {
@@ -64,6 +82,16 @@ namespace CommunityShaders
 	{
 		d3d11Device = a_device;
 		LogEvent(Event::DeviceReady, "[CommunityShaders] D3D11 device created");
+#ifdef TRACY_ENABLE
+		if (!g_tracyCtx && a_device) {
+			Microsoft::WRL::ComPtr<ID3D11DeviceContext> immediate;
+			a_device->GetImmediateContext(immediate.GetAddressOf());
+			if (immediate) {
+				g_tracyCtx = TracyD3D11Context(a_device, immediate.Get());
+				Feature::SetTracyCtx(g_tracyCtx);
+			}
+		}
+#endif
 		Hooks::OnD3D11DeviceCreated(a_device);
 		Deferred::GetSingleton()->SetupResources();
 		SetupResources();
@@ -82,5 +110,11 @@ namespace CommunityShaders
 		ResetFeatures();
 		Menu::Reset();
 		Menu::Draw();
+#ifdef TRACY_ENABLE
+		if (g_tracyCtx) {
+			TracyD3D11Collect(g_tracyCtx);
+		}
+		FrameMark;
+#endif
 	}
 }

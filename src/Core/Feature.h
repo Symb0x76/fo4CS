@@ -14,6 +14,13 @@
 #include <utility>
 #include <vector>
 
+#ifdef TRACY_ENABLE
+#	include <Tracy/Tracy.hpp>
+#	include <Tracy/TracyD3D11.hpp>
+
+#	include <format>
+#endif
+
 struct Feature : IMenuItem
 {
 	struct SettingSearchEntry
@@ -88,12 +95,40 @@ protected:
 	bool SaveSettingsIni(const CSimpleIniA& a_ini, const std::filesystem::path& a_path) const;
 
 public:
+#ifdef TRACY_ENABLE
+	// Injected once the D3D11 device exists (Runtime::OnD3D11DeviceCreated) so
+	// ForEachLoadedFeature can emit GPU timer zones without this header having to
+	// know about the renderer. Null until then, which disables the GPU zone.
+	inline static TracyD3D11Ctx s_tracyCtx = nullptr;
+
+	static void SetTracyCtx(TracyD3D11Ctx a_ctx) noexcept { s_tracyCtx = a_ctx; }
+#endif
+
+	// Invokes a_callback on every loaded feature. a_methodName labels the per-feature
+	// Tracy zone ("<ShortName>::<Phase>"); pass a_emitGpuZone for phases that submit
+	// GPU work, which additionally opens a D3D11 timestamp zone around the callback.
+	// Both are compiled out entirely unless TRACY_SUPPORT was configured.
 	template <typename Func>
-	static inline void ForEachLoadedFeature(std::string_view /*a_methodName*/, Func&& a_callback)
+	static inline void ForEachLoadedFeature(std::string_view a_methodName, Func&& a_callback,
+		[[maybe_unused]] bool a_emitGpuZone = false)
 	{
+#ifndef TRACY_ENABLE
+		(void)a_methodName;
+#endif
 		for (auto* feature : GetFeatureList()) {
 			if (feature->loaded) {
+#ifdef TRACY_ENABLE
+				const auto zoneName = std::format("{}::{}", feature->GetShortName(), a_methodName);
+				ZoneTransientN(fo4csFeatureZone, zoneName.c_str(), true);
+				if (a_emitGpuZone && s_tracyCtx) {
+					TracyD3D11ZoneTransientS(s_tracyCtx, fo4csFeatureGpuZone, zoneName.c_str(), 0, true);
+					a_callback(feature);
+				} else {
+					a_callback(feature);
+				}
+#else
 				a_callback(feature);
+#endif
 			}
 		}
 	}

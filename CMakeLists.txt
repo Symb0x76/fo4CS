@@ -33,6 +33,30 @@ xseplugin_resolve_commonlib_project(CommonLibPath "${CommonLibRoot}")
 add_library(Fo4cs.Runtime INTERFACE)
 target_compile_definitions(Fo4cs.Runtime INTERFACE ${FO4CS_RUNTIME_DEFINITIONS})
 
+# Tracy profiler. Off by default and the client is not even fetched unless asked
+# for: the dependency lives behind the "tracy" vcpkg manifest feature, so enabling
+# this needs both halves --
+#   cmake --preset PreNG -DTRACY_SUPPORT=ON -DVCPKG_MANIFEST_FEATURES=tracy
+# Feature.h rides Fo4cs.Runtime for TRACY_ENABLE, which is why the define goes here
+# rather than on an individual target: every TU that includes Feature.h needs it,
+# and disagreeing TUs would be an ODR violation on the inline template.
+option(TRACY_SUPPORT "Enable Tracy profiler zones (requires -DVCPKG_MANIFEST_FEATURES=tracy)" OFF)
+if(TRACY_SUPPORT)
+  find_package(Tracy CONFIG REQUIRED)
+  target_link_libraries(Fo4cs.Runtime INTERFACE Tracy::TracyClient)
+  target_compile_definitions(Fo4cs.Runtime INTERFACE TRACY_ENABLE)
+  # A Tracy build is a diagnostic build by definition, so give it the debug
+  # settings too. Fo4csTargets.cmake gates FO4CS_ENABLE_DEBUG_SETTINGS on
+  # Debug/RelWithDebInfo, and a Release Tracy build therefore lands in the
+  # branch of LoadSharedDebugSettings that hard-forces debugLogging = false
+  # (Upscaler.cpp:128). That makes the one direct read of whether frame
+  # generation is actually producing frames -- slDLSSGGetState's
+  # numFramesActuallyPresented, logged by Streamline::LogDLSSGPresentState --
+  # unreachable in exactly the configuration used for profiling.
+  target_compile_definitions(Fo4cs.Runtime INTERFACE FO4CS_ENABLE_DEBUG_SETTINGS=1)
+  message(STATUS "fo4CS: Tracy profiler zones enabled (debug settings also enabled)")
+endif()
+
 # FSR runtime: all game runtimes use amd_fidelityfx_dx12.dll through the D3D12 proxy.
 
 if(F4SE_SUPPORT_XBYAK)
