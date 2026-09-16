@@ -144,6 +144,14 @@ public:
 	bool UsesFSRUpscaling() const;
 	bool UsesDLSSFrameGeneration() const;
 	bool UsesFSRFrameGeneration() const;
+	// The Uses*FrameGeneration pair reports what the user selected. This reports
+	// whether the selected backend actually came up. The distinction matters
+	// because the per-frame reset of the shared HUDLess/UI/reticle surfaces has
+	// two possible owners -- DX12SwapChain::Present and FeatureUpscaling::Reset --
+	// which must be exactly complementary. Both ask this one question so they
+	// cannot drift: asking "what is selected" in one and "what is running" in the
+	// other leaves a failed-init backend owned by neither, surfaces never cleared.
+	bool HasActiveFrameGenerationBackend() const;
 	bool UsesReflex() const;
 
 	UpscaleMethod GetUpscaleMethod(bool a_checkMenu) const;

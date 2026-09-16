@@ -365,7 +365,11 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
         auto fidelityFX = FidelityFX::GetSingleton();
         const bool useDLSSFrameGeneration = upscaling->UsesDLSSFrameGeneration() && streamline->featureDLSSG;
         const bool useFSRFrameGeneration = upscaling->UsesFSRFrameGeneration() && fidelityFX->featureFrameGen;
-        const bool frameGenerationBackendAvailable = useDLSSFrameGeneration || useFSRFrameGeneration;
+        // Same value as useDLSSFrameGeneration || useFSRFrameGeneration, but read
+        // from the shared accessor so this and FeatureUpscaling::Reset cannot
+        // disagree about who owns the per-frame surface reset. The two locals
+        // above stay for the per-backend branching and the backend name.
+        const bool frameGenerationBackendAvailable = upscaling->HasActiveFrameGenerationBackend();
         const char *frameGenerationBackend =
             GetFrameGenerationBackendName(useDLSSFrameGeneration, useFSRFrameGeneration);
 

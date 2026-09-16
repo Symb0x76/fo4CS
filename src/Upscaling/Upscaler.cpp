@@ -1,6 +1,8 @@
 #include "Upscaling/Upscaler.h"
 
 #include "Core/DebugSwitches.h"
+#include "Upscaling/FidelityFX.h"
+#include "Upscaling/Streamline.h"
 
 #include <algorithm>
 #include <array>
@@ -369,6 +371,16 @@ bool Upscaling::UsesDLSSFrameGeneration() const
 	default:
 		return false;
 	}
+}
+
+// Must stay identical to what DX12SwapChain::Present uses to decide whether it
+// owns the per-frame reset. Present composes it from the same two halves for its
+// own per-backend branching; this is the single authority both sides consult for
+// the combined answer.
+bool Upscaling::HasActiveFrameGenerationBackend() const
+{
+	return (UsesDLSSFrameGeneration() && Streamline::GetSingleton()->featureDLSSG) ||
+	       (UsesFSRFrameGeneration() && FidelityFX::GetSingleton()->featureFrameGen);
 }
 
 bool Upscaling::UsesFSRFrameGeneration() const

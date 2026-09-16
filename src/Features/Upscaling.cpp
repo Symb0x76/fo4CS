@@ -82,8 +82,14 @@ void FeatureUpscaling::Reset()
 	// that the frame-generation backends consume: FSR skipped 100% of frames
 	// (measured runs=0 across 6600 skips) and DLSS-G would have been handed a
 	// black hudless. Let the present path own the per-frame reset whenever it is
-	// running one; this condition mirrors frameGenerationBackendAvailable.
-	if (upscaling->UsesDLSSFrameGeneration() || upscaling->UsesFSRFrameGeneration()) {
+	// running one.
+	//
+	// This must be the *same* question Present asks, not merely a similar one.
+	// An earlier version tested Uses*FrameGeneration() -- what the user selected
+	// -- which is broader than Present's condition, so a selected-but-failed-init
+	// backend was owned by neither side and the surfaces were never cleared at
+	// all. HasActiveFrameGenerationBackend() is the single authority for both.
+	if (upscaling->HasActiveFrameGenerationBackend()) {
 		return;
 	}
 

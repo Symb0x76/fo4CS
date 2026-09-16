@@ -431,8 +431,11 @@ void FidelityFX::Present(bool a_useFrameGen)
 	static std::atomic_uint64_t frameGenSkipCount{0};
 	static std::atomic_uint64_t frameGenRunCount{0};
 	if (a_useFrameGen && !canUseFrameGen) {
+		// Prime stride: frameIndex alternates 0/1, so any even sampling period
+		// phase-locks to one parity and every sample reports the same slot --
+		// which is exactly the false signal the first version of this produced.
 		const auto skips = frameGenSkipCount.fetch_add(1, std::memory_order_relaxed) + 1;
-		if (skips == 1 || skips % 600 == 0) {
+		if (skips == 1 || skips % 599 == 0) {
 			logger::warn(
 				"[FidelityFX] Frame generation skipped (skips={} runs={}): commandList={} hudless={} depth={} "
 				"motionVectors={} hudlessFormatStale={} hudLessFrameReady={} frameIndex={}",
