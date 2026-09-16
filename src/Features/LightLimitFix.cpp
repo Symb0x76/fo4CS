@@ -81,83 +81,13 @@
 #include <optional>
 #include <sstream>
 
-namespace
+#include "Features/LightLimit/LLFInternal.h"
+
+// Definitions for the cross-cluster state declared in LLFInternal.h. Exactly one
+// definition each -- see that header for why they cannot live in a cluster.
+namespace CommunityShaders::lightlimit
 {
-constexpr std::uint32_t kClusterMaxLights = 128;
-constexpr std::uint32_t kMaxLights = 1024;
 #if defined(FALLOUT_PRE_NG)
-constexpr std::uint64_t kPreNGStableFrame = 5;
-constexpr bool kPreNGEnableInternalPointLightHook = false;
-constexpr const char *kPreNGSetupGeometryHookOptInEnv = "FO4CS_LLF_PRENG_SETUP_GEOMETRY_HOOK";
-constexpr const char *kPreNGSetupGeometryStrictCBBindEnv = "FO4CS_LLF_PRENG_SETUP_GEOMETRY_BIND_STRICT_CB";
-constexpr const char *kPreNGSetupGeometryPersistStrictCBEnv = "FO4CS_LLF_PRENG_SETUP_GEOMETRY_PERSIST_STRICT_CB";
-constexpr const char *kPreNGSetupGeometryCallBudgetEnv = "FO4CS_LLF_PRENG_SETUP_GEOMETRY_CALL_BUDGET";
-constexpr const char *kPreNGSetupGeometryFrameBudgetEnv = "FO4CS_LLF_PRENG_SETUP_GEOMETRY_FRAME_BUDGET";
-constexpr const char *kPreNGPointLightHookOptInEnv = "FO4CS_LLF_PRENG_POINT_LIGHT_HOOK";
-constexpr const char *kPreNGStrictLightCBDiagnosticEnv = "FO4CS_LLF_PRENG_STRICT_CB_DIAG";
-constexpr const char *kPreNGStrictLightCBBindEnv = "FO4CS_LLF_PRENG_BIND_STRICT_CB";
-constexpr const char *kPreNGClusterSRVBindEnv = "FO4CS_LLF_PRENG_BIND_CLUSTER_SRVS";
-constexpr const char *kPreNGPrepassResourceBindEnv = "FO4CS_LLF_PRENG_PREPASS_BIND_RESOURCES";
-constexpr const char *kPreNGPersistentClusterPrepassEnv = "FO4CS_LLF_PRENG_PERSISTENT_CLUSTER_PREPASS";
-constexpr const char *kPreNGShadowSceneFastReuseEnv = "FO4CS_LLF_PRENG_SHADOW_SCENE_FAST_REUSE";
-constexpr const char *kPreNGShadowSceneFastReuseRefreshIntervalEnv =
-    "FO4CS_LLF_PRENG_SHADOW_SCENE_FAST_REUSE_REFRESH_INTERVAL";
-constexpr const char *kPreNGDFLightDrawStateStrictCBBindEnv = "FO4CS_LLF_PRENG_DFLIGHT_BIND_STRICT_CB";
-constexpr const char *kPreNGDFLightDrawStateClusterSRVBindEnv = "FO4CS_LLF_PRENG_DFLIGHT_BIND_CLUSTER_SRVS";
-constexpr const char *kPreNGDFLightResourceNoOpPassEnv = "FO4CS_LLF_PRENG_DFLIGHT_RESOURCE_NOOP_PASS";
-constexpr const char *kPreNGDFLightFullContractNoOpPassEnv = "FO4CS_LLF_PRENG_DFLIGHT_FULL_CONTRACT_NOOP_PASS";
-constexpr const char *kPreNGDFLightLLFAdditivePassEnv = "FO4CS_LLF_PRENG_DFLIGHT_LLF_ADD_PASS";
-constexpr const char *kPreNGDFLightLegacyAdditiveProofEnv = "FO4CS_LLF_PRENG_DFLIGHT_LEGACY_ADDITIVE_PROOF";
-constexpr const char *kPreNGDFLightLLFAdditivePersistentEnv = "FO4CS_LLF_PRENG_DFLIGHT_LLF_ADD_PERSISTENT";
-constexpr const char *kPreNGDFLightLLFAdditiveRefreshIntervalEnv = "FO4CS_LLF_PRENG_DFLIGHT_LLF_ADD_REFRESH_INTERVAL";
-constexpr const char *kPreNGDFLightFullShadowedDescriptorConsumerEnv =
-    "FO4CS_LLF_PRENG_DFLIGHT_FULL_SHADOWED_DESCRIPTOR_CONSUMER";
-constexpr const char *kPreNGDFLightFullShadowedDescriptorConsumerUnsafeEnv =
-    "FO4CS_LLF_PRENG_DFLIGHT_FULL_SHADOWED_DESCRIPTOR_CONSUMER_UNSAFE";
-constexpr const char *kPreNGDFLightFullContractVisibleLLFEnv = "FO4CS_LLF_PRENG_DFLIGHT_FULL_CONTRACT_VISIBLE_LLF";
-constexpr const char *kPreNGDFCompositeResourceBindEnv = "FO4CS_LLF_PRENG_DFCOMPOSITE_RESOURCE_BIND";
-constexpr const char *kPreNGDFCompositeSafeBindEnv = "FO4CS_LLF_PRENG_DFCOMPOSITE_SAFE_BIND";
-constexpr const char *kPreNGDFCompositeVisibleLLFEnv = "FO4CS_LLF_PRENG_DFCOMPOSITE_VISIBLE_LLF";
-constexpr const char *kPreNGBSLightingResourceBindEnv = "FO4CS_LLF_PRENG_BSLIGHTING_RESOURCE_BIND";
-constexpr const char *kPreNGBSLightingSetupGeometryResourceBindEnv =
-    "FO4CS_LLF_PRENG_BSLIGHTING_SETUP_GEOMETRY_RESOURCE_BIND";
-constexpr const char *kPreNGBSLightingContractCompileEnv = "FO4CS_LLF_PRENG_BSLIGHTING_CONTRACT_COMPILE";
-constexpr const char *kPreNGBSLightingConsumerCompileEnv = "FO4CS_LLF_PRENG_BSLIGHTING_CONSUMER_COMPILE";
-constexpr const char *kPreNGBSLightingDescriptorObserveEnv = "FO4CS_LLF_PRENG_BSLIGHTING_DESCRIPTOR_OBSERVE";
-constexpr const char *kPreNGBSLightingVanillaBindEnv = "FO4CS_LLF_PRENG_BSLIGHTING_VANILLA_BIND";
-constexpr const char *kPreNGBSLightingLLFBindEnv = "FO4CS_LLF_PRENG_BSLIGHTING_LLF_BIND";
-constexpr const char *kPreNGDFLightForwardLLFBindEnv = "FO4CS_LLF_PRENG_DFLIGHT_FORWARD_LLF_BIND";
-constexpr const char *kPreNGDisablePreviewOverloadGateEnv = "FO4CS_LLF_PRENG_DISABLE_PREVIEW_OVERLOAD_GATE";
-// Diagnostic: allow the visible BSLighting LLF consumer to bind while a
-// fullscreen preview menu is open (bypasses menu suppression). The consumer
-// bind is triggered by shader lookups that FO4 only performs for the menu 3D
-// preview, so this switch exists to prove the bind path reaches
-// llfConsumerComplete=true. Keep OFF for normal play (menus stay vanilla).
-constexpr const char *kPreNGBSLightingLLFBindMenuEnv = "FO4CS_LLF_PRENG_BSLIGHTING_LLF_BIND_MENU";
-constexpr const char *kPreNGShaderObjectMetadataEnv = "FO4CS_LLF_PRENG_SHADER_OBJECT_METADATA";
-constexpr const char *kPreNGTraceLLFPixelEnv = "FO4CS_TRACE_LLF_PS";
-constexpr const char *kPreNGGpuTimingEnv = "FO4CS_LLF_PRENG_GPU_TIMING";
-// Selects WHICH render-pipeline hook submits the clustered compute. Default
-// (off/absent) = the historical Main_RenderWorld_Start site via Prepass().
-// "early"/"1" = submit from EarlyPrepass() (Main_RenderShadowMaps phase), so the
-// dispatch overlaps the engine's shadow-map GPU batch instead of landing in the
-// frame-start idle pocket that tips NVIDIA power-mgmt into a downclock under the
-// FrameGen interop fence ping-pong.
-constexpr const char *kPreNGPrepassEarlyHookEnv = "FO4CS_LLF_PRENG_PREPASS_EARLY_HOOK";
-constexpr const char *kPreNGDFLightContractCompileEnv = "FO4CS_LLF_PRENG_DFLIGHT_CONTRACT_COMPILE";
-constexpr const char *kPreNGDFLightCandidateCompileEnv = "FO4CS_LLF_PRENG_DFLIGHT_CANDIDATE_COMPILE";
-constexpr const char *kPreNGDFLightContractProbeSource = "LightLimitFix\\DFLightContractProbePS.hlsl";
-constexpr const char *kPreNGDFLightFullShadowedCandidateSource = "LightLimitFix\\DFLightFullShadowedPS.hlsl";
-constexpr std::uint32_t kPreNGMaxSetupGeometryCallBudget = 1000000;
-constexpr std::uint32_t kPreNGDefaultSetupGeometryFrameBudget = 2;
-constexpr std::uint32_t kPreNGMaxSetupGeometryFrameBudget = 64;
-constexpr std::uint32_t kPreNGDefaultShadowSceneFastReuseRefreshInterval = 8;
-constexpr std::uint32_t kPreNGMinShadowSceneFastReuseRefreshInterval = 1;
-constexpr std::uint32_t kPreNGMaxShadowSceneFastReuseRefreshInterval = 600;
-constexpr std::uint32_t kPreNGDefaultDFLightLLFAdditiveRefreshInterval = 0;
-constexpr std::uint32_t kPreNGMinDFLightLLFAdditiveRefreshInterval = 0;
-constexpr std::uint32_t kPreNGMaxDFLightLLFAdditiveRefreshInterval = 600;
-constexpr float kPreNGClusterBuildReuseTolerance = 1.0e-3f;
 std::atomic_bool s_preNGDFLightLLFConsumerDescriptorObserved = false;
 std::atomic_uint32_t s_preNGDFLightLLFConsumerDescriptorObservations = 0;
 std::atomic_bool s_preNGDFCompositeLLFConsumerDescriptorObserved = false;
@@ -169,53 +99,13 @@ std::atomic_uint32_t s_preNGBSLightingLLFConsumerLastPixelDescriptor = 0;
 std::atomic_bool s_preNGBSLightingLLFConsumerLastFound = false;
 std::atomic<std::uintptr_t> s_preNGBSLightingLLFConsumerLastVanillaPixelShader = 0;
 std::atomic_bool s_preNGBSLightingDeferredResourceProofComplete = false;
-// Descriptor-burst settle buffer (frames) applied after BSLighting descriptor
-// observation by ExtendPreNGBSLightingResourceProofDescriptorSettle. Kept very
-// short so the clustered prepass resumes almost immediately once a preview
-// menu closes (BOSS: resume clustered prepass right after the menu closes).
-// Preview-menu suppression itself is live per-frame via menu detection and
-// does not depend on this value. A tiny non-zero buffer still smooths the
-// descriptor-burst transition without a visible delay.
-constexpr std::uint64_t kPreNGBSLightingResourceProofMenuSettleFrames = 2;
-constexpr std::string_view kPreNGBSLightingResourceProofLockpickingMenu{"LockpickingMenu"};
-// Fullscreen 3D preview menus that latch the LLF decode onto the world
-// ShadowSceneNode (1000+ lights), collapsing framerate via the per-frame
-// clustered prepass. Like LockpickingMenu, these need permanent suppression
-// of the clustered prepass / deferred b3-t35-t37 bind for the process: the
-// preview rig itself only needs its handful of vanilla lights, and visible
-// LLF is not wanted while a preview menu is up. See .codex/docs/current-state.md.
-constexpr std::array kPreNGBSLightingResourceProofBlockingMenus{kPreNGBSLightingResourceProofLockpickingMenu,
-                                                                std::string_view{"PipboyMenu"},
-                                                                std::string_view{"TerminalMenu"},
-                                                                std::string_view{"ExamineMenu"},
-                                                                std::string_view{"ExamineConfirmMenu"},
-                                                                std::string_view{"ContainerMenu"},
-                                                                std::string_view{"BarterMenu"},
-                                                                std::string_view{"PowerArmorModMenu"}};
 std::atomic_uint64_t s_preNGBSLightingResourceProofBypassUntilFrame = 0;
 std::atomic_uint32_t s_preNGBSLightingResourceProofBypassLogs = 0;
 std::atomic_uint32_t s_preNGBSLightingVisibleConsumerMenuSuppressLogs = 0;
 std::atomic_uint32_t s_preNGBSLightingPreviewMenuLastReason = 0;
 std::atomic_bool s_preNGBSLightingPreviewMenuResumePending = false;
 std::atomic_bool s_preNGBSLightingPreviewMenuConsumerResumePending = false;
-// Most recent raw shadow-scene bucket light total (pre-truncation). Preview
-// menus (ExamineMenu etc.) latch the decode onto a world node with ~1000+
-// lights; after the menu closes the node can stay selected for a few frames
-// before the scene returns to its normal handful. Resuming the clustered
-// prepass during that overload window causes the residual stutter. We hold
-// the prepass until this count drops back below the threshold — a
-// state-based resume gate, NOT a permanent light cap (Skyrim CS still
-// supports dense scenes; this only avoids the preview-menu transition).
 std::atomic_uint32_t s_preNGShadowSceneLastBucketTotal = 0;
-constexpr std::uint32_t kPreNGShadowScenePreviewOverloadLights = 256;
-constexpr std::uint64_t kPreNGBSLightingSetupGeometryNoLightBypassFrames = 30;
-constexpr std::array kPreNGBSLightingSetupGeometryPreviewMenus{
-    std::string_view{"PipboyMenu"},         std::string_view{"TerminalMenu"},  std::string_view{"ExamineMenu"},
-    std::string_view{"ExamineConfirmMenu"}, std::string_view{"ContainerMenu"}, std::string_view{"BarterMenu"},
-    std::string_view{"PowerArmorModMenu"}};
-constexpr std::uint32_t kPreNGBSLightingSetupGeometryWorkshopPreviewReason =
-    static_cast<std::uint32_t>(kPreNGBSLightingSetupGeometryPreviewMenus.size() + 1);
-constexpr std::uint64_t kPreNGBSLightingSetupGeometryPreviewCacheInvalidFrame = static_cast<std::uint64_t>(-1);
 std::atomic_uint64_t s_preNGBSLightingSetupGeometryNoLightNextProbeFrame = 0;
 std::atomic_uint64_t s_preNGBSLightingSetupGeometryBypassUntilFrame = 0;
 std::atomic_uint32_t s_preNGBSLightingSetupGeometryBypassLogs = 0;
@@ -230,9 +120,16 @@ std::atomic_uint32_t s_preNGBSLightingSetupGeometryHookCallCount = 0;
 std::atomic_uint32_t s_preNGBSLightingSetupGeometryBypassCallCount = 0;
 std::atomic_bool s_preNGBSLightingBatchSetupHookInstalled = false;
 std::atomic_uint32_t s_preNGBSLightingBatchSetupHookCallCount = 0;
-#if defined(FALLOUT_PRE_NG)
 winrt::com_ptr<ID3D11Buffer> s_preNGDFLightCameraCB;
 std::atomic_bool s_preNGDFLightCameraCBCaptured = false;
+#endif
+}
+
+using namespace CommunityShaders::lightlimit;
+
+namespace
+{
+#if defined(FALLOUT_PRE_NG)
 
 // The renderer-state base vanilla DFLight reads: TLS[TlsIndex] + 2848
 // (falling back to qword_1461DDC68 when the TLS slot is null).
@@ -299,7 +196,6 @@ bool IsPreNGDFLightRendererStateReadable(std::uintptr_t a_rendererBase)
     }
     return probedReadable;
 }
-#endif
 #endif
 
 std::string GetShaderPath()
