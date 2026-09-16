@@ -109,6 +109,24 @@ struct DrawWorld_Forward
 	static inline REL::Relocation<decltype(thunk)> func;
 };
 
+// NOTE ON THE NAME: this hook and its REL::ID are called "Reticle", but the call
+// they patch has nothing to do with the crosshair. Verified from the 1.10.163
+// binary: UPSCALER_DRAW_WORLD_RETICLE_CALL resolves to sub_1428568B0 + 0x253,
+// whose bytes are `E8 D8 87 FD FF` -> a call to sub_14282F2E0, a whole-view
+// BSShaderAccumulator flush (sort the pending pass list by depth, distribute into
+// per-pass buckets, clear). The same callee is invoked twice more in that function
+// with different accumulators.
+//
+// Fallout 4 has no native crosshair draw at all -- the crosshair is the Scaleform
+// MovieClip CenterGroup_mc.HUDCrosshair_mc inside HUDMenu, rendered by the GFx HAL
+// in a completely separate code region. A "reticle" extraction pass used to hang
+// off this hook; it produced only artifacts and has been removed.
+//
+// The hook itself stays, and must: PreAlpha()/PostAlpha() are what produce the
+// shared motion-vector and depth buffers that frame generation consumes. It is a
+// convenient per-frame bracket around the scene flush, nothing more. Renaming it
+// would mean renaming the REL::ID in the CommonLibF4 submodule, so the name is
+// left alone and documented here instead.
 struct DrawWorld_Reticle
 {
 	static void thunk(void* a1)
@@ -141,7 +159,8 @@ void Upscaling::InstallHooks()
 	// Watch frame presentation
 	stl::write_thunk_call<SetUseDynamicResolutionViewportAsDefaultViewport>(F4Hooks::UPSCALER_SET_DEFAULT_VIEWPORT_CALL.address());
 
-	// Fix reticles on motion vectors and depth
+	// Per-frame bracket for the shared motion-vector and depth buffers
+	// (see the note on DrawWorld_Reticle above -- the name is a misnomer)
 	stl::detour_thunk<DrawWorld_Forward>(F4Hooks::UPSCALER_DRAW_WORLD_FORWARD);
 	stl::write_thunk_call<DrawWorld_Reticle>(F4Hooks::UPSCALER_DRAW_WORLD_RETICLE_CALL.address());
 #endif

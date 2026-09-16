@@ -83,7 +83,6 @@ public:
 
 	Texture2D* HUDLessBufferShared[2];
 	Texture2D* uiColorAndAlphaBufferShared[2]{};
-	Texture2D* reticleColorAndAlphaBufferShared[2]{};
 	Texture2D* depthBufferShared[2];
 	Texture2D* motionVectorBufferShared[2];
 	Texture2D* upscalerInputShared[2]{};
@@ -99,8 +98,6 @@ public:
 	ID3D11ComputeShader* copyDepthToSharedBufferCS;
 	ID3D11ComputeShader* generateSharedBuffersCS;
 	ID3D11ComputeShader* buildUIColorAndAlphaCS;
-	ID3D11ComputeShader* buildReticleUIColorAndAlphaCS;
-	ID3D11ComputeShader* patchHUDLessReticleCS;
 	ID3D11ComputeShader* denoiseUIAlphaCS;
 
 	bool setupBuffers = false;
@@ -146,7 +143,7 @@ public:
 	bool UsesFSRFrameGeneration() const;
 	// The Uses*FrameGeneration pair reports what the user selected. This reports
 	// whether the selected backend actually came up. The distinction matters
-	// because the per-frame reset of the shared HUDLess/UI/reticle surfaces has
+	// because the per-frame reset of the shared HUDLess/UI surfaces has
 	// two possible owners -- DX12SwapChain::Present and FeatureUpscaling::Reset --
 	// which must be exactly complementary. Both ask this one question so they
 	// cannot drift: asking "what is selected" in one and "what is running" in the

@@ -40,7 +40,6 @@ void Upscaling::PostAlpha()
 
 	auto context = reinterpret_cast<ID3D11DeviceContext*>(rendererData->context);
 	auto dx12SwapChain = DX12SwapChain::GetSingleton();
-	const auto frameIndex = dx12SwapChain->frameIndex;
 
 	context->OMSetRenderTargets(0, nullptr, nullptr);
 
@@ -81,30 +80,13 @@ void Upscaling::PostAlpha()
 		ID3D11ComputeShader* shader = nullptr;
 		context->CSSetShader(shader, nullptr, 0);
 
-		if (reticleColorAndAlphaBufferShared[frameIndex] && buildReticleUIColorAndAlphaCS) {
-			const uint32_t dispatchX = static_cast<uint32_t>(std::ceil(static_cast<float>(dx12SwapChain->swapChainDesc.Width) / 8.0f));
-			const uint32_t dispatchY = static_cast<uint32_t>(std::ceil(static_cast<float>(dx12SwapChain->swapChainDesc.Height) / 8.0f));
-
-			ID3D11ShaderResourceView* reticleViews[2] = {
-				reinterpret_cast<ID3D11ShaderResourceView*>(colorPreAlpha.srView),
-				reinterpret_cast<ID3D11ShaderResourceView*>(colorPostAlpha.srView)
-			};
-			context->CSSetShaderResources(0, ARRAYSIZE(reticleViews), reticleViews);
-
-			ID3D11UnorderedAccessView* reticleUAVs[1] = { reticleColorAndAlphaBufferShared[frameIndex]->uav.get() };
-			context->CSSetUnorderedAccessViews(0, ARRAYSIZE(reticleUAVs), reticleUAVs, nullptr);
-
-			context->CSSetShader(buildReticleUIColorAndAlphaCS, nullptr, 0);
-			context->Dispatch(dispatchX, dispatchY, 1);
-
-			ID3D11ShaderResourceView* nullReticleViews[2] = { nullptr, nullptr };
-			context->CSSetShaderResources(0, ARRAYSIZE(nullReticleViews), nullReticleViews);
-
-			ID3D11UnorderedAccessView* nullReticleUAVs[1] = { nullptr };
-			context->CSSetUnorderedAccessViews(0, ARRAYSIZE(nullReticleUAVs), nullReticleUAVs, nullptr);
-
-			context->CSSetShader(shader, nullptr, 0);
-		}
+		// A "reticle" extraction pass used to run here, differencing kMain against
+		// kMainTemp across this hook and feeding the result to BuildUIColorAndAlphaCS
+		// as a forced alpha. It has been removed: the crosshair is not a native draw.
+		// See BuildUIColorAndAlphaCS.hlsl for the full reasoning and the byte-level
+		// evidence. What remains in this function -- generateSharedBuffersCS above --
+		// produces the shared motion-vector and depth buffers and is load-bearing for
+		// frame generation, so the hook that calls us must stay.
 	}
 }
 
@@ -181,7 +163,7 @@ bool Upscaling::BuildUIColorAndAlphaResource(ID3D11Texture2D* a_finalFrame)
 	const auto frameIndex = dx12SwapChain->frameIndex;
 	if (!hudLessFrameValid[frameIndex] || hudLessFrameIDs[frameIndex] == 0)
 		return false;
-	if (!HUDLessBufferShared[frameIndex] || !uiColorAndAlphaBufferShared[frameIndex] || !reticleColorAndAlphaBufferShared[frameIndex] || !buildUIColorAndAlphaCS)
+	if (!HUDLessBufferShared[frameIndex] || !uiColorAndAlphaBufferShared[frameIndex] || !buildUIColorAndAlphaCS)
 		return false;
 
 	auto rendererData = fo4cs::GetRendererData();
@@ -214,10 +196,9 @@ bool Upscaling::BuildUIColorAndAlphaResource(ID3D11Texture2D* a_finalFrame)
 	const uint32_t dispatchX = static_cast<uint32_t>(std::ceil(static_cast<float>(finalDesc.Width) / 8.0f));
 	const uint32_t dispatchY = static_cast<uint32_t>(std::ceil(static_cast<float>(finalDesc.Height) / 8.0f));
 
-	ID3D11ShaderResourceView* views[3] = {
+	ID3D11ShaderResourceView* views[2] = {
 		finalFrameSRV.get(),
-		HUDLessBufferShared[frameIndex]->srv.get(),
-		reticleColorAndAlphaBufferShared[frameIndex]->srv.get()
+		HUDLessBufferShared[frameIndex]->srv.get()
 	};
 	context->CSSetShaderResources(0, ARRAYSIZE(views), views);
 

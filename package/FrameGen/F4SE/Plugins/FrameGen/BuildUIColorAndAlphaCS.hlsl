@@ -1,6 +1,5 @@
 Texture2D<float4> FinalColor   : register(t0);
 Texture2D<float4> HUDLessColor : register(t1);
-Texture2D<float4> ReticleAlpha : register(t2);
 
 RWTexture2D<float4> OutputUIColorAndAlpha : register(u0);
 
@@ -55,8 +54,25 @@ static const float kUIHi = 24.0 / 255.0;
 	// Require at least one neighbour above kUILo threshold
 	float neighbourSupport = smoothstep(kUILo * 0.8, kUILo * 1.5, nDiff);
 
-	// Combine per-pixel detection with spatial confirmation
-	float alpha = max(detected * neighbourSupport, ReticleAlpha[pixel].a);
+	// Combine per-pixel detection with spatial confirmation.
+	//
+	// There used to be a third input here: max(..., ReticleAlpha[pixel].a), fed by
+	// a separate "reticle" mask. It is gone, because the crosshair is not a native
+	// draw at all -- it is the Scaleform MovieClip CenterGroup_mc.HUDCrosshair_mc
+	// inside HUDMenu, rendered by the GFx HAL after the HUDLess capture. The plain
+	// Final - HUDLess difference below already separates it, exactly as it does the
+	// compass and health bar.
+	//
+	// The mask that was being folded in did not contain the crosshair. It came from
+	// PostAlpha() differencing kMain against kMainTemp across
+	// UPSCALER_DRAW_WORLD_RETICLE_CALL -- byte-verified on 1.10.163 as
+	// sub_1428568B0 + 0x253 -> sub_14282F2E0, a whole-view BSShaderAccumulator
+	// flush. Folding it in through max() bypassed the difference test, so
+	// translucent scene geometry inside the old 0.38 centre ellipse was tagged as
+	// UI and composited un-interpolated by the frame generator: frozen scene
+	// content over a moving scene, which is what produced the checkerboard and the
+	// doubled crosshair.
+	float alpha = detected * neighbourSupport;
 
 	// --- Reconstruction ---
 	// Pre-multiplied UI colour:
