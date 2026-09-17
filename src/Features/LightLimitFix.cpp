@@ -216,22 +216,68 @@ std::atomic_bool s_preNGDFLightCameraCBCaptured = false;
 
 // The renderer-state base vanilla DFLight reads: TLS[TlsIndex] + 2848
 // (falling back to qword_1461DDC68 when the TLS slot is null).
+//
+// Both constants are fixed addresses in the game image, so whether they are
+// readable is settled at load time and cannot change afterwards. Re-probing
+// them every call is not free: IsReadableAddress calls VirtualQuery, which
+// serializes on the process address-space lock that the D3D12 proxy and the
+// frame-generation threads contend for constantly. Probe each once, then read
+// raw.
 std::uintptr_t GetPreNGDFLightRendererStateBase()
 {
-    std::uint32_t tlsIndex = 0;
     const RE::FO4Runtime::RuntimeAddressValue kPreNGTlsIndex{ 0x1467347B4 };
     const RE::FO4Runtime::RuntimeAddressValue kPreNGRendererFallback{ 0x1461DDC68 };
-    const bool tlsIndexRead = RE::FO4Runtime::ReadValue<std::uint32_t>(kPreNGTlsIndex.address(), tlsIndex);
+
+    // An unreadable index yields a sentinel that fails the tlsIndex < 0x400 gate
+    // below, so it falls through to the fallback pointer exactly as the old
+    // !tlsIndexRead branch did.
+    static constexpr std::uint32_t kUnreadableTlsIndex = 0xFFFFFFFFu;
+    static const std::uint32_t tlsIndex =
+        RE::FO4Runtime::ReadValueOr<std::uint32_t>(kPreNGTlsIndex.address(), kUnreadableTlsIndex);
+    static const bool fallbackReadable =
+        RE::FO4Runtime::IsReadableAddress(kPreNGRendererFallback.address(), sizeof(std::uintptr_t));
+
     const auto teb = __readgsqword(0x30);
     const auto tlsArray = *reinterpret_cast<std::uintptr_t *>(teb + 0x58);
     const auto slot = (tlsArray && tlsIndex < 0x400) ?
         *reinterpret_cast<std::uintptr_t *>(tlsArray + static_cast<std::uintptr_t>(tlsIndex) * 8) : 0;
     const auto base = slot ? *reinterpret_cast<std::uintptr_t *>(slot + 2848) : 0;
-    if (!tlsIndexRead)
+    if (base)
     {
-        return RE::FO4Runtime::ReadPointer(kPreNGRendererFallback.address());
+        return base;
     }
-    return base ? base : RE::FO4Runtime::ReadPointer(kPreNGRendererFallback.address());
+    return fallbackReadable ?
+        *reinterpret_cast<const std::uintptr_t *>(kPreNGRendererFallback.address()) : 0;
+}
+
+// Whether the view rows and camera position hanging off the renderer state are
+// readable depends only on the base pointer, so the guard only has to run when
+// that pointer changes. It exists to catch a wrong offset on an unexpected
+// binary, which is a load-time property, not a per-frame one.
+//
+// This is the expensive one: with the two probes here plus the TLS read above
+// running every frame, Tracy measured LLF/LightPrep at 5.33 ms mean self time
+// (min 2.16 ms over 2193 frames) in a light-heavy exterior -- 16x the next
+// largest zone in the capture, for a scope that otherwise does 80 bytes of
+// memcpy. thread_local because the base is derived from TLS; plain statics
+// would be a data race if the prepass ever ran off the render thread.
+bool IsPreNGDFLightRendererStateReadable(std::uintptr_t a_rendererBase)
+{
+    if (a_rendererBase == 0)
+    {
+        return false;
+    }
+
+    thread_local std::uintptr_t probedBase = 0;
+    thread_local bool probedReadable = false;
+    if (a_rendererBase != probedBase)
+    {
+        probedReadable =
+            RE::FO4Runtime::IsReadableAddress(a_rendererBase + 7024 + 114 * 16, 4 * 16) &&
+            RE::FO4Runtime::IsReadableAddress(a_rendererBase + 8736, sizeof(float) * 3);
+        probedBase = a_rendererBase;
+    }
+    return probedReadable;
 }
 #endif
 #endif
@@ -2679,8 +2725,7 @@ void LightLimitFix::RunClusterPrepass()
             bool viewRowsValid = false;
             DirectX::XMFLOAT3 camPos{};
             bool camPosValid = false;
-            if (rendererBase != 0 && F4Runtime::IsReadableAddress(rendererBase + 7024 + 114 * 16, 4 * 16) &&
-                F4Runtime::IsReadableAddress(rendererBase + 8736, sizeof(float) * 3))
+            if (IsPreNGDFLightRendererStateReadable(rendererBase))
             {
                 std::memcpy(&viewRows, reinterpret_cast<const void *>(rendererBase + 7024 + 114 * 16), sizeof(viewRows));
                 std::memcpy(&camPos, reinterpret_cast<const void *>(rendererBase + 8736), sizeof(float) * 3);
@@ -2870,9 +2915,7 @@ void LightLimitFix::RunClusterPrepass()
                 if (!valid)
                 {
                     const auto rendererBase = GetPreNGDFLightRendererStateBase();
-                    valid = rendererBase != 0 &&
-                        F4Runtime::IsReadableAddress(rendererBase + 7024 + 114 * 16, 4 * 16) &&
-                        F4Runtime::IsReadableAddress(rendererBase + 8736, sizeof(float) * 3);
+                    valid = IsPreNGDFLightRendererStateReadable(rendererBase);
                     if (valid)
                     {
                         std::memcpy(&viewRows, reinterpret_cast<const void *>(rendererBase + 7024 + 114 * 16), sizeof(viewRows));
