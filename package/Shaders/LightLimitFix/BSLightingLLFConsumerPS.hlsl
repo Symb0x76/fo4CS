@@ -14,8 +14,8 @@
 // strict-light buffer; every clustered light is read from t35/t36/t37.
 // Shadowed point lights stay owned by the deferred DFLight pass.
 //
-// Reference: .codex/docs/bslighting-vanilla-asm-baseline.md,
-//            .codex/docs/llf-followup-development-plan.md.
+// Reference: docs/archive/bslighting-vanilla-asm-baseline.md,
+//            docs/archive/llf-followup-development-plan.md.
 
 #include "LightLimitFix/LightLimitFix.hlsli"
 
@@ -29,7 +29,7 @@
 #define cmp -
 
 // Descriptor bit decoding observed in vanilla dumps. See
-// .codex/docs/bslighting-vanilla-asm-baseline.md.
+// docs/archive/bslighting-vanilla-asm-baseline.md.
 #define BSL_DESC_BIT_CUBE  0x100  // t4/s4 texturecube
 #define BSL_DESC_BIT_AUX15 0x040  // t15/s15 texture2d (specular/glow lookup)
 #define BSL_DESC_BIT_AUX6  0x200  // t6/s6 texture2d (replaces t4)

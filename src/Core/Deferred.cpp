@@ -963,7 +963,7 @@ void Deferred::ClearShaderCache()
 	// --- Hooks into FO4 Creation Engine render pipeline ---
 	// REL::IDs resolved via cross-reference with F4SE Address Library + decompiled export.
 	// Cross-version analysis: PreNG 1.10.163, PostNG 1.10.984, PostAE 1.11.221 (2026-07-21).
-	// See .codex/docs/static-deferred-scope-cross-version.md for the static-analysis report.
+	// See docs/static-deferred-scope-cross-version.md for the static-analysis report.
 
 // Detour a function at a raw absolute address (bypasses REL::ID resolution).
 // Template type T provides T::thunk and T::func (REL::Relocation stored as uintptr_t).

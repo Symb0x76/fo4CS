@@ -163,7 +163,7 @@ constexpr std::string_view kPreNGBSLightingResourceProofLockpickingMenu{"Lockpic
 // clustered prepass. Like LockpickingMenu, these need permanent suppression
 // of the clustered prepass / deferred b3-t35-t37 bind for the process: the
 // preview rig itself only needs its handful of vanilla lights, and visible
-// LLF is not wanted while a preview menu is up. See .codex/docs/current-state.md.
+// LLF is not wanted while a preview menu is up. See docs/current-state.md.
 constexpr std::array kPreNGBSLightingResourceProofBlockingMenus{kPreNGBSLightingResourceProofLockpickingMenu,
                                                                 std::string_view{"PipboyMenu"},
                                                                 std::string_view{"TerminalMenu"},
@@ -989,7 +989,7 @@ bool ShouldDeferPreNGBSLightingResourceProofForMenu()
         // prepass right after the menu closes). The separate descriptor-burst
         // path (ExtendPreNGBSLightingResourceProofDescriptorSettle) still uses
         // bypassUntil for its own small buffer. See
-        // .codex/docs/preview-menu-prepass-suppression.md.
+        // docs/archive/preview-menu-prepass-suppression.md.
         logDefer(menuBlock.data(), frame);
         return true;
     }
