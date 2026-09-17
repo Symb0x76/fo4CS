@@ -364,8 +364,38 @@ void Streamline::LoadAndInit()
 	logger::info("[Streamline] Initialized (features={}, logLevel={}, pluginPath={})", featuresToLoad.size(), upscaling->settings.streamlineLogLevel, PathToUtf8(interposerPath.parent_path()));
 }
 
+// Streamline is loaded here, not from DX11Hooks::Install(). LoadAndInit() calls
+// LoadLibraryExW on sl.interposer.dll, and the interposer hooks DXGI/D3D as it
+// loads. Install() runs from Feature::Load(), i.e. inside F4SEPlugin_Load with the
+// Windows loader lock held, and on PreNG loading the interposer there deadlocks:
+// the process stays alive with no window, CommunityShaders.log stops mid-load and
+// f4se.log never reaches "loaded correctly". PreNG is affected because it uses the
+// legacy F4SEPlugin_Query protocol, which F4SE loads at a different point than the
+// F4SEPlugin_Version path the other runtimes take.
+//
+// It must not live inline at the top of PostDevice either, which is too late:
+// PostDevice runs *after* DX12SwapChain::CreateD3D12Device, so
+// UpgradeD3D12DeviceForDLSSG would always see initialized == false and skip
+// silently, leaving DLSS-G with an un-upgraded device, an un-proxied command queue
+// and no Streamline present path. Everything after the loader lock is released is
+// fair game, and device creation is well past it, so callers pull the load forward.
+void Streamline::EnsureLoaded()
+{
+	static bool s_initAttempted = false;
+	auto* upscaling = Upscaling::GetSingleton();
+	const bool wantsStreamline = upscaling->UsesDLSSUpscaling() ||
+	                             upscaling->UsesDLSSFrameGeneration() ||
+	                             upscaling->UsesReflex();
+	if (!s_initAttempted && !initialized && wantsStreamline) {
+		s_initAttempted = true;
+		LoadAndInit();
+	}
+}
+
 void Streamline::PostDevice(ID3D12Device* device, IDXGIAdapter* adapter)
 {
+	EnsureLoaded();
+
 	if (!initialized)
 		return;
 
@@ -484,7 +514,21 @@ void Streamline::PostDevice(ID3D12Device* device, IDXGIAdapter* adapter)
 
 bool Streamline::UpgradeD3D12DeviceForDLSSG(ID3D12Device** device)
 {
+	// The caller (DX12SwapChain::CreateD3D12Device) runs before PostDevice, which
+	// is otherwise the only thing that loads Streamline -- so `initialized` would
+	// always be false here and the upgrade would always skip, silently. DLSS-G
+	// then reports "ready" and status=eOk while generating nothing, because in
+	// manual-hooking mode an un-upgraded device yields an un-proxied command
+	// queue and Streamline never owns the present path. Pull the load forward so
+	// the upgrade can actually happen, and log it when it still cannot.
+	EnsureLoaded();
+
 	if (!Upscaling::GetSingleton()->UsesDLSSFrameGeneration() || !initialized || dlssgDisabledAfterError) {
+		logger::info(
+			"[Streamline] DLSS-G device upgrade skipped: usesDLSSFrameGen={} initialized={} disabledAfterError={}",
+			Upscaling::GetSingleton()->UsesDLSSFrameGeneration(),
+			initialized,
+			dlssgDisabledAfterError);
 		return false;
 	}
 
@@ -505,6 +549,46 @@ bool Streamline::UpgradeD3D12DeviceForDLSSG(ID3D12Device** device)
 	*device = static_cast<ID3D12Device*>(upgradedInterface);
 	logger::info(
 		"[Streamline] D3D12 device {} for manual-hooked DLSS-G command queue path",
+		upgraded ? "upgraded" : "kept native");
+	return upgraded;
+}
+
+// The other half of manual hooking, and the half that was missing entirely.
+// Upgrading the device gets Streamline a proxied command queue, but DLSS-G
+// generates its interpolated frame inside the swap chain's Present -- so a swap
+// chain built from a raw factory gives it nowhere to insert one. That is why
+// slDLSSGSetOptions succeeded and slDLSSGGetState reported status=eOk with
+// maxGenerated=1 while the display never received a single generated frame.
+//
+// Only touch the factory when DLSS-G is the selected backend: the FSR path owns
+// the swap chain through ffx::CreateContext instead, and the two must not both
+// try to wrap it.
+bool Streamline::UpgradeDXGIFactoryForDLSSG(IDXGIFactory4** factory)
+{
+	if (!Upscaling::GetSingleton()->UsesDLSSFrameGeneration() || !initialized || dlssgDisabledAfterError) {
+		return false;
+	}
+
+	if (!slUpgradeInterface || !factory || !*factory) {
+		logger::warn("[Streamline] DXGI factory upgrade skipped: slUpgradeInterface or factory is unavailable");
+		return false;
+	}
+
+	void* upgradedInterface = *factory;
+	const auto result = slUpgradeInterface(&upgradedInterface);
+	if (result != sl::Result::eOk || !upgradedInterface) {
+		// Not fatal on its own: the caller keeps the native factory and the swap
+		// chain still presents, just without generation. Disabling DLSS-G here
+		// keeps it from claiming to be active for the rest of the session.
+		logger::error("[Streamline] slUpgradeInterface failed for DXGI factory: {}", ResultToString(result));
+		DisableDLSSGAfterError("slUpgradeInterface failed for DXGI factory");
+		return false;
+	}
+
+	const bool upgraded = upgradedInterface != *factory;
+	*factory = static_cast<IDXGIFactory4*>(upgradedInterface);
+	logger::info(
+		"[Streamline] DXGI factory {} for manual-hooked DLSS-G present path",
 		upgraded ? "upgraded" : "kept native");
 	return upgraded;
 }

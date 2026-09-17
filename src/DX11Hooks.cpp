@@ -468,8 +468,12 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 
 void DX11Hooks::Install()
 {
+	// Streamline is NOT loaded here. Install() runs from Feature::Load(), i.e. inside
+	// F4SEPlugin_Load with the Windows loader lock held, and LoadAndInit() calls
+	// LoadLibraryExW on sl.interposer.dll, which hooks DXGI/D3D as it loads -- on PreNG
+	// that deadlocks (see Streamline::EnsureLoaded). The actual load happens there.
 	if (ShouldLoadStreamline()) {
-		Streamline::GetSingleton()->LoadAndInit();
+		logger::info("[Streamline] Load deferred to Streamline::EnsureLoaded");
 	} else {
 		logger::info("[Streamline] Runtime not required for current settings");
 	}
