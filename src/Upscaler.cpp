@@ -16,7 +16,6 @@
 #include <RE/FO4Runtime.h>
 
 #include "DX12SwapChain.h"
-#include "RuntimeAdapter.h"
 #include "DirectXMath.h"
 #include "FidelityFX.h"
 #include "Streamline.h"
@@ -503,29 +502,15 @@ void Upscaling::ApplyRuntimeFallbacks()
 		settings.frameGenerationMode = false;
 		settings.frameLimitMode = false;
 	}
-
-	if (IsPreNGRuntime() && settings.reflexMode != 0) {
-		settings.reflexMode = 0;
-		logger::info("[Reflex] PreNG detected; disabling Reflex");
-	}
 }
 
 const char* Upscaling::GetDLSSUnavailableReason() const
 {
-	if (IsPreNGRuntime()) {
-		return "PreNG (1.10.163) detected: DLSS is unavailable because of an engine issue. FSR is selected automatically for Frame Generation and Upscaling.";
-	}
-
 	if (!IsStreamlineRuntimeAvailable()) {
 		return "NVIDIA Streamline runtime is missing (sl.interposer.dll). FSR is selected automatically for Frame Generation and Upscaling; DLSS and Reflex are unavailable.";
 	}
 
 	return nullptr;
-}
-
-bool Upscaling::IsPreNGRuntime() noexcept
-{
-	return fo4cs::RuntimeAdapter::Get().GetCapabilities().flavor == fo4cs::RuntimeFlavor::kPreNG;
 }
 
 bool Upscaling::IsStreamlineRuntimeAvailable()
