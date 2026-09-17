@@ -2,6 +2,8 @@
 #include "Core/CommunityShaders.h"
 
 #include "DX11Hooks.h"
+#include "FidelityFX.h"
+#include "Streamline.h"
 #include "Upscaler.h"
 
 #include <SimpleIni.h>
@@ -68,6 +70,41 @@ void FeatureUpscaling::Prepass()
 void FeatureUpscaling::Reset()
 {
 	if (!loaded || !upscaling) return;
+
+	// DX12SwapChain::Present already drives Upscaling::Reset() once per present
+	// (DX12SwapChain.cpp, in the "reset-shared-resources" step), after frameIndex
+	// advances, so the slot it blanks is the one the next frame captures into.
+	// That is the correct point.
+	//
+	// Running it here as well is not merely redundant, it is destructive. This
+	// dispatch reaches us from ResetFeatures(), which Runtime::OnFrame() calls and
+	// which D3D11PresentationBackend::Present() drives as its very first act
+	// (PresentationBackend.cpp, AdvanceFeatureCore) -- so it lands after the
+	// HUDLess capture has run and set hudLessFrameValid, and before
+	// FidelityFX::Present() consumes those shared textures.
+	//
+	// Upscaling::Reset() does not merely flip a flag: it ClearRenderTargetViews
+	// the HUDLess, depth and motion-vector shared surfaces to black and zeroes
+	// hudLessFrameValid/hudLessFrameIDs (Upscaler.cpp). So on this branch the
+	// symptom is not a skip -- FidelityFX's canUseFrameGen only tests pointers,
+	// so generation still runs, on blanked inputs -- plus the UI colour/alpha
+	// composite bails on !hudLessFrameValid (Upscaler.cpp) and never builds.
+	// Let the present path own the per-frame reset whenever it is running one.
+	//
+	// This must mirror frameGenerationBackendAvailable in DX12SwapChain::Present
+	// *exactly*, not just test the user's backend selection: the two owners have
+	// to partition the work with no gap. If the selected backend failed to come
+	// up -- featureDLSSG or featureFrameGen null -- the present path declines to
+	// reset, so if we also declined nothing would ever clear the shared HUDLess,
+	// depth and motion-vector surfaces. In that case there is no generation to
+	// corrupt either, so falling through to the reset below is both safe and
+	// necessary.
+	const bool frameGenerationBackendAvailable =
+		(upscaling->UsesDLSSFrameGeneration() && Streamline::GetSingleton()->featureDLSSG) ||
+		(upscaling->UsesFSRFrameGeneration() && FidelityFX::GetSingleton()->featureFrameGen);
+	if (frameGenerationBackendAvailable) {
+		return;
+	}
 
 	upscaling->Reset();
 }

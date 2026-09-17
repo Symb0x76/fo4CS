@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 
 #include "RE/CameraData.h"
 #include "RE/SingletonAccessors.h"
@@ -284,11 +285,45 @@ void FidelityFX::Present(bool a_useFrameGen)
 		depth &&
 		motionVectors;
 
+	// Name which condition failed, and keep counting. The previous one-shot warn
+	// could not distinguish "skipped once during warm-up" from "skipped every
+	// frame for the whole session" -- those look identical in the log while
+	// producing wildly different frame rates. It also never named the failing
+	// condition, so a permanent block was indistinguishable from a transient one.
+	//
+	// hudLessFrameValid is not one of the conditions above -- canUseFrameGen only
+	// tests pointers -- but it is exactly what a stray Upscaling::Reset() clears,
+	// so log it on both paths: generation running with it false means generation
+	// from a blanked HUDLess, which is silent otherwise.
+	//
+	// Sample on a prime stride. frameIndex alternates 0/1, so an even stride
+	// phase-locks onto one slot and every line reports the same index.
+	static std::atomic_uint64_t frameGenSkipCount{ 0 };
+	static std::atomic_uint64_t frameGenRunCount{ 0 };
 	if (a_useFrameGen && !canUseFrameGen) {
-		static bool loggedMissingResources = false;
-		if (!loggedMissingResources) {
-			logger::warn("[FidelityFX] Frame generation resources are not ready; skipping generated frames");
-			loggedMissingResources = true;
+		const auto skips = frameGenSkipCount.fetch_add(1, std::memory_order_relaxed) + 1;
+		if (skips == 1 || skips % 599 == 0) {
+			logger::warn(
+				"[FidelityFX] Frame generation skipped (skips={} runs={}): commandList={} hudless={} depth={} "
+				"motionVectors={} hudLessFrameValid={} frameIndex={}",
+				skips,
+				frameGenRunCount.load(std::memory_order_relaxed),
+				commandList != nullptr,
+				HUDLessColor != nullptr,
+				depth != nullptr,
+				motionVectors != nullptr,
+				upscaling->hudLessFrameValid[dx12SwapChain->frameIndex],
+				dx12SwapChain->frameIndex);
+		}
+	} else if (canUseFrameGen) {
+		const auto runs = frameGenRunCount.fetch_add(1, std::memory_order_relaxed) + 1;
+		if (runs == 1 || runs % 599 == 0) {
+			logger::info(
+				"[FidelityFX] Frame generation accepted (runs={} skips={} hudLessFrameValid={} frameIndex={})",
+				runs,
+				frameGenSkipCount.load(std::memory_order_relaxed),
+				upscaling->hudLessFrameValid[dx12SwapChain->frameIndex],
+				dx12SwapChain->frameIndex);
 		}
 	}
 
