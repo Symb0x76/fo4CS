@@ -26,6 +26,7 @@
 // by the DFLight forward-capture hook and read by the compute dispatch in
 // RunClusterPrepass. It must stay a single object across that boundary.
 
+#include <DirectXMath.h>
 #include <d3d11.h>
 #include <winrt/base.h>
 
@@ -36,6 +37,37 @@
 
 namespace CommunityShaders::lightlimit
 {
+// ---------------------------------------------------------------------------
+// Cross-cluster helper declarations.
+//
+// These are DECLARATIONS only, and that is the whole point -- see rule 2 above.
+// A helper listed here has exactly one definition, in exactly one cluster TU,
+// and the clusters that call it get it through this header. Adding a body to
+// anything below turns a one-shot latch into one latch per TU.
+// ---------------------------------------------------------------------------
+
+// Defined in LLFResources.cpp. Called from the cluster prepass for the two
+// constant-buffer Map() failures and from every resource creation site.
+bool LogResourceFailure(const char *a_name, HRESULT a_hr);
+
+// Defined in LLFResources.cpp. Called from the cluster prepass to reject a
+// non-finite view/projection matrix before it reaches the compute dispatch.
+bool IsFiniteMatrix(const DirectX::XMFLOAT4X4 &a_matrix);
+
+#if defined(FALLOUT_PRE_NG)
+// Defined in LightLimitFix.cpp (config cluster). Deliberately NOT cached -- see
+// the comment at its definition -- so it must not be turned into a latched
+// static here or anywhere else.
+bool ShouldTimePreNGClusterPrepassGpu();
+
+// Defined in LightLimitFix.cpp (diagnostics cluster), called from
+// SetupResources. Each owns its own one-shot `attempted`/`loggedHeld` pair and
+// they are deliberately two functions, not one parameterised one -- see
+// outline-LightLimitFix.md section 8.
+void RunPreNGDFLightContractProbeCompileDiagnostic();
+void RunPreNGDFLightFullShadowedCandidateCompileDiagnostic();
+#endif
+
 constexpr std::uint32_t kClusterMaxLights = 128;
 constexpr std::uint32_t kMaxLights = 1024;
 #if defined(FALLOUT_PRE_NG)
