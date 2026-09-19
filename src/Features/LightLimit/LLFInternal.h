@@ -27,16 +27,22 @@
 // RunClusterPrepass. It must stay a single object across that boundary.
 
 #include <DirectXMath.h>
+#include <RE/FO4Runtime.h>
 #include <d3d11.h>
 #include <winrt/base.h>
 
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <cstring>
 #include <string_view>
 
 namespace CommunityShaders::lightlimit
 {
+// The runtime-abstraction alias every PreNG cluster spells. Kept here so the
+// clusters agree on it rather than each re-deriving it.
+namespace F4Runtime = RE::FO4Runtime;
+
 // ---------------------------------------------------------------------------
 // Cross-cluster helper declarations.
 //
@@ -218,5 +224,91 @@ extern std::atomic_uint32_t s_preNGBSLightingBatchSetupHookCallCount;
 // dispatch. One object, two clusters -- see the header comment.
 extern winrt::com_ptr<ID3D11Buffer> s_preNGDFLightCameraCB;
 extern std::atomic_bool s_preNGDFLightCameraCBCaptured;
+
+// ---------------------------------------------------------------------------
+// Shared vocabulary.
+//
+// Types and constants that more than one cluster names. Unlike the gates above
+// these carry no state, so a header is the right home for them: a struct
+// definition and a constexpr are the same entity in every TU that sees them.
+//
+// The two raw-read templates are the one intentional exception to "no bodies in
+// this header". They must be visible wherever they are instantiated, and being
+// templates they are one entity per instantiation no matter how many TUs
+// include this -- there is no latch to split.
+// ---------------------------------------------------------------------------
+
+constexpr std::uint64_t kPreNGFNVOffsetBasis = 14695981039346656037ull;
+constexpr std::uint64_t kPreNGFNVPrime = 1099511628211ull;
+
+constexpr std::uint32_t kPreNGBSRenderPassSceneLightFirstIndex =
+    F4Runtime::PreNG::BS_RENDER_PASS_SCENE_LIGHT_FIRST_INDEX;
+constexpr std::uint32_t kPreNGInvalidShadowLightMaskIndex = F4Runtime::PreNG::INVALID_SHADOW_LIGHT_MASK_INDEX;
+constexpr std::uint32_t kPreNGMaxShadowLightMaskBits = F4Runtime::PreNG::MAX_SHADOW_LIGHT_MASK_BITS;
+constexpr std::uint32_t kPreNGMaxShadowSceneActiveLights = 8192;
+constexpr std::uint32_t kPreNGMaxShadowSceneDecodeLights = kMaxLights;
+constexpr float kPreNGLightContributionThreshold = 1.0e-4f;
+constexpr float kPreNGLightRadiusThreshold = 1.0e-4f;
+
+using PreNGPixelShaderEntryState = F4Runtime::PreNGShaderEntryState;
+using PreNGShadowSceneNodeRef = F4Runtime::PreNGShadowSceneNodeRef;
+
+// Raw reads for the per-frame shadow-scene decode hot path. The engine owns the
+// shadow scene node + light wrappers + NiLights and keeps them valid for the
+// whole frame, so a raw memcpy is safe here. The old F4Runtime::ReadValue path
+// called VirtualQuery before EVERY read (~1800 syscalls per full decode), which
+// measured ~12ms and produced the once-per-second stutter.
+template <class T>
+bool ReadPreNGRaw(std::uintptr_t a_address, T &a_value)
+{
+    std::memcpy(&a_value, reinterpret_cast<const void *>(a_address), sizeof(T));
+    return true;
+}
+
+template <class T>
+bool ReadPreNGRawField(const F4Runtime::RuntimeField &a_field, std::uintptr_t a_base, T &a_value)
+{
+    return ReadPreNGRaw(a_field.address(a_base), a_value);
+}
+
+struct PreNGShaderSlotEvidence
+{
+    bool hasMetadata = false;
+    bool declaresCB3 = false;
+    bool declaresT35 = false;
+    bool declaresT36 = false;
+    bool declaresT37 = false;
+    std::uint32_t samplesT35 = 0;
+    std::uint32_t samplesT36 = 0;
+    std::uint32_t samplesT37 = 0;
+};
+
+enum class PreNGLightDecodeResult
+{
+    Decoded,
+    MissingWrapperData,
+    InvalidNiLightData,
+    NonContributingLightData
+};
+
+enum class EnvironmentSwitchSource
+{
+    kNone,
+    kDebugIni
+};
+
+struct EnvironmentSwitchState
+{
+    bool enabled = false;
+    EnvironmentSwitchSource source = EnvironmentSwitchSource::kNone;
+};
+
+struct EnvironmentUIntState
+{
+    std::uint32_t value = 0;
+    EnvironmentSwitchSource source = EnvironmentSwitchSource::kNone;
+    bool present = false;
+    bool valid = false;
+};
 #endif
 }

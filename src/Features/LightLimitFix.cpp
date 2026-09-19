@@ -237,8 +237,6 @@ bool PreNGClusterBuildInputsMatch(const LightLimitFix::ClusterBuildCacheState &a
     return true;
 }
 
-constexpr std::uint64_t kPreNGFNVOffsetBasis = 14695981039346656037ull;
-constexpr std::uint64_t kPreNGFNVPrime = 1099511628211ull;
 
 void HashPreNGAppendBytes(std::uint64_t &a_hash, const void *a_data, std::size_t a_size)
 {
@@ -277,16 +275,6 @@ LightLimitFix::ClusterPayloadCacheState MakePreNGClusterPayloadCacheState(
     return state;
 }
 
-namespace F4Runtime = RE::FO4Runtime;
-
-constexpr std::uint32_t kPreNGBSRenderPassSceneLightFirstIndex =
-    F4Runtime::PreNG::BS_RENDER_PASS_SCENE_LIGHT_FIRST_INDEX;
-constexpr std::uint32_t kPreNGInvalidShadowLightMaskIndex = F4Runtime::PreNG::INVALID_SHADOW_LIGHT_MASK_INDEX;
-constexpr std::uint32_t kPreNGMaxShadowLightMaskBits = F4Runtime::PreNG::MAX_SHADOW_LIGHT_MASK_BITS;
-constexpr std::uint32_t kPreNGMaxShadowSceneActiveLights = 8192;
-constexpr std::uint32_t kPreNGMaxShadowSceneDecodeLights = kMaxLights;
-constexpr float kPreNGLightContributionThreshold = 1.0e-4f;
-constexpr float kPreNGLightRadiusThreshold = 1.0e-4f;
 
 bool SamePreNGShadowSceneFastReuseKey(const LightLimitFix::ShadowSceneFastReuseKey &a_lhs,
                                       const LightLimitFix::ShadowSceneFastReuseKey &a_rhs)
@@ -320,23 +308,6 @@ bool SamePreNGShadowSceneFastReuseStructure(const LightLimitFix::ShadowSceneFast
            a_lhs.ExtraCount == a_rhs.ExtraCount;
 }
 
-// Raw reads for the per-frame shadow-scene decode hot path. The engine owns the
-// shadow scene node + light wrappers + NiLights and keeps them valid for the
-// whole frame, so a raw memcpy is safe here. The old F4Runtime::ReadValue path
-// called VirtualQuery before EVERY read (~1800 syscalls per full decode), which
-// measured ~12ms and produced the once-per-second stutter.
-template <class T>
-bool ReadPreNGRaw(std::uintptr_t a_address, T &a_value)
-{
-    std::memcpy(&a_value, reinterpret_cast<const void *>(a_address), sizeof(T));
-    return true;
-}
-
-template <class T>
-bool ReadPreNGRawField(const F4Runtime::RuntimeField &a_field, std::uintptr_t a_base, T &a_value)
-{
-    return ReadPreNGRaw(a_field.address(a_base), a_value);
-}
 
 bool ReadPreNGShadowSceneBucketHash(const F4Runtime::PreNGShadowSceneBucket &a_bucket, std::uint64_t &a_hash)
 {
@@ -380,7 +351,6 @@ bool MakePreNGShadowSceneFastReuseKey(const F4Runtime::PreNGShadowSceneNodeRef &
     return true;
 }
 
-using PreNGPixelShaderEntryState = F4Runtime::PreNGShaderEntryState;
 
 PreNGPixelShaderEntryState ReadPreNGCurrentPixelShaderEntryState()
 {
@@ -460,17 +430,6 @@ std::string FormatPreNGShaderTextureSampleCounts(const CommunityShaders::ShaderC
     return first ? "none" : result.str();
 }
 
-struct PreNGShaderSlotEvidence
-{
-    bool hasMetadata = false;
-    bool declaresCB3 = false;
-    bool declaresT35 = false;
-    bool declaresT36 = false;
-    bool declaresT37 = false;
-    std::uint32_t samplesT35 = 0;
-    std::uint32_t samplesT36 = 0;
-    std::uint32_t samplesT37 = 0;
-};
 
 PreNGShaderSlotEvidence GetPreNGShaderSlotEvidence(
     const std::optional<CommunityShaders::ShaderCache::ShaderMetadata> &a_metadata)
@@ -516,20 +475,12 @@ std::string FormatPreNGShaderMetadata(const std::optional<CommunityShaders::Shad
                        FormatPreNGShaderTextureSampleCounts(*a_metadata));
 }
 
-using PreNGShadowSceneNodeRef = F4Runtime::PreNGShadowSceneNodeRef;
 
 PreNGShadowSceneNodeRef GetPreNGWorldShadowSceneNode()
 {
     return F4Runtime::GetPreNGWorldShadowSceneNode();
 }
 
-enum class PreNGLightDecodeResult
-{
-    Decoded,
-    MissingWrapperData,
-    InvalidNiLightData,
-    NonContributingLightData
-};
 
 PreNGLightDecodeResult DecodePreNGBSLightWrapper(std::uintptr_t a_wrapperAddress, LightLimitFix::LightData &a_data,
                                                  std::uintptr_t &a_niLightAddress, bool &a_shadowMaskUnreadable,
@@ -638,25 +589,6 @@ bool ValidatePreNGPointLightCallsite()
     return false;
 }
 
-enum class EnvironmentSwitchSource
-{
-    kNone,
-    kDebugIni
-};
-
-struct EnvironmentSwitchState
-{
-    bool enabled = false;
-    EnvironmentSwitchSource source = EnvironmentSwitchSource::kNone;
-};
-
-struct EnvironmentUIntState
-{
-    std::uint32_t value = 0;
-    EnvironmentSwitchSource source = EnvironmentSwitchSource::kNone;
-    bool present = false;
-    bool valid = false;
-};
 
 const char *EnvironmentSwitchSourceName(EnvironmentSwitchSource a_source)
 {
