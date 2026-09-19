@@ -43,6 +43,32 @@
 #include <string_view>
 #include <vector>
 
+// Nested profiling zones inside the LightLimitFix clusters. The Feature.h zone
+// wraps the whole phase, which measured 7.74ms CPU against 0.28ms GPU per frame
+// on PreNG (2026-09-14 capture) -- enough to say the cost is CPU-side, not
+// enough to say which part. These split it. Compiled out entirely without
+// TRACY_SUPPORT=ON, and the include is guarded because the tracy dependency only
+// exists behind the vcpkg "tracy" manifest feature.
+//
+// ZoneScopedN declares a fixed-name variable, so two of them in one scope fail
+// to compile. ZoneNamedN takes the variable name, which lets several coexist --
+// needed because some of these markers share a scope with a nested zone.
+//
+// This lives here rather than in a cluster so the zone names stay stable across
+// the split: the SYMB-5 consumer-reachability investigation reads these zones,
+// and a renamed or duplicated zone would invalidate the captures it compares
+// against.
+#ifdef TRACY_ENABLE
+#	include <Tracy/Tracy.hpp>
+#	define FO4CS_LLF_ZONE_IMPL2(name, counter) ZoneNamedN(___fo4cs_llf_zone_##counter, name, true)
+#	define FO4CS_LLF_ZONE_IMPL(name, counter) FO4CS_LLF_ZONE_IMPL2(name, counter)
+#	define FO4CS_LLF_ZONE(name) FO4CS_LLF_ZONE_IMPL(name, __COUNTER__)
+#else
+#	define FO4CS_LLF_ZONE(name) \
+		do {                    \
+		} while (false)
+#endif
+
 namespace CommunityShaders::lightlimit
 {
 // The runtime-abstraction alias every PreNG cluster spells. Kept here so the
@@ -439,6 +465,27 @@ PreNGPointLightHookState PreparePreNGPointLightHook();
 
 void LogPreNGDiagnosticEnvironmentSnapshot();
 void LogPreNGHookReachabilityWatchdog(std::uint64_t a_frame);
+
+// --- LLFPreviewMenu.cpp ----------------------------------------------------
+//
+// The cluster prepass consults these every frame to decide whether a fullscreen
+// preview menu should hold the dispatch, and to name the reason in its log.
+
+bool ShouldDeferPreNGBSLightingResourceProofForMenu();
+std::string_view GetPreNGBSLightingLastPreviewMenuReason();
+
+// --- LLFRuntimeAddresses.cpp -----------------------------------------------
+//
+// The renderer-state base is resolved by walking TEB -> TLS slot, with a fixed
+// fallback address. Both are fixed addresses in the game image, so readability
+// is settled at load time -- IsPreNGDFLightRendererStateReadable caches per
+// binary and per base for exactly that reason, and re-probing it per frame is
+// the VirtualQuery contention that cost 5.33 ms/frame before ad7cab9. Do not
+// reintroduce a per-call probe here.
+
+std::uintptr_t GetPreNGDFLightRendererStateBase();
+bool IsPreNGDFLightRendererStateReadable(std::uintptr_t a_rendererBase);
+void TryBindPreNGBSLightingDeferredDescriptorResources(LightLimitFix &a_feature);
 #endif
 
 }
