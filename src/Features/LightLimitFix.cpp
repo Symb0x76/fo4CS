@@ -127,7 +127,22 @@ std::atomic_bool s_preNGDFLightCameraCBCaptured = false;
 
 using namespace CommunityShaders::lightlimit;
 
-namespace
+// This was an anonymous namespace. It becomes a named one so the clusters under
+// src/Features/LightLimit/ can be carved out of it one at a time: a function
+// still living here can be declared in LLFInternal.h and called from a cluster
+// that has already moved, and vice versa, without either side having to move
+// before it is ready.
+//
+// The linkage change is deliberate and matches what the ShaderCache split did.
+// It does not touch the thing that actually matters here -- a function-local
+// `static` is one object per function either way, so no gate latch and no
+// one-shot log changes count. What WOULD change it is making a gate `inline` or
+// giving it a body in the header; LLFInternal.h says why, and that rule holds.
+//
+// Release builds with /GL and links with /LTCG (cmake/Fo4csTargets.cmake), so
+// the inliner still sees across the new translation-unit boundaries and the
+// per-draw gates cost what they cost today.
+namespace CommunityShaders::lightlimit
 {
 #if defined(FALLOUT_PRE_NG)
 
@@ -1782,7 +1797,7 @@ PreNGPointLightHookState PreparePreNGPointLightHook()
     return PreNGPointLightHookState::Prepared;
 }
 #endif
-} // namespace
+} // namespace CommunityShaders::lightlimit
 
 void LightLimitFix::SetupResources()
 {
