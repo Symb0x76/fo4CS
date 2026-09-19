@@ -327,6 +327,7 @@ if(COMMUNITY_SHADERS)
         src/Features/FrameGeneration.cpp
         src/Features/FrameGeneration.h
         src/Features/LightLimit/LLFInternal.h
+        src/Features/LightLimit/LLFSettings.cpp
         src/Features/LightLimitFix.cpp
         src/Features/LightLimitFix.h
         src/Features/Overlay.cpp
