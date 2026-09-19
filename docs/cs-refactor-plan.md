@@ -24,15 +24,15 @@ branches, use the same target names, directory and split as `codex/main-refactor
 so a later merge sees both sides moving a file to the same place instead of a
 one-sided rename.
 
-## Status at 2026-09-16
+## Status at 2026-09-19
 
-Phases A and B are complete and build-verified. Phase C is partially done, and
-**both conditions that were gating its remaining work have since been met** — see
-"Gates now open" below.
+Phases A and B are complete and build-verified. Phase C is done except for
+`AdditivePasses.cpp` and `LLFPixelTracker.cpp`, neither of which has an outline
+yet, and the C9 thunk, which is still blocked on the fork decision.
 
 | File | Before | Now |
 |------|--------|-----|
-| `src/Features/LightLimitFix.cpp` | 5081 | **5208 — not started** (grew: PostNG/PostAE guards, then Tracy zones + the `VirtualQuery` fix) |
+| `src/Features/LightLimitFix.cpp` | 5081 | **72** (+ 14 units under `src/Features/LightLimit/`, largest 685) |
 | `src/Core/BSShaderHooks.cpp` | 3508 | 895 (+ 9 units under `src/Core/ShaderHooks/`) — C9 thunk left |
 | `src/Core/ShaderCache.cpp` | 2013 | 548 (+ 5 units under `src/Core/Shaders/`) |
 | `src/Upscaling/Upscaler.cpp` | 1668 | 407+ (+ 8 units) |
@@ -44,8 +44,9 @@ Phases A and B are complete and build-verified. Phase C is partially done, and
 | `src/Core/LLFPixelTracker.cpp` | 991 | **991 — not started** |
 | `src/Overlay/Overlay.cpp` | 658 | 691 (soft mark only) |
 
-`LightLimitFix.cpp` is now **5.8x the next largest file** and is the only remaining
-hotspot of consequence.
+The largest file in the repository is now `src/Core/AdditivePasses.cpp` at 992
+lines. No unit exceeds the 1000-line mark and none of the fourteen LightLimitFix
+units exceeds 685.
 
 ### Gates now open (2026-09-16)
 
@@ -115,6 +116,9 @@ performance and frame-generation work of 2026-09-15/16, so neither is still bloc
        `WrappedResource`, `DX12SwapChainInternal.h`.
 
 ## Phase C — Community Shaders hotspots — PARTIALLY DONE
+
+C.1, C.3 and C.4 are done. C.2 has only the C9 thunk left and that is
+blocked on the fork decision. C.5 and C.6 have no outlines yet.
 
 Per-file outlines produced 2026-09-08 are checked in under
 `docs/refactor-outlines/`. They carry exact function line ranges, cluster
@@ -214,33 +218,77 @@ the line numbers first, they drift and several were off by one.
        the file plus the raw byte-scan relocation decode — and PostNG/PostAE cannot
        be built on this branch to verify it (see the pre-existing guard defects
        below), so PreNG would be the only witness.
-4. [ ] `src/Features/LightLimitFix.cpp` (**5208**) → `src/Features/LightLimit/`.
-       Outline: `outline-LightLimitFix.md` (153 functions, 14 clusters). The
-       function count still matches; the **line numbers do not** — the file has
-       grown 127 lines since the outline was written, so every line reference in it
-       is stale. Function identity (#1-153) and the cluster assignments are the
-       durable part; re-derive ranges before cutting.
-       **Highest risk in the repository** and deliberately left last:
-       - roughly 100 function-local statics, many of them one-shot log latches
-         whose duplication would change logging behaviour;
-       - two enormous `#if defined(FALLOUT_PRE_NG)` regions (about 262–1822 and
-         3919–4665) so every extracted chunk needs its own guard;
-       - `s_preNGDFLightCameraCB` is a COM pointer shared between the capture hook
-         and the compute dispatch and must stay one object;
-       - the member definitions at about 3274–3653 and 3723–3918 are PreNG-named but
-         compiled unconditionally today — wrapping them in a guard *is* a behaviour
-         change for the PostNG build;
-       - ~~this is the feature under active performance debugging, so it wants a
-         log-based before/after baseline first.~~ **Cleared 2026-09-16** — that
-         debugging is finished (37-40 fps to 128 fps) and left a paired Tracy
-         baseline with per-zone self times, call counts and frame-interval
-         histograms. See `llf-prepass-perf-handoff.md`.
+4. [x] `src/Features/LightLimitFix.cpp` (5104 → **72**) → `src/Features/LightLimit/`,
+       fourteen units plus `LLFInternal.h`. Outline:
+       `outline-LightLimitFix.md`. Cluster assignments followed as written; the
+       line numbers in it were stale as predicted and were re-derived per cut.
 
-       **Prerequisite before cutting:** the worktree's uncommitted Tracy
-       instrumentation touches this file (14 `FO4CS_LLF_ZONE` sites). Splitting it
-       while those are uncommitted scatters them across the new units and makes a
-       coherent "Tracy instrumentation" commit impossible afterwards. Commit or
-       stash that WIP first.
+       | Unit | Functions (#) | Lines |
+       |---|---|---|
+       | `LLFClusterPrepass.cpp` | 97-99 | 685 |
+       | `LLFLightCollect.cpp` | 114-116, 139-143 | 644 |
+       | `LLFConfig.cpp` | 28-38, 44, 46-71, 73-76 | 556 |
+       | `LLFInternal.h` | shared state, types, declarations | 502 |
+       | `LLFPreviewMenu.cpp` | 39-43, 105, 106, 122-127 | 498 |
+       | `LLFResources.cpp` | 2-4, 91, 94-96, 100, 101, 113 | 473 |
+       | `LLFClusterBind.cpp` | 102-104, 107-112, 117-121, 132-137 | 399 |
+       | `LLFDFLightForward.cpp` | 128-131 | 397 |
+       | `LLFShaderMetadata.cpp` | 15-24, 138 | 384 |
+       | `LLFHooks.cpp` | 93, 144-153 | 334 |
+       | `LLFDiagnostics.cpp` | 45, 72, 78-80 | 272 |
+       | `LLFLightDecode.cpp` | 5-14, 25, 26 | 243 |
+       | `LLFPointLightHook.cpp` | 27, 81-85 | 206 |
+       | `LLFRuntimeAddresses.cpp` | 1, 77 | 139 |
+       | `LLFSettings.cpp` | 86-90, 92 | 116 |
+       | `LightLimitFix.cpp` (facade) | cross-cluster state definitions | 72 |
+
+       **The enabling step was naming the anonymous namespace.** The 1650-line
+       anonymous namespace became `CommunityShaders::lightlimit`, which let the
+       clusters be carved out one at a time: a helper still in the facade could
+       be declared in `LLFInternal.h` and called from a cluster that had already
+       moved. Same deliberate linkage change the `ShaderCache` split made. It
+       does not touch function-local statics — those are one object per function
+       under either linkage.
+
+       **Verification that the move was actually a move.** Normalising both
+       sides to significant lines (dropping blanks, comments, includes,
+       preprocessor lines, namespace braces and using-directives) and comparing
+       as multisets: **0 lines lost, 93 lines added, and all 93 are function
+       declarations in `LLFInternal.h`.** No statement, branch, `REL::ID`,
+       vtable index or offset differs. The seven DFLight forward consumer entry
+       points (`write_vfunc<0x7>` x3, `BS_LIGHTING_BATCH_SETUP`,
+       `DF_LIGHT_FORWARD_PIXEL_DESCRIPTOR_8004`,
+       `IsDFLightForwardPixelDescriptor`, the `BSDFLightShader` thunk) are
+       present and unchanged.
+
+       **Latch discipline held.** No gate predicate is `inline` or
+       header-defined; `LLFInternal.h` carries declarations only and says so.
+       All gates live in one TU (`LLFConfig.cpp`) so each keeps one
+       `static const` latch and one resolution log line.
+       `ShouldTimePreNGClusterPrepassGpu` stays uncached.
+       `s_preNGDFLightCameraCB` keeps its single definition in the facade.
+
+       Three cautions in the outline did **not** survive contact:
+
+       - §5's note that the members at about 3274-3653 and 3723-3918 are
+         unguarded is **stale**. `e422d13` added the `FALLOUT_PRE_NG` guard when
+         it made PostNG/PostAE compile; the split preserves it per half.
+       - §8's note that `GetCurrentLightsSRV` still self-recurses on non-PreNG
+         is **stale for this branch** — `e422d13` fixed it. It returns
+         `lightsSRV.get()`. (On `community-shaders` the same fix exists only in
+         the uncommitted working tree.)
+       - `CapturePreNGDFLightCameraCBOnce` is listed as DFLightForward-only.
+         The *state* is, but the *function* is called from the batch-setup thunk
+         in the Hooks cluster. Being file-static hid that until the boundary
+         existed. It is now declared in `LLFInternal.h`; the capture state stays
+         private. The three preview-reason helpers cross the same way.
+
+       Also removed: the empty `namespace RE::VTABLE {}` block, dead.
+
+       Built PreNG, PostNG and PostAE, Release, `/W4 /WX`, zero warnings.
+       **Runtime validation is still owed** — PostNG/PostAE have no game install
+       here, and PreNG needs a run to confirm the LLF consumer path behaves as
+       it did. Compile-clean is not runtime-identical.
 5. [ ] `src/Core/AdditivePasses.cpp` (992), `src/Core/LLFPixelTracker.cpp` (991) —
        no outline produced yet.
 6. [ ] `src/Overlay/Overlay.cpp` (658) — soft mark only.
@@ -264,9 +312,13 @@ them verbatim.
   config and read from the render thread without synchronisation.
 - `Deferred`: `gBufferResourcesReady` / `gBufferDescriptions` are written in
   `SetupResources` and read from the draw-hook path without atomics.
-- `LightLimitFix`: `GetCurrentLightsSRV` has an infinite self-recursion in its
-  non-PreNG branch; two plain (non-atomic) frame-change statics are a genuine race
-  if that function is ever called from two threads.
+- `LightLimitFix`: ~~`GetCurrentLightsSRV` has an infinite self-recursion in its
+  non-PreNG branch~~ — **fixed on this branch by `e422d13`**; it returns
+  `lightsSRV.get()`. Still live on `community-shaders`, where the same fix exists
+  only in the uncommitted working tree. The two plain (non-atomic) frame-change
+  statics in `TryReservePreNGSetupGeometryFrameSample` remain a genuine race if
+  that function is ever called from two threads; they moved verbatim into
+  `LLFConfig.cpp` and were deliberately not "fixed" during the move.
 - `Render`/`Upscaling` and `Framework`/`Features` include cycles.
 
 ## Verification commands
