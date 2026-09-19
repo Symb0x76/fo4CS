@@ -26,6 +26,9 @@
 // by the DFLight forward-capture hook and read by the compute dispatch in
 // RunClusterPrepass. It must stay a single object across that boundary.
 
+#include "Core/ShaderCache.h"
+#include "Features/LightLimitFix.h"
+
 #include <DirectXMath.h>
 #include <RE/FO4Runtime.h>
 #include <d3d11.h>
@@ -36,7 +39,9 @@
 #include <cstdint>
 #include <cstring>
 #include <optional>
+#include <string>
 #include <string_view>
+#include <vector>
 
 namespace CommunityShaders::lightlimit
 {
@@ -261,6 +266,16 @@ enum class PreNGLightDecodeResult
     NonContributingLightData
 };
 
+// PostPostLoad reads this to decide whether the SetupGeometry hooks may be
+// installed, so it outlives its own cluster.
+enum class PreNGPointLightHookState
+{
+    Failed,
+    Prepared,
+    Installed,
+    InstalledUnverified
+};
+
 enum class EnvironmentSwitchSource
 {
     kNone,
@@ -365,6 +380,65 @@ bool ShouldHoldPreNGDFLightPreparedState();
 bool ShouldRunPreNGClusterPrepassProof();
 bool ShouldCompilePreNGDFLightContractProbe();
 bool ShouldCompilePreNGDFLightFullShadowedCandidate();
+
+// --- LLFShaderMetadata.cpp -------------------------------------------------
+//
+// Pure formatting over ShaderCache metadata. Read by the diagnostics snapshot,
+// the compile-only probes and the live binding audit.
+
+PreNGPixelShaderEntryState ReadPreNGCurrentPixelShaderEntryState();
+bool HasPreNGConstantBufferSlot(const CommunityShaders::ShaderCache::ShaderMetadata &a_metadata, std::uint32_t a_slot);
+bool HasPreNGTextureSlot(const CommunityShaders::ShaderCache::ShaderMetadata &a_metadata, std::uint32_t a_slot);
+std::uint32_t GetPreNGTextureSampleCount(const CommunityShaders::ShaderCache::ShaderMetadata &a_metadata,
+                                         std::uint32_t a_slot);
+std::string FormatPreNGShaderBufferSlots(const CommunityShaders::ShaderCache::ShaderMetadata &a_metadata);
+std::string FormatPreNGShaderTextureSlots(const CommunityShaders::ShaderCache::ShaderMetadata &a_metadata);
+std::string FormatPreNGShaderTextureSampleCounts(const CommunityShaders::ShaderCache::ShaderMetadata &a_metadata);
+PreNGShaderSlotEvidence GetPreNGShaderSlotEvidence(
+    const std::optional<CommunityShaders::ShaderCache::ShaderMetadata> &a_metadata);
+bool HasPreNGFullShadowedDFLightVanillaContract(
+    const std::optional<CommunityShaders::ShaderCache::ShaderMetadata> &a_metadata);
+std::string FormatPreNGShaderMetadata(const std::optional<CommunityShaders::ShaderCache::ShaderMetadata> &a_metadata);
+
+// --- LLFLightDecode.cpp ----------------------------------------------------
+//
+// Hashing, the cluster-reuse cache keys and the BSLight wrapper decode. Pure
+// functions over game memory; the cluster prepass and the light-collection
+// paths are the callers.
+
+bool PreNGClusterBuildInputsMatch(const LightLimitFix::ClusterBuildCacheState &a_cached,
+                                  const LightLimitFix::LightBuildingCB &a_current);
+void HashPreNGAppendBytes(std::uint64_t &a_hash, const void *a_data, std::size_t a_size);
+std::uint64_t HashPreNGBytes(const void *a_data, std::size_t a_size);
+LightLimitFix::ClusterPayloadCacheState MakePreNGClusterPayloadCacheState(
+    const std::vector<LightLimitFix::LightData> &a_lights, std::uint32_t a_lightCount,
+    const DirectX::XMFLOAT4X4 &a_viewTransposed,
+    float a_lightsNear, float a_lightsFar, const std::uint32_t (&a_clusterSize)[3]);
+bool SamePreNGShadowSceneFastReuseKey(const LightLimitFix::ShadowSceneFastReuseKey &a_lhs,
+                                      const LightLimitFix::ShadowSceneFastReuseKey &a_rhs);
+bool SamePreNGShadowSceneFastReuseStructure(const LightLimitFix::ShadowSceneFastReuseKey &a_lhs,
+                                            const LightLimitFix::ShadowSceneFastReuseKey &a_rhs);
+bool ReadPreNGShadowSceneBucketHash(const F4Runtime::PreNGShadowSceneBucket &a_bucket, std::uint64_t &a_hash);
+bool MakePreNGShadowSceneFastReuseKey(const F4Runtime::PreNGShadowSceneNodeRef &a_nodeRef,
+                                      const F4Runtime::PreNGShadowSceneBuckets &a_buckets,
+                                      LightLimitFix::ShadowSceneFastReuseKey &a_key);
+PreNGShadowSceneNodeRef GetPreNGWorldShadowSceneNode();
+PreNGLightDecodeResult DecodePreNGBSLightWrapper(std::uintptr_t a_wrapperAddress, LightLimitFix::LightData &a_data,
+                                                 std::uintptr_t &a_niLightAddress, bool &a_shadowMaskUnreadable,
+                                                 bool &a_shadowMaskInvalid, std::uint32_t &a_shadowMaskBit);
+
+// --- LLFPointLightHook.cpp -------------------------------------------------
+
+bool ValidatePreNGPointLightCallsite();
+bool VerifyPreNGPointLightHookPatch(std::uintptr_t a_runtimeCall);
+const char *PreNGPointLightHookStateName(PreNGPointLightHookState a_state);
+bool CanInstallPreNGSetupGeometryHooks(PreNGPointLightHookState a_pointLightHookState);
+PreNGPointLightHookState PreparePreNGPointLightHook();
+
+// --- LLFDiagnostics.cpp ----------------------------------------------------
+
+void LogPreNGDiagnosticEnvironmentSnapshot();
+void LogPreNGHookReachabilityWatchdog(std::uint64_t a_frame);
 #endif
 
 }

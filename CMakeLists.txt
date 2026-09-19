@@ -327,9 +327,13 @@ if(COMMUNITY_SHADERS)
         src/Features/FrameGeneration.cpp
         src/Features/FrameGeneration.h
         src/Features/LightLimit/LLFConfig.cpp
+        src/Features/LightLimit/LLFDiagnostics.cpp
         src/Features/LightLimit/LLFInternal.h
+        src/Features/LightLimit/LLFLightDecode.cpp
+        src/Features/LightLimit/LLFPointLightHook.cpp
         src/Features/LightLimit/LLFResources.cpp
         src/Features/LightLimit/LLFSettings.cpp
+        src/Features/LightLimit/LLFShaderMetadata.cpp
         src/Features/LightLimitFix.cpp
         src/Features/LightLimitFix.h
         src/Features/Overlay.cpp
