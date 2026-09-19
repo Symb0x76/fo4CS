@@ -646,6 +646,36 @@ namespace CommunityShaders
 #endif
 		}
 
+		// The PreNG DFLight forward visible-consumer descriptor.
+		//
+		// Deliberately callable on every runtime, returning a hard false off PreNG.
+		// The shader-type constant and the descriptor predicate behind it are both
+		// PreNG-only, and this same five-term test is needed from two all-runtime
+		// boolean chains -- CanCompileDescriptorShader and the ShaderCache source
+		// override. Naming it once keeps the #if in the definition instead of
+		// leaking into the middle of those chains, which is how PostNG and PostAE
+		// came to reference PreNG-only symbols and stopped compiling.
+		bool IsPreNGDFLightForwardConsumerShader(
+			ShaderStage a_stage,
+			std::int32_t a_shaderType,
+			std::string_view a_normalizedFxpFilename,
+			std::uint32_t a_descriptor)
+		{
+#if defined(FALLOUT_PRE_NG)
+			return a_stage == ShaderStage::Pixel &&
+			       a_shaderType == kPreNGDFLightingShaderType &&
+			       IsPreNGDFLightFxpName(a_normalizedFxpFilename) &&
+			       ShouldEnablePreNGDFLightForwardVisibleLLF() &&
+			       F4Runtime::PreNG::IsDFLightForwardPixelDescriptor(a_descriptor);
+#else
+			(void)a_stage;
+			(void)a_shaderType;
+			(void)a_normalizedFxpFilename;
+			(void)a_descriptor;
+			return false;
+#endif
+		}
+
 		bool CanCompileDescriptorShader(
 			ShaderStage a_stage,
 			std::int32_t a_shaderType,
@@ -656,11 +686,11 @@ namespace CommunityShaders
 			           a_shaderType == kPreNGBSLightingShaderType &&
 			           F4Runtime::IsDeferredLightingPixelDescriptor(a_descriptor)) ||
 			       ReadDescriptorCompileSwitch() ||
-			       (a_stage == ShaderStage::Pixel &&
-			           a_shaderType == kPreNGDFLightingShaderType &&
-			           IsPreNGDFLightFxpName(a_normalizedFxpFilename) &&
-			           ShouldEnablePreNGDFLightForwardVisibleLLF() &&
-			           F4Runtime::PreNG::IsDFLightForwardPixelDescriptor(a_descriptor)) ||
+			       IsPreNGDFLightForwardConsumerShader(
+				       a_stage,
+				       a_shaderType,
+				       a_normalizedFxpFilename,
+				       a_descriptor) ||
 			       ShouldCompilePreNGBSLightingContractShader(
 				       a_stage,
 				       a_shaderType,
@@ -956,11 +986,11 @@ namespace CommunityShaders
 			return std::nullopt;
 		}
 
-		if (ShouldEnablePreNGDFLightForwardVisibleLLF() &&
-		    a_key.stage == ShaderStage::Pixel &&
-		    a_key.shaderType == kPreNGDFLightingShaderType &&
-		    IsPreNGDFLightFxpName(a_key.fxpFilename) &&
-		    F4Runtime::PreNG::IsDFLightForwardPixelDescriptor(a_key.descriptor)) {
+		if (IsPreNGDFLightForwardConsumerShader(
+			    a_key.stage,
+			    a_key.shaderType,
+			    a_key.fxpFilename,
+			    a_key.descriptor)) {
 			const auto diskPath = std::filesystem::path("Data\\Shaders") / std::filesystem::path(kPreNGDFLightForwardConsumerSource);
 			std::error_code ec;
 			if (std::filesystem::exists(diskPath, ec) && std::filesystem::is_regular_file(diskPath, ec)) {
