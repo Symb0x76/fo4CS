@@ -116,7 +116,7 @@ bool ShouldDeferPreNGBSLightingResourceProofForMenu()
         // prepass right after the menu closes). The separate descriptor-burst
         // path (ExtendPreNGBSLightingResourceProofDescriptorSettle) still uses
         // bypassUntil for its own small buffer. See
-        // .codex/docs/preview-menu-prepass-suppression.md.
+        // docs/archive/preview-menu-prepass-suppression.md.
         logDefer(menuBlock.data(), frame);
         return true;
     }

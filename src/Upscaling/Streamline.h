@@ -90,10 +90,10 @@ public:
 	// Call before D3D device creation
 	void LoadAndInit();
 
-	// Idempotent: loads Streamline on the first call that wants it. Split out of
-	// PostDevice so the load can happen before the D3D12 device exists --
-	// UpgradeD3D12DeviceForDLSSG silently does nothing while `initialized` is
-	// false, and PostDevice used to be the only thing that ever set it.
+	// Idempotent: loads Streamline on the first call that wants it. Deferred out
+	// of DX11Hooks::Install() because that runs under the Windows loader lock, and
+	// kept out of PostDevice because UpgradeD3D12DeviceForDLSSG runs before it and
+	// silently does nothing while `initialized` is false.
 	void EnsureLoaded();
 
 	// Call after D3D12 device is created
