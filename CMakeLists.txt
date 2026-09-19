@@ -326,6 +326,7 @@ if(COMMUNITY_SHADERS)
         src/Features/ExtendedMaterials.h
         src/Features/FrameGeneration.cpp
         src/Features/FrameGeneration.h
+        src/Features/LightLimit/LLFConfig.cpp
         src/Features/LightLimit/LLFInternal.h
         src/Features/LightLimit/LLFResources.cpp
         src/Features/LightLimit/LLFSettings.cpp

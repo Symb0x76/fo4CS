@@ -35,6 +35,7 @@
 #include <atomic>
 #include <cstdint>
 #include <cstring>
+#include <optional>
 #include <string_view>
 
 namespace CommunityShaders::lightlimit
@@ -42,37 +43,6 @@ namespace CommunityShaders::lightlimit
 // The runtime-abstraction alias every PreNG cluster spells. Kept here so the
 // clusters agree on it rather than each re-deriving it.
 namespace F4Runtime = RE::FO4Runtime;
-
-// ---------------------------------------------------------------------------
-// Cross-cluster helper declarations.
-//
-// These are DECLARATIONS only, and that is the whole point -- see rule 2 above.
-// A helper listed here has exactly one definition, in exactly one cluster TU,
-// and the clusters that call it get it through this header. Adding a body to
-// anything below turns a one-shot latch into one latch per TU.
-// ---------------------------------------------------------------------------
-
-// Defined in LLFResources.cpp. Called from the cluster prepass for the two
-// constant-buffer Map() failures and from every resource creation site.
-bool LogResourceFailure(const char *a_name, HRESULT a_hr);
-
-// Defined in LLFResources.cpp. Called from the cluster prepass to reject a
-// non-finite view/projection matrix before it reaches the compute dispatch.
-bool IsFiniteMatrix(const DirectX::XMFLOAT4X4 &a_matrix);
-
-#if defined(FALLOUT_PRE_NG)
-// Defined in LightLimitFix.cpp (config cluster). Deliberately NOT cached -- see
-// the comment at its definition -- so it must not be turned into a latched
-// static here or anywhere else.
-bool ShouldTimePreNGClusterPrepassGpu();
-
-// Defined in LightLimitFix.cpp (diagnostics cluster), called from
-// SetupResources. Each owns its own one-shot `attempted`/`loggedHeld` pair and
-// they are deliberately two functions, not one parameterised one -- see
-// outline-LightLimitFix.md section 8.
-void RunPreNGDFLightContractProbeCompileDiagnostic();
-void RunPreNGDFLightFullShadowedCandidateCompileDiagnostic();
-#endif
 
 constexpr std::uint32_t kClusterMaxLights = 128;
 constexpr std::uint32_t kMaxLights = 1024;
@@ -311,4 +281,90 @@ struct EnvironmentUIntState
     bool valid = false;
 };
 #endif
+
+// ---------------------------------------------------------------------------
+// Cross-cluster helper declarations.
+//
+// These are DECLARATIONS only, and that is the whole point -- see rule 2 above.
+// A helper listed here has exactly one definition, in exactly one cluster TU,
+// and the clusters that call it get it through this header. Adding a body to
+// anything below turns a one-shot latch into one latch per TU.
+// ---------------------------------------------------------------------------
+
+// Defined in LLFResources.cpp. Called from the cluster prepass for the two
+// constant-buffer Map() failures and from every resource creation site.
+bool LogResourceFailure(const char *a_name, HRESULT a_hr);
+
+// Defined in LLFResources.cpp. Called from the cluster prepass to reject a
+// non-finite view/projection matrix before it reaches the compute dispatch.
+bool IsFiniteMatrix(const DirectX::XMFLOAT4X4 &a_matrix);
+
+#if defined(FALLOUT_PRE_NG)
+// Defined in LightLimitFix.cpp (config cluster). Deliberately NOT cached -- see
+// the comment at its definition -- so it must not be turned into a latched
+// static here or anywhere else.
+bool ShouldTimePreNGClusterPrepassGpu();
+
+// Defined in LightLimitFix.cpp (diagnostics cluster), called from
+// SetupResources. Each owns its own one-shot `attempted`/`loggedHeld` pair and
+// they are deliberately two functions, not one parameterised one -- see
+// outline-LightLimitFix.md section 8.
+void RunPreNGDFLightContractProbeCompileDiagnostic();
+void RunPreNGDFLightFullShadowedCandidateCompileDiagnostic();
+#endif
+
+#if defined(FALLOUT_PRE_NG)
+// --- LLFConfig.cpp ---------------------------------------------------------
+//
+// Every one of these resolves a Debug.ini switch into a function-local
+// `static const` the first time it is called, logs that resolution once, and
+// returns the latched value forever after. That is why they are declarations
+// here and definitions in exactly one TU. Give any of them a body in this
+// header and its caller's TU gets a second latch and a second log line.
+
+const char *EnvironmentSwitchSourceName(EnvironmentSwitchSource a_source);
+EnvironmentSwitchState ReadEnvironmentSwitch(const char *a_name);
+EnvironmentUIntState ReadEnvironmentUInt(const char *a_name);
+bool IsTruthyEnvironmentSwitch(const char *a_name);
+
+std::uint32_t GetPreNGDFLightLLFAdditiveRefreshInterval();
+std::optional<std::uint32_t> GetPreNGSetupGeometryCallBudget();
+std::uint32_t GetPreNGSetupGeometryFrameBudget();
+std::uint32_t GetPreNGShadowSceneFastReuseRefreshInterval();
+
+bool TryReservePreNGSetupGeometryCall();
+bool TryReservePreNGSetupGeometryFrameSample();
+bool TryReservePreNGBSLightingSetupGeometryNoLightProbeFrame();
+void ExtendPreNGBSLightingSetupGeometryBypassWindow();
+
+bool ShouldInstallPreNGInternalPointLightHook();
+bool ShouldUpdatePreNGStrictLightCB();
+bool ShouldBindPreNGStrictLightCB();
+bool ShouldBindPreNGSetupGeometryStrictLightCB();
+bool ShouldPersistPreNGSetupGeometryStrictLightCB();
+bool ShouldBindPreNGClusterSRVs();
+bool ShouldBindPreNGPrepassResources();
+bool ShouldBindPreNGDFLightDrawStateStrictLightCB();
+bool ShouldBindPreNGDFLightDrawStateClusterSRVs();
+bool ShouldUsePreNGSetupGeometryStrictLightCBProof();
+bool ShouldReusePreNGShadowSceneFastReuse();
+bool ShouldRunPreNGDFLightResourceNoOpPass();
+bool ShouldRunPreNGDFLightFullContractNoOpPass();
+bool ShouldRunPreNGDFLightLLFAdditivePass();
+bool ShouldRunPreNGDFLightFullContractVisibleLLF();
+bool ShouldRunPreNGDFCompositeVisibleLLF();
+bool ShouldUsePreNGDFLightDescriptorDemandResources();
+bool ShouldUsePreNGDFCompositeDescriptorDemandResources();
+bool ShouldUsePreNGBSLightingDescriptorDemandResources();
+bool ShouldBindPreNGBSLightingLLFVisibleConsumer();
+bool ShouldBindPreNGDFLightForwardVisibleLLF();
+bool ShouldAllowPreNGBSLightingConsumerBindInMenu();
+bool ShouldBindPreNGBSLightingSetupGeometryResources();
+bool ShouldSubmitPreNGClusterPrepassEarly();
+bool ShouldHoldPreNGDFLightPreparedState();
+bool ShouldRunPreNGClusterPrepassProof();
+bool ShouldCompilePreNGDFLightContractProbe();
+bool ShouldCompilePreNGDFLightFullShadowedCandidate();
+#endif
+
 }
