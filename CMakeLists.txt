@@ -326,14 +326,19 @@ if(COMMUNITY_SHADERS)
         src/Features/ExtendedMaterials.h
         src/Features/FrameGeneration.cpp
         src/Features/FrameGeneration.h
+        src/Features/LightLimit/LLFClusterBind.cpp
         src/Features/LightLimit/LLFClusterPrepass.cpp
         src/Features/LightLimit/LLFConfig.cpp
+        src/Features/LightLimit/LLFDFLightForward.cpp
         src/Features/LightLimit/LLFDiagnostics.cpp
+        src/Features/LightLimit/LLFHooks.cpp
         src/Features/LightLimit/LLFInternal.h
         src/Features/LightLimit/LLFLightCollect.cpp
         src/Features/LightLimit/LLFLightDecode.cpp
         src/Features/LightLimit/LLFPointLightHook.cpp
+        src/Features/LightLimit/LLFPreviewMenu.cpp
         src/Features/LightLimit/LLFResources.cpp
+        src/Features/LightLimit/LLFRuntimeAddresses.cpp
         src/Features/LightLimit/LLFSettings.cpp
         src/Features/LightLimit/LLFShaderMetadata.cpp
         src/Features/LightLimitFix.cpp

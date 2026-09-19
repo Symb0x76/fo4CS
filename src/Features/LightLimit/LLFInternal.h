@@ -473,6 +473,17 @@ void LogPreNGHookReachabilityWatchdog(std::uint64_t a_frame);
 
 bool ShouldDeferPreNGBSLightingResourceProofForMenu();
 std::string_view GetPreNGBSLightingLastPreviewMenuReason();
+void ExtendPreNGBSLightingResourceProofDescriptorSettle();
+const char *GetPreNGBSLightingSetupGeometryPreviewReasonName(std::uint32_t a_reason);
+std::uint32_t GetCachedPreNGBSLightingSetupGeometryPreviewReason();
+
+// --- LLFDFLightForward.cpp -------------------------------------------------
+//
+// Captures the vanilla DFLight camera cb12 on the first batch pass that binds
+// it; ClusterBuildingCS reads rows 20..27 out of that copy. The caller is the
+// batch-setup thunk in LLFHooks.cpp -- this was file-static in the parent, which
+// hid that the call crosses what is now a cluster boundary.
+void CapturePreNGDFLightCameraCBOnce();
 
 // --- LLFRuntimeAddresses.cpp -----------------------------------------------
 //
