@@ -1,0 +1,340 @@
+#include "Render/DX12SwapChain.h"
+
+#include <algorithm>
+#include <array>
+#include <atomic>
+#include <cstdint>
+#include <optional>
+#include <dx12/ffx_api_dx12.hpp>
+#include <dxgi1_6.h>
+#include <string_view>
+
+#include <directx/d3dx12.h>
+
+#include "Upscaling/FidelityFX.h"
+#include "Upscaling/Streamline.h"
+#include "Upscaling/Upscaler.h"
+#include "Render/DX12SwapChainInternal.h"
+#include "Diagnostics/LogEvents.h"
+
+extern bool enbLoaded;
+
+using fo4cs::render::ResolveOverlayCallbacks;
+using fo4cs::render::s_overlayInitCb;
+using fo4cs::render::s_overlayPollCb;
+using fo4cs::render::s_overlayPresentCb;
+using fo4cs::diagnostics::Event;
+using fo4cs::diagnostics::LogEvent;
+
+// Overlay callbacks resolved from Overlay.dll at init time.
+// Using file-scope statics avoids the OBJECT-library multiple-singleton problem:
+// whichever DLL creates the DX12SwapChain resolves these once.
+namespace fo4cs::render
+{
+	OverlayInitCallback s_overlayInitCb = nullptr;
+	OverlayPresentCallback s_overlayPresentCb = nullptr;
+	OverlayPollCallback s_overlayPollCb = nullptr;
+	bool s_overlayCallbacksResolved = false;
+	bool s_overlayCallbacksMissingLogged = false;
+
+	bool ResolveOverlayCallbacks()
+	{
+		if (s_overlayCallbacksResolved) {
+			return true;
+		}
+
+		auto tryResolve = [](HMODULE a_module, const char* a_source) -> bool {
+			if (!a_module) {
+				return false;
+			}
+
+			auto initCb = reinterpret_cast<OverlayInitCallback>(
+				GetProcAddress(a_module, "Overlay_OnSwapChainCreated"));
+			auto presentCb = reinterpret_cast<OverlayPresentCallback>(
+				GetProcAddress(a_module, "Overlay_OnPresent"));
+			auto pollCb = reinterpret_cast<OverlayPollCallback>(
+				GetProcAddress(a_module, "Overlay_OnPollHotkey"));
+			if (!initCb || !presentCb || !pollCb) {
+				return false;
+			}
+
+			s_overlayInitCb = initCb;
+			s_overlayPresentCb = presentCb;
+			s_overlayPollCb = pollCb;
+			s_overlayCallbacksResolved = true;
+			logger::info("[DX12SwapChain] Overlay callbacks resolved from {}", a_source);
+			return true;
+		};
+
+		HMODULE currentModule = nullptr;
+		if (GetModuleHandleExW(
+				GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+				reinterpret_cast<LPCWSTR>(&s_overlayCallbacksResolved),
+				&currentModule) &&
+			tryResolve(currentModule, "current module")) {
+			return true;
+		}
+
+		if (tryResolve(GetModuleHandleW(L"NuclearGFX.dll"), "NuclearGFX.dll")) {
+			return true;
+		}
+
+		if (tryResolve(GetModuleHandleW(L"Overlay.dll"), "Overlay.dll")) {
+			return true;
+		}
+
+		if (!s_overlayCallbacksMissingLogged) {
+			s_overlayCallbacksMissingLogged = true;
+			logger::info("[DX12SwapChain] Overlay callbacks not found; retrying until Overlay is loaded");
+		}
+		return false;
+	}
+}
+
+void DX12SwapChain::CreateD3D12Device(IDXGIAdapter* a_adapter)
+{
+	DX::ThrowIfFailed(D3D12CreateDevice(a_adapter, D3D_FEATURE_LEVEL_12_0, IID_PPV_ARGS(&d3d12Device)));
+	if (ID3D12Device* upgradedDevice = d3d12Device.get(); Streamline::GetSingleton()->UpgradeD3D12DeviceForDLSSG(&upgradedDevice) && upgradedDevice != d3d12Device.get()) {
+		d3d12Device.attach(upgradedDevice);
+	}
+
+	D3D12_COMMAND_QUEUE_DESC queueDesc = {};
+	queueDesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
+	queueDesc.Flags = D3D12_COMMAND_QUEUE_FLAG_NONE;
+	queueDesc.Priority = D3D12_COMMAND_QUEUE_PRIORITY_NORMAL;
+	queueDesc.NodeMask = 0;
+
+	DX::ThrowIfFailed(d3d12Device->CreateCommandQueue(&queueDesc, IID_PPV_ARGS(&commandQueue)));
+	Streamline::GetSingleton()->LogD3D12CommandQueueProxyState(commandQueue.get());
+
+	for (int i = 0; i < 2; i++) {
+		DX::ThrowIfFailed(d3d12Device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&commandAllocators[i])));
+		DX::ThrowIfFailed(d3d12Device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, commandAllocators[i].get(), nullptr, IID_PPV_ARGS(&commandLists[i])));
+		commandLists[i]->Close();
+	}
+}
+
+void DX12SwapChain::CreateSwapChain(IDXGIFactory4* a_dxgiFactory, DXGI_SWAP_CHAIN_DESC a_swapChainDesc)
+{
+	swapChainDesc = {};
+	swapChainDesc.BufferCount = 2;
+	swapChainDesc.Width = a_swapChainDesc.BufferDesc.Width;
+	swapChainDesc.Height = a_swapChainDesc.BufferDesc.Height;
+	swapChainDesc.Format = a_swapChainDesc.BufferDesc.Format;
+	swapChainDesc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+	swapChainDesc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
+	swapChainDesc.SampleDesc.Count = 1;
+
+	BOOL allowTearing = FALSE;
+	if (winrt::com_ptr<IDXGIFactory5> dxgiFactory5; SUCCEEDED(a_dxgiFactory->QueryInterface(IID_PPV_ARGS(dxgiFactory5.put())))) {
+		DX::ThrowIfFailed(dxgiFactory5->CheckFeatureSupport(
+			DXGI_FEATURE_PRESENT_ALLOW_TEARING,
+			&allowTearing,
+			sizeof(allowTearing)
+		));
+	}
+
+	swapChainDesc.Flags = DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT;
+	if (allowTearing) {
+		swapChainDesc.Flags |= DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING;
+	}
+
+	auto upscaling = Upscaling::GetSingleton();
+	auto fidelityFX = FidelityFX::GetSingleton();
+	const bool useFidelityFXSwapChain = upscaling->UsesFSRFrameGeneration() && fidelityFX->module;
+	IDXGIFactory4* dxgiFactory = a_dxgiFactory;
+	// Report the inputs, not just the verdict. "backend=native" is the state in
+	// which neither frame-generation backend can present an interpolated frame:
+	// FSR needs the FFX frame-generation swap chain created below, and DLSS-G
+	// needs a Streamline-owned present path that nothing here established. Which
+	// of the two conditions produced it is the whole diagnosis.
+	logger::info(
+		"[DX12SwapChain] Creating D3D12 proxy swap chain {}x{} fmt={} flags=0x{:X} backend={} "
+		"(usesFSRFrameGen={} ffxModuleLoaded={})",
+		swapChainDesc.Width,
+		swapChainDesc.Height,
+		static_cast<uint32_t>(swapChainDesc.Format),
+		swapChainDesc.Flags,
+		useFidelityFXSwapChain ? "FidelityFX" : "native",
+		upscaling->UsesFSRFrameGeneration(),
+		fidelityFX->module != nullptr);
+
+	const auto createNativeSwapChain = [&]() {
+		// Under eUseManualHooking Streamline interposes nothing on its own, so a
+		// swap chain created from the raw factory is invisible to it -- and
+		// DLSS-G interpolates inside the swap chain's Present, so it could never
+		// generate a frame. Upgrade the factory first when DLSS-G is the backend;
+		// the call is a no-op for every other configuration, and on failure we
+		// keep the native factory and simply present without generation.
+		IDXGIFactory4* presentFactory = dxgiFactory;
+		winrt::com_ptr<IDXGIFactory4> upgradedFactory;
+		if (Streamline::GetSingleton()->UpgradeDXGIFactoryForDLSSG(&presentFactory) && presentFactory != dxgiFactory) {
+			upgradedFactory.attach(presentFactory);
+		} else {
+			presentFactory = dxgiFactory;
+		}
+
+		winrt::com_ptr<IDXGISwapChain1> nativeSwapChain;
+		DX::ThrowIfFailed(presentFactory->CreateSwapChainForHwnd(
+			commandQueue.get(),
+			a_swapChainDesc.OutputWindow,
+			&swapChainDesc,
+			nullptr,
+			nullptr,
+			nativeSwapChain.put()));
+		DX::ThrowIfFailed(nativeSwapChain->QueryInterface(IID_PPV_ARGS(&swapChain)));
+	};
+
+	if (useFidelityFXSwapChain) {
+		ffx::CreateContextDescFrameGenerationSwapChainForHwndDX12 ffxSwapChainDesc{};
+
+		ffxSwapChainDesc.desc = &swapChainDesc;
+		ffxSwapChainDesc.dxgiFactory = a_dxgiFactory;
+		ffxSwapChainDesc.fullscreenDesc = nullptr;
+		ffxSwapChainDesc.gameQueue = commandQueue.get();
+		ffxSwapChainDesc.hwnd = a_swapChainDesc.OutputWindow;
+		ffxSwapChainDesc.swapchain = &swapChain;
+
+		if (ffx::CreateContext(fidelityFX->swapChainContext, nullptr, ffxSwapChainDesc) != ffx::ReturnCode::Ok || !swapChain) {
+			LogEvent(Event::Error, "[FidelityFX] Failed to create swap chain context, using native D3D12 swap chain");
+			swapChain = nullptr;
+			fidelityFX->swapChainContext = nullptr;
+			createNativeSwapChain();
+		}
+	} else {
+		createNativeSwapChain();
+	}
+
+
+
+	DX::ThrowIfFailed(swapChain->GetBuffer(0, IID_PPV_ARGS(&swapChainBuffers[0])));
+	DX::ThrowIfFailed(swapChain->GetBuffer(1, IID_PPV_ARGS(&swapChainBuffers[1])));
+
+	frameIndex = swapChain->GetCurrentBackBufferIndex();
+	LogEvent(Event::DeviceReady, "[DX12SwapChain] D3D12 proxy swap chain ready (frameIndex={}, buffers={})", frameIndex, swapChainDesc.BufferCount);
+
+	if (useFidelityFXSwapChain && fidelityFX->swapChainContext != nullptr)
+		fidelityFX->SetupFrameGeneration();
+
+	swapChainProxy = new DXGISwapChainProxy(swapChain);
+
+	ResolveOverlayCallbacks();
+	if (auto initCb = s_overlayInitCb ? s_overlayInitCb : overlayInitCallback) {
+		initCb(d3d12Device.get(), commandQueue.get(), swapChain, swapChainDesc.Format, a_swapChainDesc.OutputWindow);
+	}
+
+}
+
+void DX12SwapChain::CreateInterop()
+{
+	HANDLE sharedFenceHandle;
+	DX::ThrowIfFailed(d3d12Device->CreateFence(0, D3D12_FENCE_FLAG_SHARED, IID_PPV_ARGS(&d3d12Fence)));
+	DX::ThrowIfFailed(d3d12Device->CreateSharedHandle(d3d12Fence.get(), nullptr, GENERIC_ALL, nullptr, &sharedFenceHandle));
+	DX::ThrowIfFailed(d3d11Device->OpenSharedFence(sharedFenceHandle, IID_PPV_ARGS(&d3d11Fence)));
+	CloseHandle(sharedFenceHandle);
+	d3d12FenceEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+	if (!d3d12FenceEvent) {
+		DX::ThrowIfFailed(HRESULT_FROM_WIN32(GetLastError()));
+	}
+
+	D3D11_TEXTURE2D_DESC texDesc11{};
+	texDesc11.Width = swapChainDesc.Width;
+	texDesc11.Height = swapChainDesc.Height;
+	texDesc11.MipLevels = 1;
+	texDesc11.ArraySize = 1;
+	texDesc11.Format = swapChainDesc.Format;
+	texDesc11.SampleDesc.Count = 1;
+	texDesc11.SampleDesc.Quality = 0;
+	texDesc11.Usage = D3D11_USAGE_DEFAULT;
+	texDesc11.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
+	texDesc11.CPUAccessFlags = 0;
+	texDesc11.MiscFlags = 0;
+
+	if (enbLoaded)
+		swapChainBufferProxyENB = new WrappedResource(texDesc11, d3d11Device.get(), d3d12Device.get());
+	else
+		swapChainBufferProxy = new Texture2D(texDesc11);
+
+	swapChainBufferWrapped[0] = new WrappedResource(texDesc11, d3d11Device.get(), d3d12Device.get());
+	swapChainBufferWrapped[1] = new WrappedResource(texDesc11, d3d11Device.get(), d3d12Device.get());
+}
+
+
+DXGISwapChainProxy* DX12SwapChain::GetSwapChainProxy()
+{
+	return swapChainProxy;
+}
+
+void DX12SwapChain::SetD3D11Device(ID3D11Device* a_d3d11Device)
+{
+	DX::ThrowIfFailed(a_d3d11Device->QueryInterface(IID_PPV_ARGS(&d3d11Device)));
+}
+
+void DX12SwapChain::SetD3D11DeviceContext(ID3D11DeviceContext* a_d3d11Context)
+{
+	DX::ThrowIfFailed(a_d3d11Context->QueryInterface(IID_PPV_ARGS(&d3d11Context)));
+}
+
+HRESULT DX12SwapChain::GetBuffer(void** ppSurface)
+{
+	if (enbLoaded)
+		*ppSurface = swapChainBufferProxyENB->resource11;
+	else
+		*ppSurface = swapChainBufferProxy->resource.get();
+	return S_OK;
+}
+
+HRESULT DX12SwapChain::GetDevice(REFIID uuid, void** ppDevice)
+{
+	if (uuid == __uuidof(ID3D11Device) || uuid == __uuidof(ID3D11Device1) || uuid == __uuidof(ID3D11Device2) || uuid == __uuidof(ID3D11Device3) || uuid == __uuidof(ID3D11Device4) || uuid == __uuidof(ID3D11Device5)) {
+		*ppDevice = d3d11Device.get();
+		return S_OK;
+	}
+
+	return swapChain->GetDevice(uuid, ppDevice);
+}
+
+void DX12SwapChain::WaitForCommandAllocator(UINT a_index)
+{
+	const auto waitFenceValue = commandAllocatorFenceValues[a_index];
+	if (waitFenceValue == 0 || d3d12Fence->GetCompletedValue() >= waitFenceValue) {
+		return;
+	}
+
+	DX::ThrowIfFailed(d3d12Fence->SetEventOnCompletion(waitFenceValue, d3d12FenceEvent));
+	const auto waitResult = WaitForSingleObject(d3d12FenceEvent, 1000);
+	if (waitResult == WAIT_OBJECT_0) {
+		return;
+	}
+
+	logger::warn("[DX12SwapChain] Timed out waiting for command allocator {} fence={} completed={}",
+		a_index,
+		waitFenceValue,
+		d3d12Fence->GetCompletedValue());
+	DX::ThrowIfFailed(HRESULT_FROM_WIN32(waitResult == WAIT_TIMEOUT ? WAIT_TIMEOUT : GetLastError()));
+}
+
+ID3D12GraphicsCommandList4* DX12SwapChain::BeginInteropCommandList()
+{
+	DX::ThrowIfFailed(d3d11Context->Signal(d3d11Fence.get(), fenceValue));
+	DX::ThrowIfFailed(commandQueue->Wait(d3d12Fence.get(), fenceValue));
+	fenceValue++;
+
+	WaitForCommandAllocator(frameIndex);
+	DX::ThrowIfFailed(commandAllocators[frameIndex]->Reset());
+	DX::ThrowIfFailed(commandLists[frameIndex]->Reset(commandAllocators[frameIndex].get(), nullptr));
+	return commandLists[frameIndex].get();
+}
+
+void DX12SwapChain::ExecuteInteropCommandListAndWait()
+{
+	DX::ThrowIfFailed(commandLists[frameIndex]->Close());
+
+	ID3D12CommandList* lists[] = { commandLists[frameIndex].get() };
+	commandQueue->ExecuteCommandLists(1, lists);
+
+	DX::ThrowIfFailed(commandQueue->Signal(d3d12Fence.get(), fenceValue));
+	commandAllocatorFenceValues[frameIndex] = fenceValue;
+	DX::ThrowIfFailed(d3d11Context->Wait(d3d11Fence.get(), fenceValue));
+	fenceValue++;
+}
