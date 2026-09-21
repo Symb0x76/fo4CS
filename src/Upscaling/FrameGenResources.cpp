@@ -276,8 +276,7 @@ void Upscaling::CreateFrameGenerationResources()
 
 	copyDepthToSharedBufferCS = (ID3D11ComputeShader*)CompileFrameGenerationShader(L"CopyDepthToSharedBufferCS.hlsl", "cs_5_0");
 	generateSharedBuffersCS = (ID3D11ComputeShader*)CompileFrameGenerationShader(L"GenerateSharedBuffersCS.hlsl", "cs_5_0");
-	buildUIColorAndAlphaCS = (ID3D11ComputeShader*)CompileFrameGenerationShader(L"BuildUIColorAndAlphaCS.hlsl", "cs_5_0");
-	denoiseUIAlphaCS = (ID3D11ComputeShader*)CompileFrameGenerationShader(L"DenoiseUIAlphaCS.hlsl", "cs_5_0");
+	copyUIToSharedBufferCS = (ID3D11ComputeShader*)CompileFrameGenerationShader(L"CopyUIToSharedBufferCS.hlsl", "cs_5_0");
 	logger::info("[FrameGen] Shared resources created (render={}x{}, hud={}x{} fmt={}, copyDepthCS={})",
 		depthBufferShared[0]->desc.Width,
 		depthBufferShared[0]->desc.Height,

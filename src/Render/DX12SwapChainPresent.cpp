@@ -278,7 +278,7 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
 
         const bool uiColorAndAlphaReady =
             upscaling->UsesDLSSFrameGeneration() &&
-            upscaling->BuildUIColorAndAlphaResource(swapChainBufferWrapped[frameIndex]->resource11.get());
+            upscaling->CaptureUIColorAndAlphaResource();
 
         trace("wait-d3d11-to-d3d12");
         DX::ThrowIfFailed(d3d11Context->Signal(d3d11Fence.get(), fenceValue));
