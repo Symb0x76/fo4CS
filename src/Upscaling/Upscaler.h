@@ -97,8 +97,7 @@ public:
 
 	ID3D11ComputeShader* copyDepthToSharedBufferCS;
 	ID3D11ComputeShader* generateSharedBuffersCS;
-	ID3D11ComputeShader* buildUIColorAndAlphaCS;
-	ID3D11ComputeShader* denoiseUIAlphaCS;
+	ID3D11ComputeShader* copyUIToSharedBufferCS;
 
 	bool setupBuffers = false;
 	bool postLoadingSkipUpscale = false;
@@ -122,8 +121,7 @@ public:
 	bool CaptureHUDLessFrame();
 	void PostAlpha();
 	void CopyBuffersToSharedResources();
-	bool BuildUIColorAndAlphaResource(ID3D11Texture2D* a_finalFrame);
-	void DenoiseUIAlphaResource();
+	bool CaptureUIColorAndAlphaResource();
 
 	static void TimerSleepQPC(int64_t targetQPC);
 
