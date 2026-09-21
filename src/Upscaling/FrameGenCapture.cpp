@@ -44,11 +44,10 @@ bool Upscaling::CaptureHUDLessFrame()
 	//
 	// This path is not merely a format mismatch against the shared buffer, it is the wrong
 	// image. It runs from PreAlpha() at the DrawWorld_Reticle hook, mid-geometry: kMain
-	// there is pre-tonemap scene-linear HDR, pre-alpha-blend and un-upscaled. Both
-	// consumers want display-referred colour -- FFX extracts UI by differencing HUDLess
-	// against the presented backbuffer, and BuildUIColorAndAlphaCS thresholds that
-	// difference at 2/255. PostDisplay copies the proxy swap chain buffer at the 3D-to-UI
-	// boundary instead: post-tonemap, post-upscale, pre-UI.
+	// there is pre-tonemap scene-linear HDR, pre-alpha-blend and un-upscaled, and FFX wants
+	// display-referred colour -- it extracts UI internally by differencing HUDLess against
+	// the presented backbuffer. PostDisplay copies the proxy swap chain buffer at the
+	// 3D-to-UI boundary instead: post-tonemap, post-upscale, pre-UI.
 	//
 	// Runtime-gated rather than gated on FALLOUT_PRE_NG: PreNG brings the proxy up too, so
 	// it takes this same path and is not a variant that can be carved out.

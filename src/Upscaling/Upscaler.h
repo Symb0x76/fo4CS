@@ -62,7 +62,6 @@ public:
 
 	Texture2D* HUDLessBufferShared[2];
 	Texture2D* uiColorAndAlphaBufferShared[2]{};
-	Texture2D* reticleColorAndAlphaBufferShared[2]{};
 	Texture2D* depthBufferShared[2];
 	Texture2D* motionVectorBufferShared[2];
 	Texture2D* upscalerInputShared[2]{};
@@ -77,10 +76,7 @@ public:
 
 	ID3D11ComputeShader* copyDepthToSharedBufferCS;
 	ID3D11ComputeShader* generateSharedBuffersCS;
-	ID3D11ComputeShader* buildUIColorAndAlphaCS;
-	ID3D11ComputeShader* buildReticleUIColorAndAlphaCS;
-	ID3D11ComputeShader* patchHUDLessReticleCS;
-	ID3D11ComputeShader* denoiseUIAlphaCS;
+	ID3D11ComputeShader* copyUIToSharedBufferCS;
 
 	bool setupBuffers = false;
 	bool postLoadingSkipUpscale = false;
@@ -102,8 +98,7 @@ public:
 	bool CaptureHUDLessFrame();
 	void PostAlpha();
 	void CopyBuffersToSharedResources();
-	bool BuildUIColorAndAlphaResource(ID3D11Texture2D* a_finalFrame);
-	void DenoiseUIAlphaResource();
+	bool CaptureUIColorAndAlphaResource();
 
 	static void TimerSleepQPC(int64_t targetQPC);
 

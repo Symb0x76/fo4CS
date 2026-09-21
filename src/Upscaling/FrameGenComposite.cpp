@@ -33,7 +33,6 @@ void Upscaling::PostAlpha()
 
 	auto context = reinterpret_cast<ID3D11DeviceContext*>(rendererData->context);
 	auto dx12SwapChain = DX12SwapChain::GetSingleton();
-	const auto frameIndex = dx12SwapChain->frameIndex;
 
 	context->OMSetRenderTargets(0, nullptr, nullptr);
 
@@ -73,31 +72,6 @@ void Upscaling::PostAlpha()
 
 		ID3D11ComputeShader* shader = nullptr;
 		context->CSSetShader(shader, nullptr, 0);
-
-		if (reticleColorAndAlphaBufferShared[frameIndex] && buildReticleUIColorAndAlphaCS) {
-			const uint32_t dispatchX = static_cast<uint32_t>(std::ceil(static_cast<float>(dx12SwapChain->swapChainDesc.Width) / 8.0f));
-			const uint32_t dispatchY = static_cast<uint32_t>(std::ceil(static_cast<float>(dx12SwapChain->swapChainDesc.Height) / 8.0f));
-
-			ID3D11ShaderResourceView* reticleViews[2] = {
-				reinterpret_cast<ID3D11ShaderResourceView*>(colorPreAlpha.srView),
-				reinterpret_cast<ID3D11ShaderResourceView*>(colorPostAlpha.srView)
-			};
-			context->CSSetShaderResources(0, ARRAYSIZE(reticleViews), reticleViews);
-
-			ID3D11UnorderedAccessView* reticleUAVs[1] = { reticleColorAndAlphaBufferShared[frameIndex]->uav.get() };
-			context->CSSetUnorderedAccessViews(0, ARRAYSIZE(reticleUAVs), reticleUAVs, nullptr);
-
-			context->CSSetShader(buildReticleUIColorAndAlphaCS, nullptr, 0);
-			context->Dispatch(dispatchX, dispatchY, 1);
-
-			ID3D11ShaderResourceView* nullReticleViews[2] = { nullptr, nullptr };
-			context->CSSetShaderResources(0, ARRAYSIZE(nullReticleViews), nullReticleViews);
-
-			ID3D11UnorderedAccessView* nullReticleUAVs[1] = { nullptr };
-			context->CSSetUnorderedAccessViews(0, ARRAYSIZE(nullReticleUAVs), nullReticleUAVs, nullptr);
-
-			context->CSSetShader(shader, nullptr, 0);
-		}
 	}
 }
 
@@ -157,12 +131,12 @@ void Upscaling::CopyBuffersToSharedResources()
 	context->CSSetShader(shader, nullptr, 0);
 }
 
-bool Upscaling::BuildUIColorAndAlphaResource(ID3D11Texture2D* a_finalFrame)
+bool Upscaling::CaptureUIColorAndAlphaResource()
 {
 	if (IsLoadingMenuOpen())
 		return false;
 
-	if (!d3d12Interop || !a_finalFrame)
+	if (!d3d12Interop)
 		return false;
 
 	if (!setupBuffers)
@@ -173,58 +147,108 @@ bool Upscaling::BuildUIColorAndAlphaResource(ID3D11Texture2D* a_finalFrame)
 	auto dx12SwapChain = DX12SwapChain::GetSingleton();
 	const auto frameIndex = dx12SwapChain->frameIndex;
 
-	// This slot must have been captured by CaptureHUDLessFrame (or the post-display
-	// fallback) for the same frameIndex; the UI buffer is derived by differencing the
-	// final frame against it.
-	if (!hudLessFrameValid[frameIndex] || hudLessFrameIDs[frameIndex] == 0)
-		return false;
-	if (!HUDLessBufferShared[frameIndex] || !uiColorAndAlphaBufferShared[frameIndex] || !reticleColorAndAlphaBufferShared[frameIndex] || !buildUIColorAndAlphaCS)
+	if (!uiColorAndAlphaBufferShared[frameIndex] || !copyUIToSharedBufferCS)
 		return false;
 
 	auto rendererData = fo4cs::GetRendererData();
-	auto device = reinterpret_cast<ID3D11Device*>(rendererData->device);
-	auto context = reinterpret_cast<ID3D11DeviceContext*>(rendererData->context);
-
-	D3D11_TEXTURE2D_DESC finalDesc{};
-	a_finalFrame->GetDesc(&finalDesc);
-	if (finalDesc.Width == 0 || finalDesc.Height == 0)
+	if (!rendererData)
 		return false;
 
-	D3D11_SHADER_RESOURCE_VIEW_DESC finalSrvDesc{};
-	finalSrvDesc.Format = finalDesc.Format;
-	finalSrvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
-	finalSrvDesc.Texture2D.MostDetailedMip = 0;
-	finalSrvDesc.Texture2D.MipLevels = 1;
-
-	winrt::com_ptr<ID3D11ShaderResourceView> finalFrameSRV;
-	if (FAILED(device->CreateShaderResourceView(a_finalFrame, &finalSrvDesc, finalFrameSRV.put()))) {
-		static bool loggedSRVFailure = false;
-		if (!loggedSRVFailure) {
-			logger::warn("[FrameGen] Could not create final-frame SRV; DLSS-G UI alpha tag is unavailable");
-			loggedSRVFailure = true;
+	// The UI layer is the engine's own kUI target, not a reconstruction. The former
+	// difference path (final frame minus HUDLess, thresholded) was a classifier whose two
+	// failure modes are both visible once DLSS-G reads the alpha as "do not interpolate":
+	// under-detection flickers the HUD, over-detection freezes scene pixels against the
+	// interpolated background. kUI carries the real pixels and the game's own alpha.
+	//
+	// UpscalerRenderTargets.cpp's renderTargetsPatch deliberately covers 36/37 but not
+	// 17/18, so kUI stays at native (backbuffer) size -- which is what DLSS-G's uiExtent
+	// already assumes.
+	//
+	// Reached through the SRV rather than RenderTarget::texture: that field is null for
+	// swap-chain-backed slots and this codebase has been bitten by trusting it before
+	// (see the CreateFrameGenerationResources comment on #21's format probe).
+	auto& uiTarget = rendererData->renderTargets[(uint)RenderTarget::kUI];
+	auto* uiSRV = reinterpret_cast<ID3D11ShaderResourceView*>(uiTarget.srView);
+	if (!uiSRV) {
+		static bool loggedMissingUISRV = false;
+		if (!loggedMissingUISRV) {
+			logger::warn("[FrameGen] Engine UI target (slot {}) has no SRV; DLSS-G will interpolate the UI",
+				(uint)RenderTarget::kUI);
+			loggedMissingUISRV = true;
 		}
 		return false;
 	}
 
+	winrt::com_ptr<ID3D11Resource> uiResource;
+	uiSRV->GetResource(uiResource.put());
+	winrt::com_ptr<ID3D11Texture2D> uiTexture;
+	if (!uiResource || FAILED(uiResource->QueryInterface(IID_PPV_ARGS(uiTexture.put()))) || !uiTexture) {
+		static bool loggedUINotTexture = false;
+		if (!loggedUINotTexture) {
+			logger::warn("[FrameGen] Engine UI target (slot {}) is not a Texture2D; DLSS-G will interpolate the UI",
+				(uint)RenderTarget::kUI);
+			loggedUINotTexture = true;
+		}
+		return false;
+	}
+
+	D3D11_TEXTURE2D_DESC uiDesc{};
+	uiTexture->GetDesc(&uiDesc);
+
+	const auto& sharedDesc = uiColorAndAlphaBufferShared[frameIndex]->desc;
+
+	// Reported once whether or not it matches: this is the only place a run log states what
+	// slot 17 actually is, and the premise that it holds the UI layer has never been
+	// confirmed against a running game.
+	static bool loggedUITargetShape = false;
+	if (!loggedUITargetShape) {
+		logger::info("[FrameGen] UI layer source is engine slot {} ({}x{} fmt={}); shared UI target is {}x{} fmt={}",
+			(uint)RenderTarget::kUI,
+			uiDesc.Width,
+			uiDesc.Height,
+			static_cast<uint32_t>(uiDesc.Format),
+			sharedDesc.Width,
+			sharedDesc.Height,
+			static_cast<uint32_t>(sharedDesc.Format));
+		loggedUITargetShape = true;
+	}
+
+	// A size mismatch means kUI is not the backbuffer-resolution layer this assumes, and a
+	// partial copy would hand DLSS-G a UI mask that is wrong over most of the screen.
+	// Returning false leaves the tag off entirely, so DLSS-G interpolates the whole frame --
+	// degraded, but the same thing upstream Skyrim CS does by choice.
+	if (uiDesc.Width != sharedDesc.Width || uiDesc.Height != sharedDesc.Height) {
+		static bool loggedUISizeMismatch = false;
+		if (!loggedUISizeMismatch) {
+			logger::warn("[FrameGen] Engine UI target is {}x{} but the shared UI target is {}x{}; DLSS-G will interpolate the UI",
+				uiDesc.Width,
+				uiDesc.Height,
+				sharedDesc.Width,
+				sharedDesc.Height);
+			loggedUISizeMismatch = true;
+		}
+		return false;
+	}
+
+	auto context = reinterpret_cast<ID3D11DeviceContext*>(rendererData->context);
+	if (!context)
+		return false;
+
 	context->OMSetRenderTargets(0, nullptr, nullptr);
 
-	const uint32_t dispatchX = static_cast<uint32_t>(std::ceil(static_cast<float>(finalDesc.Width) / 8.0f));
-	const uint32_t dispatchY = static_cast<uint32_t>(std::ceil(static_cast<float>(finalDesc.Height) / 8.0f));
+	const uint32_t dispatchX = static_cast<uint32_t>(std::ceil(static_cast<float>(sharedDesc.Width) / 8.0f));
+	const uint32_t dispatchY = static_cast<uint32_t>(std::ceil(static_cast<float>(sharedDesc.Height) / 8.0f));
 
-	ID3D11ShaderResourceView* views[3] = {
-		finalFrameSRV.get(),
-		HUDLessBufferShared[frameIndex]->srv.get(),
-		reticleColorAndAlphaBufferShared[frameIndex]->srv.get()
-	};
+	ID3D11ShaderResourceView* views[1] = { uiSRV };
 	context->CSSetShaderResources(0, ARRAYSIZE(views), views);
 
 	ID3D11UnorderedAccessView* uavs[1] = { uiColorAndAlphaBufferShared[frameIndex]->uav.get() };
 	context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
 
-	context->CSSetShader(buildUIColorAndAlphaCS, nullptr, 0);
+	context->CSSetShader(copyUIToSharedBufferCS, nullptr, 0);
 	context->Dispatch(dispatchX, dispatchY, 1);
 
-	ID3D11ShaderResourceView* nullViews[3] = { nullptr, nullptr, nullptr };
+	ID3D11ShaderResourceView* nullViews[1] = { nullptr };
 	context->CSSetShaderResources(0, ARRAYSIZE(nullViews), nullViews);
 
 	ID3D11UnorderedAccessView* nullUAVs[1] = { nullptr };
@@ -233,45 +257,4 @@ bool Upscaling::BuildUIColorAndAlphaResource(ID3D11Texture2D* a_finalFrame)
 	ID3D11ComputeShader* shader = nullptr;
 	context->CSSetShader(shader, nullptr, 0);
 	return true;
-}
-
-void Upscaling::DenoiseUIAlphaResource()
-{
-	if (IsLoadingMenuOpen())
-		return;
-
-	if (!d3d12Interop || !denoiseUIAlphaCS)
-		return;
-
-	if (!setupBuffers)
-		CreateFrameGenerationResources();
-	if (!setupBuffers)
-		return;
-
-	auto dx12SwapChain = DX12SwapChain::GetSingleton();
-	const auto frameIndex = dx12SwapChain->frameIndex;
-	if (!uiColorAndAlphaBufferShared[frameIndex])
-		return;
-
-	auto rendererData = fo4cs::GetRendererData();
-	auto context = reinterpret_cast<ID3D11DeviceContext*>(rendererData->context);
-
-	D3D11_TEXTURE2D_DESC desc{};
-	uiColorAndAlphaBufferShared[frameIndex]->resource->GetDesc(&desc);
-	if (desc.Width == 0 || desc.Height == 0)
-		return;
-
-	const uint32_t dispatchX = static_cast<uint32_t>(std::ceil(static_cast<float>(desc.Width) / 8.0f));
-	const uint32_t dispatchY = static_cast<uint32_t>(std::ceil(static_cast<float>(desc.Height) / 8.0f));
-
-	ID3D11UnorderedAccessView* uavs[1] = { uiColorAndAlphaBufferShared[frameIndex]->uav.get() };
-	context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
-	context->CSSetShader(denoiseUIAlphaCS, nullptr, 0);
-	context->Dispatch(dispatchX, dispatchY, 1);
-
-	ID3D11UnorderedAccessView* nullUAVs[1] = { nullptr };
-	context->CSSetUnorderedAccessViews(0, ARRAYSIZE(nullUAVs), nullUAVs, nullptr);
-
-	ID3D11ComputeShader* nullShader = nullptr;
-	context->CSSetShader(nullShader, nullptr, 0);
 }
