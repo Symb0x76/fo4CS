@@ -17,6 +17,9 @@
 
 #include "Render/DX12SwapChainInternal.h"
 #include "Diagnostics/LogEvents.h"
+// DIAGNOSTIC BUILD ONLY -- branch diag/framegen-ui-layer-dump, never merge.
+#include "Diagnostics/LogPaths.h"
+#include <DirectXTex.h>
 
 extern bool enbLoaded;
 
@@ -32,6 +35,61 @@ namespace
 std::string FormatHRESULT(HRESULT hr)
 	{
 		return std::format("0x{:08X}", static_cast<std::uint32_t>(hr));
+	}
+
+	// DIAGNOSTIC BUILD ONLY -- branch diag/framegen-ui-layer-dump, never merge.
+	//
+	// Reading the UI layer from RenderTarget::kUI (e4435da) did not stop the ghosting, and
+	// the run log cannot say why: it proves slot 17 has the right size and format and that
+	// the tag reached DLSS-G, but says nothing about the pixels. Two hypotheses survive and
+	// they need opposite fixes:
+	//
+	//   A  the UI is ALSO inside HUDLess -- DLSS-G motion-warps that copy and composites the
+	//      clean layer on top, so you see a sharp HUD plus a warped ghost
+	//   B  slot 17 is empty at Present -- nothing to composite, and the copy baked into
+	//      HUDLess warps alone
+	//
+	// Three PNGs separate them in one run. Read as: anything visible in *hudless* gets
+	// motion-warped on generated frames; anything missing from *uilayer* is absent from
+	// them. The crosshair must appear in exactly one.
+	//
+	// The 7b18cf1 version of this dump fired on the first frame that reached the code, which
+	// is a loading-screen frame, and measured nothing. This one waits for a run of frames
+	// that are both gameplay (no UI block) and actually tagged.
+	constexpr uint64_t kFrameGenDumpAfterActiveFrames = 900;
+
+	void DumpFrameGenBufferOnce(ID3D11Device* a_device, ID3D11DeviceContext* a_context,
+		ID3D11Resource* a_resource, const char* a_name)
+	{
+		if (!a_device || !a_context || !a_resource) {
+			logger::warn("[FrameGen] Buffer dump: {} is unavailable", a_name);
+			return;
+		}
+
+		const auto dir = fo4cs::diagnostics::GetF4SELogDirectory();
+		if (!dir) {
+			return;
+		}
+
+		DirectX::ScratchImage image;
+		if (FAILED(DirectX::CaptureTexture(a_device, a_context, a_resource, image))) {
+			logger::warn("[FrameGen] Buffer dump: CaptureTexture failed for {}", a_name);
+			return;
+		}
+
+		const auto* img = image.GetImage(0, 0, 0);
+		if (!img) {
+			return;
+		}
+
+		const auto path = *dir / std::format("framegen-dump-{}.png", a_name);
+		if (FAILED(DirectX::SaveToWICFile(*img, DirectX::WIC_FLAGS_NONE,
+				DirectX::GetWICCodec(DirectX::WIC_CODEC_PNG), path.c_str()))) {
+			logger::warn("[FrameGen] Buffer dump: SaveToWICFile failed for {}", a_name);
+			return;
+		}
+
+		logger::info("[FrameGen] Buffer dump written: {}", path.string());
 	}
 
 	enum class PresentTracePhase
@@ -238,6 +296,24 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
 		const bool uiColorAndAlphaReady =
 			upscaling->UsesDLSSFrameGeneration() &&
 			upscaling->CaptureUIColorAndAlphaResource();
+
+		// DIAGNOSTIC BUILD ONLY -- see kFrameGenDumpAfterActiveFrames above.
+		{
+			static uint64_t taggedGameplayFrames = 0;
+			static bool dumped = false;
+			if (!dumped && uiColorAndAlphaReady && !frameGenerationUIBlock) {
+				if (++taggedGameplayFrames >= kFrameGenDumpAfterActiveFrames) {
+					dumped = true;
+					logger::info("[FrameGen] Buffer dump firing at present#{} after {} tagged gameplay frames",
+						presentID, taggedGameplayFrames);
+					auto* device = d3d11Device.get();
+					auto* context = d3d11Context.get();
+					DumpFrameGenBufferOnce(device, context, swapChainBufferWrapped[frameIndex]->resource11, "final");
+					DumpFrameGenBufferOnce(device, context, upscaling->HUDLessBufferShared[frameIndex]->resource.get(), "hudless");
+					DumpFrameGenBufferOnce(device, context, upscaling->uiColorAndAlphaBufferShared[frameIndex]->resource.get(), "uilayer");
+				}
+			}
+		}
 
 		trace("wait-d3d11-to-d3d12");
 		DX::ThrowIfFailed(d3d11Context->Signal(d3d11Fence.get(), fenceValue));
