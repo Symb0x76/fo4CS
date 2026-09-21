@@ -19,6 +19,7 @@
 #include "Diagnostics/LogEvents.h"
 // DIAGNOSTIC BUILD ONLY -- branch diag/framegen-ui-layer-dump, never merge.
 #include "Diagnostics/LogPaths.h"
+#include "Upscaling/UpscalingRenderTargetIDs.h"
 #include <DirectXTex.h>
 
 extern bool enbLoaded;
@@ -90,6 +91,45 @@ std::string FormatHRESULT(HRESULT hr)
 		}
 
 		logger::info("[FrameGen] Buffer dump written: {}", path.string());
+	}
+
+	// Round 1 answered "is the kUI premise sound" -- yes. It also exposed the next gap:
+	// the power-armor HUD (HP, RADS, compass, CORE, AP, AMMO) is in the presented frame
+	// and in NEITHER HUDLess NOR the kUI layer. With enableUserInterfaceRecomposition on
+	// (StreamlineFrameGeneration.cpp:78) a generated frame is interpolate(HUDLess) plus
+	// composite(UIColorAndAlpha), so anything in neither simply does not exist on
+	// generated frames.
+	//
+	// FO4 evidently has two UI paths and we only wired the Scaleform one. These are the
+	// four UI-named slots; UpscalerRenderTargets.cpp's renderTargetsPatch covers 36/37 but
+	// not 17/18, so the engine itself treats them as two different families. Dump all four
+	// to find which one carries the power-armor HUD.
+	//
+	// Reached through the SRV, never RenderTarget::texture -- that field is null for
+	// swap-chain-backed slots and this codebase has been bitten by trusting it before.
+	void DumpEngineRenderTargetOnce(ID3D11Device* a_device, ID3D11DeviceContext* a_context,
+		RenderTarget a_slot, const char* a_name)
+	{
+		auto rendererData = fo4cs::GetRendererData();
+		if (!rendererData) {
+			return;
+		}
+
+		auto& target = rendererData->renderTargets[static_cast<uint>(a_slot)];
+		auto* srv = reinterpret_cast<ID3D11ShaderResourceView*>(target.srView);
+		if (!srv) {
+			logger::info("[FrameGen] Buffer dump: slot {} ({}) has no SRV", static_cast<uint>(a_slot), a_name);
+			return;
+		}
+
+		winrt::com_ptr<ID3D11Resource> resource;
+		srv->GetResource(resource.put());
+		if (!resource) {
+			logger::info("[FrameGen] Buffer dump: slot {} ({}) has no resource", static_cast<uint>(a_slot), a_name);
+			return;
+		}
+
+		DumpFrameGenBufferOnce(a_device, a_context, resource.get(), a_name);
 	}
 
 	enum class PresentTracePhase
@@ -311,6 +351,9 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
 					DumpFrameGenBufferOnce(device, context, swapChainBufferWrapped[frameIndex]->resource11, "final");
 					DumpFrameGenBufferOnce(device, context, upscaling->HUDLessBufferShared[frameIndex]->resource.get(), "hudless");
 					DumpFrameGenBufferOnce(device, context, upscaling->uiColorAndAlphaBufferShared[frameIndex]->resource.get(), "uilayer");
+					DumpEngineRenderTargetOnce(device, context, RenderTarget::kUITemp, "slot18-uitemp");
+					DumpEngineRenderTargetOnce(device, context, RenderTarget::kUIDownscaled, "slot36-uidownscaled");
+					DumpEngineRenderTargetOnce(device, context, RenderTarget::kUIDownscaledComposite, "slot37-uidownscaledcomposite");
 				}
 			}
 		}
