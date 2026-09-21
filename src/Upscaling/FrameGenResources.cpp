@@ -78,7 +78,7 @@ void Upscaling::CreateFrameGenerationResources()
 		const auto renderHeight = texDesc.Height;
 		auto dx12SwapChain = DX12SwapChain::GetSingleton();
 
-		// ---- HUDLess, UI, reticle: backbuffer resolution ----
+		// ---- HUDLess and UI: backbuffer resolution ----
 		if (dx12SwapChain->swapChain) {
 			texDesc.Width = dx12SwapChain->swapChainDesc.Width;
 			texDesc.Height = dx12SwapChain->swapChainDesc.Height;
@@ -87,7 +87,7 @@ void Upscaling::CreateFrameGenerationResources()
 			texDesc.Height = renderHeight;
 		}
 
-		// The shared HUDLess/UI/reticle family follows the swap chain format.
+		// The shared HUDLess/UI family follows the swap chain format.
 		//
 		// FFX v1.1.x frameinterpolationCreate() begins with an unconditional check that
 		// GetFormatPrecisionGroup(backBufferFormat) equals the group of the hudless source
@@ -109,7 +109,7 @@ void Upscaling::CreateFrameGenerationResources()
 		// here precisely because the format now matches the backbuffer by construction.
 		//
 		// The format comes from outside, so it can no longer be assumed to back the views
-		// created below. texDesc already carries D3D11_BIND_UNORDERED_ACCESS and all three
+		// created below. texDesc already carries D3D11_BIND_UNORDERED_ACCESS and both shared
 		// textures get an SRV, RTV and UAV, and Texture2D::CreateUAV throws on failure --
 		// out of a render hook, with nothing to catch it. Ask the device first.
 		DXGI_FORMAT hudLessFormat = texDesc.Format;
@@ -129,7 +129,7 @@ void Upscaling::CreateFrameGenerationResources()
 				// Disable rather than substitute. Any other format re-breaks the exact-match
 				// CopyResource gate in PostDisplay and would leave the buffer permanently
 				// black, and a black HUDLess is handed to FFX unconditionally.
-				logger::error("[FrameGen] Swap chain format {} cannot back the shared HUDLess/UI/reticle views (support=0x{:X}); frame generation disabled",
+				logger::error("[FrameGen] Swap chain format {} cannot back the shared HUDLess/UI views (support=0x{:X}); frame generation disabled",
 					static_cast<uint32_t>(candidateFormat),
 					formatSupport);
 				setupBuffers = false;
@@ -153,11 +153,6 @@ void Upscaling::CreateFrameGenerationResources()
 		uiColorAndAlphaBufferShared[index]->CreateSRV(srvDesc);
 		uiColorAndAlphaBufferShared[index]->CreateRTV(rtvDesc);
 		uiColorAndAlphaBufferShared[index]->CreateUAV(uavDesc);
-
-		reticleColorAndAlphaBufferShared[index] = new Texture2D(texDesc);
-		reticleColorAndAlphaBufferShared[index]->CreateSRV(srvDesc);
-		reticleColorAndAlphaBufferShared[index]->CreateRTV(rtvDesc);
-		reticleColorAndAlphaBufferShared[index]->CreateUAV(uavDesc);
 
 		// ---- Depth: internal render resolution ----
 		texDesc.Width = renderWidth;
@@ -271,7 +266,6 @@ void Upscaling::CreateFrameGenerationResources()
 		FLOAT clearColor[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
 		context->ClearRenderTargetView(HUDLessBufferShared[index]->rtv.get(), clearColor);
 		context->ClearRenderTargetView(uiColorAndAlphaBufferShared[index]->rtv.get(), clearColor);
-		context->ClearRenderTargetView(reticleColorAndAlphaBufferShared[index]->rtv.get(), clearColor);
 		context->ClearRenderTargetView(depthBufferShared[index]->rtv.get(), clearColor);
 		context->ClearRenderTargetView(motionVectorBufferShared[index]->rtv.get(), clearColor);
 		hudLessFrameValid[index] = false;
@@ -280,10 +274,7 @@ void Upscaling::CreateFrameGenerationResources()
 
 	copyDepthToSharedBufferCS = (ID3D11ComputeShader*)CompileFrameGenerationShader(L"CopyDepthToSharedBufferCS.hlsl", "cs_5_0");
 	generateSharedBuffersCS = (ID3D11ComputeShader*)CompileFrameGenerationShader(L"GenerateSharedBuffersCS.hlsl", "cs_5_0");
-	buildUIColorAndAlphaCS = (ID3D11ComputeShader*)CompileFrameGenerationShader(L"BuildUIColorAndAlphaCS.hlsl", "cs_5_0");
-	buildReticleUIColorAndAlphaCS = (ID3D11ComputeShader*)CompileFrameGenerationShader(L"BuildReticleUIColorAndAlphaCS.hlsl", "cs_5_0");
-	patchHUDLessReticleCS = (ID3D11ComputeShader*)CompileFrameGenerationShader(L"PatchHUDLessReticleCS.hlsl", "cs_5_0");
-	denoiseUIAlphaCS = (ID3D11ComputeShader*)CompileFrameGenerationShader(L"DenoiseUIAlphaCS.hlsl", "cs_5_0");
+	copyUIToSharedBufferCS = (ID3D11ComputeShader*)CompileFrameGenerationShader(L"CopyUIToSharedBufferCS.hlsl", "cs_5_0");
 	LogEvent(Event::ResourceCreate, "[FrameGen] Shared resources created (render={}x{}, hud={}x{}, copyDepthCS={})",
 		depthBufferShared[0]->desc.Width,
 		depthBufferShared[0]->desc.Height,
@@ -316,8 +307,6 @@ void Upscaling::Reset()
 	hudLessFrameIDs[dx12SwapChain->frameIndex] = 0;
 	if (uiColorAndAlphaBufferShared[dx12SwapChain->frameIndex])
 		context->ClearRenderTargetView(uiColorAndAlphaBufferShared[dx12SwapChain->frameIndex]->rtv.get(), clearColor);
-	if (reticleColorAndAlphaBufferShared[dx12SwapChain->frameIndex])
-		context->ClearRenderTargetView(reticleColorAndAlphaBufferShared[dx12SwapChain->frameIndex]->rtv.get(), clearColor);
 	context->ClearRenderTargetView(depthBufferShared[dx12SwapChain->frameIndex]->rtv.get(), clearColor);
 	context->ClearRenderTargetView(motionVectorBufferShared[dx12SwapChain->frameIndex]->rtv.get(), clearColor);
 }
