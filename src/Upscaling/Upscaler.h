@@ -76,7 +76,17 @@ public:
 
 	ID3D11ComputeShader* copyDepthToSharedBufferCS;
 	ID3D11ComputeShader* generateSharedBuffersCS;
-	ID3D11ComputeShader* copyUIToSharedBufferCS;
+	ID3D11ComputeShader* compositeUIOverBackbufferCS;
+
+	// While the UI render target is redirected, kFrameBuffer's RTV points at
+	// uiColorAndAlphaBufferShared instead of the proxy swap chain buffer. This holds the
+	// engine's own pointer so it can be put back at Present.
+	// void*, not ID3D11RenderTargetView*: PostNG and PostAE type this field as
+	// REX::W32::ID3D11RenderTargetView* while PreNG uses the real D3D11 type, so the only
+	// declaration that compiles on all three is an untyped one cast at each end.
+	void* savedFrameBufferRTV = nullptr;
+	bool uiRedirectActive = false;
+	uint32_t uiRedirectFrameIndex = 0;
 
 	bool setupBuffers = false;
 	bool postLoadingSkipUpscale = false;
@@ -98,7 +108,10 @@ public:
 	bool CaptureHUDLessFrame();
 	void PostAlpha();
 	void CopyBuffersToSharedResources();
-	bool CaptureUIColorAndAlphaResource();
+	void RedirectUIRenderTarget();
+	bool RestoreUIRenderTarget();
+	bool CompositeUIOntoPresentedFrame(ID3D11UnorderedAccessView* a_presentedFrameUAV);
+	void ReportUILayerCoverageOnce(uint32_t a_frameIndex);
 
 	static void TimerSleepQPC(int64_t targetQPC);
 

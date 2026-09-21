@@ -227,6 +227,13 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
 
 
 
+		// The interface has been drawing into our UI layer since PostDisplay, so the frame
+		// buffer must get its own RTV back before anything reads the proxy buffer for this
+		// frame -- and unconditionally, or the next frame's scene would render into the UI
+		// layer. A true result means the layer belongs to this frameIndex.
+		trace("restore-ui-render-target");
+		const bool uiLayerRedirected = upscaling->RestoreUIRenderTarget();
+
 		ID3D11Texture2D* finalFrame = enbLoaded ? swapChainBufferProxyENB->resource11 : swapChainBufferProxy->resource.get();
 
 		trace("copy-d3d11-proxy-to-shared");
@@ -235,9 +242,12 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
 		else
 			d3d11Context->CopyResource(swapChainBufferWrapped[frameIndex]->resource11, finalFrame);
 
+		// The copy above has no UI on it -- it all went to the layer. Put it back, or the
+		// HUD is simply absent from what gets presented.
+		trace("composite-ui-onto-presented-frame");
 		const bool uiColorAndAlphaReady =
-			upscaling->UsesDLSSFrameGeneration() &&
-			upscaling->CaptureUIColorAndAlphaResource();
+			uiLayerRedirected &&
+			upscaling->CompositeUIOntoPresentedFrame(swapChainBufferWrapped[frameIndex]->uav);
 
 		trace("wait-d3d11-to-d3d12");
 		DX::ThrowIfFailed(d3d11Context->Signal(d3d11Fence.get(), fenceValue));

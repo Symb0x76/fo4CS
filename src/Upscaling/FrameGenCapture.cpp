@@ -269,4 +269,10 @@ void Upscaling::PostDisplay()
 			hudLessFrameIDs[frameIndex]);
 		loggedFirstPostDisplayHUDLessCapture = true;
 	}
+
+	// HUDLess is captured; everything the engine draws from here until Present is interface.
+	// Take the frame buffer for that span so the UI lands in a layer of its own instead of
+	// being baked into the frame DLSS-G interpolates. Present puts the RTV back and
+	// composites the layer so the player sees no difference.
+	RedirectUIRenderTarget();
 }

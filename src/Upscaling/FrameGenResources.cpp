@@ -274,7 +274,7 @@ void Upscaling::CreateFrameGenerationResources()
 
 	copyDepthToSharedBufferCS = (ID3D11ComputeShader*)CompileFrameGenerationShader(L"CopyDepthToSharedBufferCS.hlsl", "cs_5_0");
 	generateSharedBuffersCS = (ID3D11ComputeShader*)CompileFrameGenerationShader(L"GenerateSharedBuffersCS.hlsl", "cs_5_0");
-	copyUIToSharedBufferCS = (ID3D11ComputeShader*)CompileFrameGenerationShader(L"CopyUIToSharedBufferCS.hlsl", "cs_5_0");
+	compositeUIOverBackbufferCS = (ID3D11ComputeShader*)CompileFrameGenerationShader(L"CompositeUIOverBackbufferCS.hlsl", "cs_5_0");
 	LogEvent(Event::ResourceCreate, "[FrameGen] Shared resources created (render={}x{}, hud={}x{}, copyDepthCS={})",
 		depthBufferShared[0]->desc.Width,
 		depthBufferShared[0]->desc.Height,
