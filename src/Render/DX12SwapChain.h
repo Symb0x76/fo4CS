@@ -27,10 +27,14 @@ class WrappedResource
 public:
 	WrappedResource(D3D11_TEXTURE2D_DESC a_texDesc, ID3D11Device5* a_d3d11Device, ID3D12Device* a_d3d12Device);
 
-	ID3D11Texture2D* resource11;
-	ID3D11ShaderResourceView* srv;
-	ID3D11UnorderedAccessView* uav;
-	ID3D11RenderTargetView* rtv;
+	// Initialized, because the constructor only assigns each of these when the matching
+	// BindFlag is set. Uninitialized they hold garbage that passes a null check and then
+	// faults on first use -- which is exactly how the UI composite crashed the game on
+	// 2026-09-22, since the swap chain proxy carries no UNORDERED_ACCESS bind.
+	ID3D11Texture2D* resource11 = nullptr;
+	ID3D11ShaderResourceView* srv = nullptr;
+	ID3D11UnorderedAccessView* uav = nullptr;
+	ID3D11RenderTargetView* rtv = nullptr;
 	winrt::com_ptr<ID3D12Resource> resource;
 };
 

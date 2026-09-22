@@ -172,6 +172,23 @@ void Upscaling::RedirectUIRenderTarget()
 	if (!uiColorAndAlphaBufferShared[frameIndex] || !uiColorAndAlphaBufferShared[frameIndex]->rtv)
 		return;
 
+	// Never take the interface away without a working path to put it back. Redirecting and
+	// then failing to composite does not degrade to "UI gets interpolated" -- it degrades to
+	// no HUD at all, which is worse than the bug being fixed. Both halves of the composite
+	// are checked here, before the engine draws a single widget into our texture.
+	auto* wrapped = dx12SwapChain->swapChainBufferWrapped[frameIndex];
+	if (!compositeUIOverBackbufferCS || !wrapped || !wrapped->uav) {
+		static bool loggedCompositeUnavailable = false;
+		if (!loggedCompositeUnavailable) {
+			logger::warn("[FrameGen] UI redirect declined: composite path unavailable (shader={}, wrapped={}, uav={}); DLSS-G will interpolate the UI",
+				compositeUIOverBackbufferCS != nullptr,
+				wrapped != nullptr,
+				wrapped && wrapped->uav);
+			loggedCompositeUnavailable = true;
+		}
+		return;
+	}
+
 	auto rendererData = fo4cs::GetRendererData();
 	if (!rendererData)
 		return;

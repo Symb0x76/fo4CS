@@ -250,6 +250,23 @@ void DX12SwapChain::CreateInterop()
 	texDesc11.CPUAccessFlags = 0;
 	texDesc11.MiscFlags = 0;
 
+	// The UI composite writes the redirected interface layer back onto this buffer through a
+	// UAV, so ask for one -- but only when the device can actually type it, because failing
+	// CreateTexture2D here throws out of a render hook with nothing to catch it. When the
+	// format cannot back a typed UAV the view stays null, RedirectUIRenderTarget declines to
+	// redirect, and frame generation keeps its previous behaviour instead of losing the HUD.
+	{
+		UINT formatSupport = 0;
+		if (SUCCEEDED(d3d11Device->CheckFormatSupport(texDesc11.Format, &formatSupport)) &&
+			(formatSupport & D3D11_FORMAT_SUPPORT_TYPED_UNORDERED_ACCESS_VIEW)) {
+			texDesc11.BindFlags |= D3D11_BIND_UNORDERED_ACCESS;
+		} else {
+			logger::warn("[DX12SwapChain] Swap chain format {} cannot back a typed UAV (support=0x{:X}); the UI layer redirect is unavailable",
+				static_cast<uint32_t>(texDesc11.Format),
+				formatSupport);
+		}
+	}
+
 	if (enbLoaded)
 		swapChainBufferProxyENB = new WrappedResource(texDesc11, d3d11Device.get(), d3d12Device.get());
 	else
