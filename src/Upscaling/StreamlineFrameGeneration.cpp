@@ -75,8 +75,21 @@ bool Streamline::ConfigureDLSSG(
 	options.depthBufferFormat = static_cast<uint32_t>(depthDesc.Format);
 	options.hudLessBufferFormat = static_cast<uint32_t>(hudlessDesc.Format);
 	options.uiBufferFormat = static_cast<uint32_t>(uiDesc.Format);
-	options.enableUserInterfaceRecomposition =
-		uiColorAndAlpha ? sl::Boolean::eTrue : sl::Boolean::eFalse;
+	// Off, deliberately. The name reads like "handle the UI properly", but the programming
+	// guide (ProgrammingGuideDLSS_G.md section 6.6) is explicit about what it does: "the HUD
+	// and scene are interpolated separately and composited later". It still interpolates the
+	// HUD -- it just does it in its own pass, which NVIDIA describes as improved UI
+	// interpolation quality.
+	//
+	// Fallout 4's crosshair does not want smoother interpolation, it wants none. Its spread
+	// animates per frame, so interpolating it bends the bracket arms: with this enabled and a
+	// UI layer that finally covered the real HUD, three arms stayed straight and the fourth
+	// came out curved. Left off, the UI tag means what it used to mean -- those pixels are
+	// excluded from interpolation and composited as drawn.
+	//
+	// This is the "UI-less frame generation" BOSS asked for: generate from the scene, never
+	// from the interface.
+	options.enableUserInterfaceRecomposition = sl::Boolean::eFalse;
 
 	// Names the first field that differs from the cached configuration, or nullptr when
 	// nothing changed. slDLSSGSetOptions is a configuration call, so it must fire on
